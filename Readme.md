@@ -1,6 +1,6 @@
 # EMU NFC Gate Reader
 
-Automatic spool detection for the Enraged Rabbit Multiplexer (EMU).
+Automatic spool detection for the Extended Multi-Material Unit (EMU).
 NFC tags on filament spools are detected at each gate and matched to Spoolman
 spool records via UID lookup.  Happy Hare's gate map is updated automatically
 via `MMU_GATE_MAP` — no manual updates and no writing to tags needed.

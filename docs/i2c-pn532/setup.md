@@ -25,13 +25,17 @@ use the [SPI / RC522 path](../spi-rc522/setup.md) instead.
 
 ## Step 1 — Install from Git
 
-Clone the repository and run the install script. The script creates symlinks from the
-repo into Klipper's extras directory — future `git pull` updates take effect after a
-Klipper restart, with no re-install needed.
+Clone the repository using sparse checkout so the `tests/` directory (development
+only) is not downloaded to the printer. Run the install script, which creates symlinks
+from the repo into Klipper's extras directory — future `git pull` updates take effect
+after a Klipper restart, with no re-install needed.
 
 ```bash
 cd ~
-git clone YOUR_REPO_URL_HERE emu-nfc-reader
+git clone --filter=blob:none --sparse YOUR_REPO_URL_HERE emu-nfc-reader
+cd ~/emu-nfc-reader
+git sparse-checkout set klippy config docs
+cd ~
 bash ~/emu-nfc-reader/install.sh
 ```
 
@@ -48,49 +52,69 @@ Both should point back into `~/emu-nfc-reader/`.
 
 ## Step 2 — Configure printer.cfg
 
-Copy both config files to your Klipper config directory:
+Copy all three config files to your Klipper config directory:
 
 ```bash
 cp ~/emu-nfc-reader/config/nfc_macros.cfg          ~/printer_data/config/
+cp ~/emu-nfc-reader/config/nfc_vars.cfg             ~/printer_data/config/
 cp ~/emu-nfc-reader/config/nfc_gate_i2c_pn532.cfg  ~/printer_data/config/
 ```
 
-Add both includes to `printer.cfg`:
+Add all three includes to `printer.cfg` **in this order**:
 
 ```ini
+[include nfc_vars.cfg]
 [include nfc_macros.cfg]
 [include nfc_gate_i2c_pn532.cfg]
 ```
 
-`nfc_macros.cfg` contains the Happy Hare integration macros (`_NFC_SPOOL_CHANGED` etc.)
-and is shared between the SPI and I2C paths. Edit it to customise the GCode if needed.
+- **`nfc_vars.cfg`** is the one file you edit for your installation — set your Spoolman URL, poll interval, and debug level here. It must be included before the hardware config.
+- **`nfc_macros.cfg`** contains the Happy Hare integration macros (`_NFC_SPOOL_CHANGED` etc.) and is shared between the SPI and I2C paths.
+- **`nfc_gate_i2c_pn532.cfg`** contains only hardware pin definitions — do not add user settings here.
 
 > **Important:** Do **not** include `nfc_gates_spi_rc522.cfg` at the same time.
 > The two hardware paths are mutually exclusive — use one or the other.
 
 ---
 
-## Step 3 — Adjust Gate Count
+## Step 3 — Set Your Spoolman URL
+
+Open `~/printer_data/config/nfc_vars.cfg` and set your Spoolman instance URL:
+
+```ini
+[nfc_gate]
+spoolman_url: http://mainsailos.local:7912    # ← change this to your instance
+```
+
+All other settings in `nfc_vars.cfg` (poll interval, debug level, cache TTL, etc.)
+have sensible defaults and can be left as-is initially. See the comments in that file
+for a description of every option.
+
+---
+
+## Step 4 — Adjust Gate Count
 
 Edit `~/printer_data/config/nfc_gate_i2c_pn532.cfg`.
 
 By default the file has sections for `lane0` through `lane3` (4 gates), with `lane4`
-commented out. Add or remove `[nfc_gate]` sections to match your physical gate count.
-
-Each section must have a matching MCU name that exists in `mmu_hardware.cfg`:
+commented out. Add or remove `[nfc_gate laneN]` sections to match your physical gate
+count. Each section needs only the hardware-specific keys:
 
 ```ini
 [nfc_gate lane2]
-gate:                    2
+mmu_gate:                2
 i2c_mcu:                 lane2           # must match an [mcu] name in mmu_hardware.cfg
 i2c_software_scl_pin:    lane2:PB3
 i2c_software_sda_pin:    lane2:PB4
-i2c_address:             36              # 0x24 — PN532 default
 ```
+
+All other settings (Spoolman URL, poll interval, debug level) are inherited from
+`[nfc_gate]` in `nfc_vars.cfg`. You can override any key locally in a lane section
+if you need per-gate behaviour.
 
 ---
 
-## Step 4 — Set Up Moonraker Auto-Update
+## Step 5 — Set Up Moonraker Auto-Update
 
 Add this section to `~/printer_data/config/moonraker.conf`:
 
@@ -114,7 +138,7 @@ Updates will now appear in the Mainsail / Fluidd update panel alongside Klipper 
 
 ---
 
-## Step 5 — Restart Klipper and Verify
+## Step 6 — Restart Klipper and Verify
 
 ```bash
 sudo systemctl restart klipper
@@ -143,7 +167,7 @@ If a reader fails: `nfc_gate: [laneN] PN532 did not respond after init — check
 
 ---
 
-## Step 6 — Test Tag Detection
+## Step 7 — Test Tag Detection
 
 From the Klipper console (Mainsail / Fluidd terminal):
 

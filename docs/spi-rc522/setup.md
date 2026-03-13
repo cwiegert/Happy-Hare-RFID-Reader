@@ -25,13 +25,17 @@ readers — use the [I2C / PN532 path](../i2c-pn532/setup.md) instead.
 
 ## Step 1 — Install from Git
 
-Clone the repository and run the install script. The script creates symlinks from the
-repo into Klipper's extras directory — future `git pull` updates take effect after a
-Klipper restart, with no re-install needed.
+Clone the repository using sparse checkout so the `tests/` directory (development
+only) is not downloaded to the printer. Run the install script, which creates symlinks
+from the repo into Klipper's extras directory — future `git pull` updates take effect
+after a Klipper restart, with no re-install needed.
 
 ```bash
 cd ~
-git clone YOUR_REPO_URL_HERE emu-nfc-reader
+git clone --filter=blob:none --sparse YOUR_REPO_URL_HERE emu-nfc-reader
+cd ~/emu-nfc-reader
+git sparse-checkout set klippy config docs
+cd ~
 bash ~/emu-nfc-reader/install.sh
 ```
 
@@ -113,30 +117,33 @@ Note the UUID — you will paste it into the config in the next step.
 
 ## Step 5 — Configure printer.cfg
 
-Copy both config files to your Klipper config directory:
+Copy all three config files to your Klipper config directory:
 
 ```bash
 cp ~/emu-nfc-reader/config/nfc_macros.cfg           ~/printer_data/config/
+cp ~/emu-nfc-reader/config/nfc_vars.cfg              ~/printer_data/config/
 cp ~/emu-nfc-reader/config/nfc_gates_spi_rc522.cfg  ~/printer_data/config/
 ```
 
-Add both includes to `printer.cfg`:
+Add all three includes to `printer.cfg` **in this order**:
 
 ```ini
+[include nfc_vars.cfg]
 [include nfc_macros.cfg]
 [include nfc_gates_spi_rc522.cfg]
 ```
 
-`nfc_macros.cfg` contains the Happy Hare integration macros (`_NFC_SPOOL_CHANGED` etc.)
-and is shared between the SPI and I2C paths. Edit it to customise the GCode if needed.
+- **`nfc_vars.cfg`** is the one file you edit for your installation — set your Spoolman URL, poll interval, and debug level here. It must be included before the hardware config.
+- **`nfc_macros.cfg`** contains the Happy Hare integration macros and is shared between both hardware paths.
+- **`nfc_gates_spi_rc522.cfg`** contains only hardware-specific settings.
 
-Edit `~/printer_data/config/nfc_gates_spi_rc522.cfg` and make these changes:
+Edit `~/printer_data/config/nfc_vars.cfg` and `~/printer_data/config/nfc_gates_spi_rc522.cfg`:
 
-| Key | What to do |
-|---|---|
-| `canbus_uuid` | Replace `YOUR_UUID_HERE` with the UUID from Step 4 |
-| `extra_cs_pins` | Remove entries for gates you don't have wired |
-| `poll_interval` | Leave at `30` for production; reduce to `5` for initial testing |
+| File | Key | What to do |
+|---|---|---|
+| `nfc_vars.cfg` | `spoolman_url` | Set to your Spoolman instance URL |
+| `nfc_gates_spi_rc522.cfg` | `canbus_uuid` | Replace `YOUR_UUID_HERE` with the UUID from Step 4 |
+| `nfc_gates_spi_rc522.cfg` | `extra_cs_pins` | Remove entries for gates you don't have wired |
 
 ---
 

@@ -21,13 +21,14 @@ on the spool — no NFC writing app, no NDEF records, no tag format to worry abo
 ## Step 1 — Add the RFID Extra Field in Spoolman
 
 Spoolman stores arbitrary metadata on spool records in a JSON dict called **extra**.
-You need to create a custom field named `rfid` (one-time setup, applies to all spools):
+You need to create a custom field (one-time setup, applies to all spools).
+The field name must match `spoolman_rfid_key` in `nfc_vars.cfg` — the default is `rfid_tag`:
 
 1. Open Spoolman in your browser.
 2. Go to **Settings → Extra Fields → Spool**.
 3. Click **Add field**.
 4. Set:
-   - **Field name:** `rfid`
+   - **Field name:** `rfid_tag`  *(must match `spoolman_rfid_key` in `nfc_vars.cfg`)*
    - **Field type:** `Text`
 5. Save.
 
@@ -81,7 +82,7 @@ For each spool:
 
 1. Open the spool record in Spoolman.
 2. Scroll to the **Extra** section (added in Step 1).
-3. Set **rfid** to the tag UID — e.g. `04A23BC1D45E80`.
+3. Set **rfid_tag** to the tag UID — e.g. `04A23BC1D45E80`.
 4. Save.
 
 > Separators are optional.  `04A23BC1D45E80`, `04:A2:3B:C1:D4:5E:80`, and
@@ -91,7 +92,7 @@ For each spool:
 
 ## Step 4 — Verify
 
-1. Make sure `spoolman_url` is set in your config file to point at your Spoolman instance.
+1. Make sure `spoolman_url` is set in `nfc_vars.cfg` to point at your Spoolman instance.
 2. Restart Klipper.
 3. Place the tag on a gate.
 4. Wait one poll cycle (or set `poll_interval: 5` temporarily to speed up testing).
@@ -112,14 +113,16 @@ Gate 0: tag 04A23BC1D45E80 (UID not in Spoolman — set the 'rfid' field on the 
 
 ## Config Reference
 
-These keys go in your `[nfc_gate laneN]` or `[nfc_gates]` section:
+All Spoolman settings go in the `[nfc_gate]` base section in **`nfc_vars.cfg`**.
+Individual `[nfc_gate laneN]` or `[nfc_gates]` sections inherit these values and can
+override them locally if needed.
 
 | Key | Default | Description |
 |---|---|---|
 | `spoolman_url` | *(required)* | Root URL of your Spoolman instance, e.g. `http://192.168.1.50:7912` |
-| `spoolman_rfid_key` | `rfid` | Extra field name in Spoolman — must match what you created in Step 1 |
+| `spoolman_rfid_key` | `rfid_tag` | Extra field name in Spoolman — must match what you created in Step 1 |
 | `spoolman_timeout` | `5.0` | HTTP request timeout in seconds |
-| `spoolman_cache_ttl` | `300` | Seconds to cache a successful UID→spool mapping (0 = no cache) |
+| `spoolman_cache_ttl` | `300` | Seconds to cache a successful UID→spool mapping (0 = no cache). Cached entries skip the Spoolman API call when the same tag is re-detected within the TTL. |
 
 ---
 

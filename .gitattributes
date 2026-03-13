@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Exclude tests/ from git archive downloads (GitHub ZIP, release tarballs)
+tests/ export-ignore

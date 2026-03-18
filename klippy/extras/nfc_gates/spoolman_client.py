@@ -47,7 +47,6 @@
 # not make a network request.  Set cache_ttl=0 to disable caching.
 
 import json
-import logging
 import time
 
 from .log import logger

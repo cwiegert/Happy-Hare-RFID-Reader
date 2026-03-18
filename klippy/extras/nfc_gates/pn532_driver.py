@@ -64,7 +64,6 @@
 # reactor thread continues normally.
 
 import time
-import logging
 
 from .log import logger
 

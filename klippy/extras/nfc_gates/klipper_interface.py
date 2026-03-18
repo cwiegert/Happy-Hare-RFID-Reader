@@ -23,7 +23,6 @@
 #
 # Define these macros in printer.cfg (see config/nfc_gates_example.cfg).
 
-import logging
 from .gate_state import EVENT_CHANGED, EVENT_UID_ONLY, EVENT_REMOVED
 from .log import logger
 

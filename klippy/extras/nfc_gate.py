@@ -58,7 +58,6 @@
 # 4. Add [include macros/<id>/nfc_macros.cfg] to printer.cfg
 # 5. sudo systemctl restart klipper
 
-import logging
 import threading
 
 import extras.bus as bus_module

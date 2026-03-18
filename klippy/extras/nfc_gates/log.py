@@ -47,5 +47,30 @@ def _build_logger():
     return logger
 
 
+def configure(path):
+    """
+    Redirect the NFC logger to *path*.
+
+    Called from NfcGateManager.__init__ after reading log_file from config.
+    Replaces the existing FileHandler so the configured path takes effect
+    even though the logger was created at import time.
+    Expands ~ automatically.  If *path* is a bare filename (no directory
+    component), it is placed in the same directory as klippy.log.
+    """
+    expanded = os.path.expanduser(path)
+    if not os.path.dirname(expanded):
+        expanded = os.path.join(_find_klipper_log_dir(), expanded)
+    _lg = logging.getLogger(_LOGGER_NAME)
+    for h in _lg.handlers[:]:
+        _lg.removeHandler(h)
+        h.close()
+    _lg.propagate = False
+    fh = logging.FileHandler(expanded)
+    fh.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)-8s %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'))
+    _lg.addHandler(fh)
+
+
 # Module-level singleton — imported by every nfc_gate* module.
 logger = _build_logger()

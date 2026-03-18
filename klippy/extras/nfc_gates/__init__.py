@@ -66,16 +66,15 @@
 # processing events normally during this time.  GCode macros are dispatched
 # back into the reactor thread via reactor.register_callback().
 #
-# Install
+# Install -- CDW 03/17/2026 -- update this section to account for the pn532
 # ───────
 # 1. Copy this directory to ~/klipper/klippy/extras/nfc_gates/
 # 2. Add [include nfc_gates_spi_rc522.cfg] to printer.cfg
 # 3. Restart Klipper: sudo systemctl restart klipper
 
-import logging
 import threading
 
-from .log import logger
+from .log import logger, configure as _configure_log
 
 import extras.bus as bus_module
 
@@ -106,6 +105,9 @@ class NfcGateManager:
                                             minval=0.001, maxval=1.0)
         # debug: 0=off, 1=major events (reads/writes/connections), 2=full trace
         self._debug      = config.getint('debug', 1, minval=0, maxval=2)
+        log_file = config.get('log_file', '')
+        if log_file:
+            _configure_log(log_file)
 
         # ── Spoolman integration ──────────────────────────────────────────────
         spoolman_url      = config.get('spoolman_url', '')

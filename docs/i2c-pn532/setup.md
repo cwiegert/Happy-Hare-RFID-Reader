@@ -25,30 +25,7 @@ use the [SPI / RC522 path](../spi-rc522/setup.md) instead.
 
 ## Step 1 — Install from Git
 
-Clone the repository using sparse checkout so the `tests/` directory (development
-only) is not downloaded to the printer. Run the install script, which creates symlinks
-from the repo into Klipper's extras directory — future `git pull` updates take effect
-after a Klipper restart, with no re-install needed.
-
-```bash
-cd ~
-git clone --filter=blob:none --sparse YOUR_REPO_URL_HERE emu-nfc-reader
-cd ~/emu-nfc-reader
-git sparse-checkout set klippy config docs
-cd ~
-bash ~/emu-nfc-reader/install.sh
-```
-
-Verify the symlinks were created:
-
-```bash
-ls -la ~/klipper/klippy/extras/nfc_gates
-ls -la ~/klipper/klippy/extras/nfc_gate.py
-```
-
-Both should point back into `~/emu-nfc-reader/`.
-
----
+Follow the install instructions in the main readme
 
 ## Step 2 — Configure printer.cfg
 

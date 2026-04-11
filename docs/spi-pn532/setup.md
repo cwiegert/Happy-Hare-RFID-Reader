@@ -1,16 +1,17 @@
-# SPI / RC522 — Setup & Deployment
+# SPI / PN532 — Setup & Deployment
 
 [← Back to Index](../../Readme.md)
 
 ---
 
-## Hardware Path: SPI / RC522
+## Hardware Path: SPI / PN532
 
 Use this path when you have a **dedicated Raspberry Pi Pico** connected to the CAN bus
-with RC522 NFC readers wired to its SPI1 bus.
+with PN532 NFC readers wired to its SPI1 bus.
 
-**You do NOT need this path** if your EMU gates are wired to EBB42 lane boards with PN532
-readers — use the [I2C / PN532 path](../i2c-pn532/setup.md) instead.
+The PN532 handles the full ISO14443A stack in hardware — one `InListPassiveTarget`
+command returns the tag UID directly with no manual REQA/ANTICOLL/SELECT sequence
+required. This keeps CAN bus traffic lower than the RC522 path.
 
 ---
 
@@ -19,7 +20,8 @@ readers — use the [I2C / PN532 path](../i2c-pn532/setup.md) instead.
 - Klipper installed on a Raspberry Pi (klippy running)
 - CAN bus working (e.g. with an EBB36/42 toolhead board already on the bus)
 - Raspberry Pi Pico + SN65HVD230 CAN transceiver, wired per [wiring.md](wiring.md)
-- RC522 modules wired to Pico SPI1 per [wiring.md](wiring.md)
+- PN532 modules wired to Pico SPI1 per [wiring.md](wiring.md)
+- Each PN532 set to **SPI mode** via its onboard DIP switch or solder jumper
 
 ---
 
@@ -77,7 +79,7 @@ Output firmware: `out/klipper.uf2`
 
 > SPI pin assignments are **not** set in `make menuconfig`. They are configured at
 > runtime by Klipper's `MCU_SPI` interface using the `cs_pin` and `spi_bus` keys
-> in `nfc_gates_spi_rc522.cfg`.
+> in `pn532_spi.cfg`.
 
 ---
 
@@ -123,20 +125,20 @@ Add these includes to `printer.cfg` **in this order**:
 ```ini
 [include NFC/nfc_vars.cfg]
 [include NFC/nfc_macros.cfg]
-[include NFC/rc522_spi.cfg]
+[include NFC/pn532_spi.cfg]
 ```
 
 - **`NFC/nfc_vars.cfg`** is the one file you edit — set your Spoolman URL, poll interval, and debug level here. It must be included before the hardware config.
 - **`NFC/nfc_macros.cfg`** contains the Happy Hare integration macros and is shared between all hardware paths.
-- **`NFC/rc522_spi.cfg`** contains only hardware-specific settings.
+- **`NFC/pn532_spi.cfg`** contains only hardware-specific settings.
 
-Edit these two files:
+Edit these files:
 
 | File | Key | What to do |
 |---|---|---|
 | `NFC/nfc_vars.cfg` | `spoolman_url` | Set to your Spoolman instance URL |
-| `NFC/rc522_spi.cfg` | `canbus_uuid` | Replace `YOUR_UUID_HERE` with the UUID from Step 4 |
-| `NFC/rc522_spi.cfg` | `extra_cs_pins` | Remove entries for gates you don't have wired |
+| `NFC/pn532_spi.cfg` | `canbus_uuid` | Replace `YOUR_UUID_HERE` with the UUID from Step 4 |
+| `NFC/pn532_spi.cfg` | `extra_cs_pins` | Remove entries for gates you don't have wired |
 
 ---
 
@@ -161,7 +163,6 @@ sudo systemctl restart moonraker
 ```
 
 Updates will now appear in the Mainsail / Fluidd update panel alongside Klipper itself.
-Moonraker runs `install.sh` after each update to refresh the symlinks, then restarts Klipper.
 
 ---
 
@@ -181,17 +182,16 @@ Expected output:
 
 ```
 nfc_gates: connected to MCU 'nfc_pico', initialising 5 gates (poll=30s, absent_threshold=3)
-nfc_gates: gate 0 RC522 init OK (TxControl=0x83)
-nfc_gates: gate 1 RC522 init OK (TxControl=0x83)
-nfc_gates: gate 2 RC522 init OK (TxControl=0x83)
-nfc_gates: gate 3 RC522 init OK (TxControl=0x83)
-nfc_gates: gate 4 RC522 init OK (TxControl=0x83)
+init: gate 0 (PN532) SAMConfiguration OK
+init: gate 1 (PN532) SAMConfiguration OK
+init: gate 2 (PN532) SAMConfiguration OK
+init: gate 3 (PN532) SAMConfiguration OK
+init: gate 4 (PN532) SAMConfiguration OK
 nfc_gates: 5/5 readers initialised
 nfc_gates: polling thread started
 ```
 
-If any reader fails: `nfc_gates: gate N reader did not respond after init (check wiring)`
-— see [Troubleshooting](troubleshooting.md).
+If any reader fails — see [Troubleshooting](troubleshooting.md).
 
 ---
 
@@ -205,20 +205,11 @@ NFC_GATE_STATUS
 
 All gates should show `empty` before any tags are placed.
 
-Place an NFC spool tag on Gate 0. Within one poll cycle (30 s, or 5 s if you reduced it):
+Place an NFC spool tag on Gate 0. Within one poll cycle (30 s default):
 
 ```
 NFC gate 0: spool 1042 detected (UID A3F200CC)
 ```
-
-Remove the tag. After 3 missed polls (90 s at the default 30 s interval):
-
-```
-NFC gate 0: spool removed
-```
-
-If you see `has no spool ID`, the tag has not been written yet.
-See [Writing Spool IDs to NFC Tags](../shared/tag-writing.md).
 
 ---
 
@@ -234,8 +225,6 @@ git pull
 bash install.sh
 sudo systemctl restart klipper
 ```
-
----
 
 ---
 
@@ -276,8 +265,6 @@ rm -rf ~/emu-nfc-reader
 sudo systemctl restart klipper
 ```
 
-> The Pico firmware does not need to be reflashed — it will simply stop receiving commands from Klipper. If you want to repurpose the Pico, flash any other RP2040 UF2 image via BOOTSEL mode.
-
 ---
 
-**Next:** [Wiring Diagram →](wiring.md) | [Troubleshooting →](troubleshooting.md)
+**Next:** [Wiring Diagram →](wiring.md)

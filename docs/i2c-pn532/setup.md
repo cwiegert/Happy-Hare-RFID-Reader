@@ -35,12 +35,12 @@ Add these includes to `printer.cfg` **in this order**:
 ```ini
 [include NFC/nfc_vars.cfg]
 [include NFC/nfc_macros.cfg]
-[include NFC/nfc_gate_i2c_pn532.cfg]
+[include NFC/pn532_i2C.cfg]
 ```
 
 - **`NFC/nfc_vars.cfg`** is the one file you edit — set your Spoolman URL, poll interval, and debug level here. It must be included before the hardware config.
 - **`NFC/nfc_macros.cfg`** contains the Happy Hare integration macros (`_NFC_SPOOL_CHANGED` etc.) and is shared between all hardware paths.
-- **`NFC/nfc_gate_i2c_pn532.cfg`** contains only hardware pin definitions — do not add user settings here.
+- **`NFC/pn532_i2C.cfg`** contains only hardware pin definitions — do not add user settings here.
 
 > **Important:** Include only one hardware config. The three hardware paths are
 > mutually exclusive — do not include more than one at the same time.
@@ -64,7 +64,7 @@ for a description of every option.
 
 ## Step 4 — Adjust Gate Count
 
-Edit `~/printer_data/config/NFC/nfc_gate_i2c_pn532.cfg`.
+Edit `~/printer_data/config/NFC/pn532_i2C.cfg`.
 
 By default the file has sections for `lane0` through `lane3` (4 gates), with `lane4`
 commented out. Add or remove `[nfc_gate laneN]` sections to match your physical gate

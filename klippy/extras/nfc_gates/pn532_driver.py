@@ -198,25 +198,19 @@ class PN532Driver:
     # ─────────────────────────────────────────────────────────────────────────
 
     def _send(self, cmd_and_params):
-        """Write a command frame to the PN532 via i2c_transfer (write-only)."""
+        """Write a command frame to the PN532."""
         frame = self._build_frame(cmd_and_params)
         if self._debug >= 2:
             logger.debug("_send: gate %d (PN532) TX  cmd=0x%02X  frame=%s",
                           self._gate, cmd_and_params[0],
                           ' '.join('%02X' % b for b in frame))
-        result = self._i2c.i2c_transfer(frame, read_len=0)
-        if self._debug >= 2:
-            logger.debug("_send: gate %d (PN532) bus_status=%s",
-                         self._gate, result.get('i2c_bus_status', '?'))
+        self._i2c.i2c_write(frame)
 
     def _recv(self, expected_cmd_resp, read_len=_MAX_RESPONSE_BYTES,
               timeout=1.0, poll_interval=0.005):
         """
-        Poll the PN532 with 1-byte i2c_transfer reads until STATUS=0x01 (ready),
+        Poll the PN532 with 1-byte reads until STATUS=0x01 (ready),
         then read the full response frame.
-
-        Uses i2c_transfer so i2c_bus_status is available on every transaction,
-        allowing NACK / arbitration errors to be distinguished from not-ready.
 
         Parameters
         ----------
@@ -232,8 +226,7 @@ class PN532Driver:
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
-                result = self._i2c.i2c_transfer([], read_len=1)
-                bus_status = result.get('i2c_bus_status', 'UNKNOWN')
+                result = self._i2c.i2c_read([], 1)
                 raw1 = bytearray(result['response'])
                 pn_status = raw1[0] if raw1 else 0xFF
             except Exception as e:
@@ -242,37 +235,32 @@ class PN532Driver:
                 return None
 
             if self._debug >= 2:
-                logger.debug(
-                    "_recv: gate %d (PN532) poll bus_status=%s "
-                    "result=%s pn_status=0x%02X",
-                    self._gate, bus_status,
-                    ' '.join('%02X' % b for b in raw1),
-                    pn_status)
+                logger.debug("_recv: gate %d (PN532) poll result=%s pn_status=0x%02X",
+                             self._gate,
+                             ' '.join('%02X' % b for b in raw1),
+                             pn_status)
 
             if pn_status == 0x01:
                 try:
-                    params = self._i2c.i2c_transfer([], read_len=read_len)
-                    bus_status2 = params.get('i2c_bus_status', 'UNKNOWN')
+                    params = self._i2c.i2c_read([], read_len)
                     raw = bytearray(params['response'])
                     payload = self._check_frame(raw, expected_cmd_resp)
                     if self._debug >= 2:
                         status_byte = raw[0] if raw else 0xFF
                         if payload is not None:
                             logger.debug(
-                                "_recv: gate %d (PN532) DATA: bus_status=%s "
-                                "expect=0x%02X pn_status=0x%02X raw=%s",
-                                self._gate, bus_status2, expected_cmd_resp,
-                                status_byte,
+                                "_recv: gate %d (PN532) DATA: expect=0x%02X "
+                                "pn_status=0x%02X raw=%s",
+                                self._gate, expected_cmd_resp, status_byte,
                                 ' '.join('%02X' % b for b in raw))
                             logger.debug("_recv: gate %d (PN532) payload: %s",
                                          self._gate,
                                          ' '.join('%02X' % b for b in payload))
                         else:
                             logger.debug(
-                                "_recv: gate %d (PN532) DATA ERROR: bus_status=%s "
-                                "expect=0x%02X pn_status=0x%02X raw=%s",
-                                self._gate, bus_status2, expected_cmd_resp,
-                                status_byte,
+                                "_recv: gate %d (PN532) DATA ERROR: expect=0x%02X "
+                                "pn_status=0x%02X raw=%s",
+                                self._gate, expected_cmd_resp, status_byte,
                                 ' '.join('%02X' % b for b in raw) if raw else '(empty)')
                     return payload
                 except Exception as e:

@@ -20,6 +20,7 @@
 
 import re
 import threading
+import time
 
 import bus as bus_module
 
@@ -311,6 +312,11 @@ class NFCGate:
             "absent_threshold=%d, debug=%d",
             self._name, self._gate, self._poll_interval,
             self._absent_threshold, self._debug)
+        # Allow the PN532 time to complete its power-on reset before the first
+        # I2C transaction.  The PN532 datasheet specifies up to 1 s power-on
+        # reset time; 2 s is conservative and harmless.
+        time.sleep(2.0)
+
         if self._debug >= 2:
             logger.debug(
                 "nfc_gate: [%s] calling reader.init() — "

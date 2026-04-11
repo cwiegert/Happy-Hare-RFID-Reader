@@ -18,6 +18,7 @@
 # the background thread while awaiting MCU responses; the reactor continues
 # processing other events normally.
 
+import re
 import threading
 
 import bus as bus_module
@@ -142,6 +143,45 @@ class KlipperInterface:
 _lane_instances = []
 
 
+def _lane_status_lines(printer):
+    """Build NFC_GATE_STATUS output lines cross-referenced against the MMU
+    lane MCUs registered in Klipper (mirrors how HH reads [board_pins lane]).
+
+    For each lane MCU (e.g. lane0…lane4):
+      - If an NFCGate is configured for that MCU → show its spool/UID state.
+      - If no NFCGate is configured         → note that no reader is set up.
+    Falls back to listing _lane_instances directly when no lane MCUs are found.
+    """
+    # Collect MCU names that match "lane<N>" from Klipper's object registry.
+    lane_names = []
+    for obj_name, _ in printer.lookup_objects('mcu'):
+        parts = obj_name.split(None, 1)
+        if len(parts) == 2 and re.match(r'^lane\d+$', parts[1]):
+            lane_names.append(parts[1])
+    lane_names.sort(key=lambda n: int(n[4:]))
+
+    nfc_by_lane = {gate._name: gate for gate in _lane_instances}
+
+    if not lane_names:
+        # No MMU lane MCUs visible — fall back to plain list.
+        if not nfc_by_lane:
+            return ["No [nfc_gate] sections are configured."]
+        lines = ["NFC gate status  (%d gate%s configured):"
+                 % (len(nfc_by_lane), 's' if len(nfc_by_lane) != 1 else '')]
+        for gate in sorted(_lane_instances, key=lambda g: g._gate):
+            lines.append(gate.status_line())
+        return lines
+
+    lines = ["NFC gate status — %d MMU lane(s), %d NFC reader(s) configured:"
+             % (len(lane_names), len(nfc_by_lane))]
+    for lane in lane_names:
+        if lane in nfc_by_lane:
+            lines.append(nfc_by_lane[lane].status_line())
+        else:
+            lines.append("  %-8s  no NFC reader configured" % (lane + ':'))
+    return lines
+
+
 class NFCGateDefaults:
     def __init__(self, config):
         self.spoolman_url       = config.get('spoolman_url', '')
@@ -162,8 +202,8 @@ class NFCGateDefaults:
         self.i2c_address        = config.getint('i2c_address', 0x24,
                                                  minval=0, maxval=127)
 
-        printer = config.get_printer()
-        gcode   = printer.lookup_object('gcode')
+        self._printer = config.get_printer()
+        gcode         = self._printer.lookup_object('gcode')
         gcode.register_command(
             'NFC_GATE_STATUS', self.cmd_NFC_GATE_STATUS,
             desc="Report spool state for all configured NFC gates")
@@ -178,14 +218,7 @@ class NFCGateDefaults:
                     "nfc_gate: could not open log file %r: %s", log_file, e)
 
     def cmd_NFC_GATE_STATUS(self, gcmd):
-        if not _lane_instances:
-            gcmd.respond_info("No [nfc_gate] sections are configured.")
-            return
-        lines = ["NFC gate status  (%d gate%s configured):"
-                 % (len(_lane_instances), 's' if len(_lane_instances) != 1 else '')]
-        for gate in sorted(_lane_instances, key=lambda g: g._gate):
-            lines.append(gate.status_line())
-        gcmd.respond_info('\n'.join(lines))
+        gcmd.respond_info('\n'.join(_lane_status_lines(self._printer)))
 
 
 class NFCGate:
@@ -269,16 +302,8 @@ class NFCGate:
         self.printer.register_event_handler('klippy:disconnect',
                                             self._handle_disconnect)
 
-    @staticmethod
-    def _cmd_NFC_GATE_STATUS_fallback(gcmd):
-        if not _lane_instances:
-            gcmd.respond_info("No [nfc_gate] sections are configured.")
-            return
-        lines = ["NFC gate status  (%d gate%s configured):"
-                 % (len(_lane_instances), 's' if len(_lane_instances) != 1 else '')]
-        for gate in sorted(_lane_instances, key=lambda g: g._gate):
-            lines.append(gate.status_line())
-        gcmd.respond_info('\n'.join(lines))
+    def _cmd_NFC_GATE_STATUS_fallback(self, gcmd):
+        gcmd.respond_info('\n'.join(_lane_status_lines(self.printer)))
 
     def _handle_connect(self):
         logger.info(

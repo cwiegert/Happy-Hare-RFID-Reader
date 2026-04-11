@@ -91,9 +91,6 @@ _OFF_TFI     = 6
 _OFF_CMD     = 7
 _OFF_PAYLOAD = 8
 
-# ACK wait after writing any command (PN532 needs ~1 ms; 20 ms is very safe)
-_ACK_DELAY_S = 0.020
-
 # Maximum bytes to read for any PN532 response (covers all commands used here)
 _MAX_RESPONSE_BYTES = 32
 
@@ -200,75 +197,79 @@ class PN532Driver:
     # ─────────────────────────────────────────────────────────────────────────
 
     def _send(self, cmd_and_params):
-        """Write a command frame to the PN532 and wait for ACK processing."""
+        """Write a command frame to the PN532."""
         frame = self._build_frame(cmd_and_params)
         if self._debug >= 2:
             logger.debug("_send: gate %d (PN532) TX  cmd=0x%02X  frame=%s",
                           self._gate, cmd_and_params[0],
                           ' '.join('%02X' % b for b in frame))
         self._i2c.i2c_write(frame)
-        time.sleep(_ACK_DELAY_S)
 
-    def _recv(self, delay, expected_cmd_resp, read_len=_MAX_RESPONSE_BYTES):
+    def _recv(self, expected_cmd_resp, read_len=_MAX_RESPONSE_BYTES,
+              timeout=1.0, poll_interval=0.005):
         """
-        Wait *delay* seconds then read a response frame from the PN532.
-        Consumes the ACK frame before fetching the data frame.
+        Poll the PN532 with 1-byte reads until STATUS=0x01 (ready),
+        then read the full response frame in one transaction.
+
+        Parameters
+        ----------
+        expected_cmd_resp : int
+            The response command byte expected at raw[_OFF_CMD].
+        read_len : int
+            Number of bytes to read for the full response frame.
+        timeout : float
+            Maximum seconds to poll before giving up.
+        poll_interval : float
+            Seconds to wait between poll attempts.
         """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                result = self._i2c.i2c_read([], 1)
+                status = bytearray(result['response'])[0]
+            except Exception as e:
+                logger.error("_recv: gate %d (PN532) poll failed: %s",
+                             self._gate, e)
+                return None
+
+            if self._debug >= 2:
+                logger.debug("_recv: gate %d (PN532) poll status=0x%02X",
+                             self._gate, status)
+
+            if status == 0x01:
+                try:
+                    params = self._i2c.i2c_read([], read_len)
+                    raw = bytearray(params['response'])
+                    payload = self._check_frame(raw, expected_cmd_resp)
+                    if self._debug >= 2:
+                        status_byte = raw[0] if raw else 0xFF
+                        if payload is not None:
+                            logger.debug(
+                                "_recv: gate %d (PN532) DATA: expect=0x%02X "
+                                "status=0x%02X raw=%s",
+                                self._gate, expected_cmd_resp, status_byte,
+                                ' '.join('%02X' % b for b in raw))
+                            logger.debug("_recv: gate %d (PN532) payload: %s",
+                                         self._gate,
+                                         ' '.join('%02X' % b for b in payload))
+                        else:
+                            logger.debug(
+                                "_recv: gate %d (PN532) DATA ERROR: expect=0x%02X "
+                                "status=0x%02X raw=%s",
+                                self._gate, expected_cmd_resp, status_byte,
+                                ' '.join('%02X' % b for b in raw) if raw else '(empty)')
+                    return payload
+                except Exception as e:
+                    logger.error("_recv: gate %d (PN532) DATA read failed: %s",
+                                 self._gate, e)
+                    return None
+
+            time.sleep(poll_interval)
+
         if self._debug >= 2:
-            logger.debug("_recv: gate %d (PN532) waiting %.3fs",
-                         self._gate, delay)
-        
-        time.sleep(delay)
-
-        # --- PHASE 1: CONSUME ACK ---
-        # The PN532 sends [Status, 00, 00, FF, 00, FF, 00] to acknowledge receipt.
-        try:
-            ack_data = self._i2c.i2c_read([], 7)
-            ack_raw = bytearray(ack_data['response'])
-            
-            if self._debug >= 2:
-                logger.debug("_recv: gate %d (PN532) ACK raw=%s",
-                             self._gate, ' '.join('%02X' % b for b in ack_raw))
-        except Exception as e:
-            logger.error("_recv: gate %d (PN532) ACK read failed: %s",
-                         self._gate, str(e))
-            return None
-
-        # --- PHASE 2: WAIT FOR DATA ---
-        # Give the PN532 time to move the actual result into the I2C buffer.
-        time.sleep(0.010)
-
-        # --- PHASE 3: READ DATA FRAME ---
-        try:
-            params = self._i2c.i2c_read([], read_len)
-            raw = bytearray(params['response'])
-            
-            # Response ID is always Command + 1
-            expect_id = expected_cmd_resp + 1
-            payload = self._check_frame(raw, expect_id)
-
-            if self._debug >= 2:
-                status_byte = raw[0] if raw else 0xFF
-                if payload is not None:
-                    logger.debug(
-                        "_recv: gate %d (PN532) DATA: expect=0x%02X "
-                        "status=0x%02X raw=%s",
-                        self._gate, expect_id, status_byte,
-                        ' '.join('%02X' % b for b in raw))
-                    logger.debug("_recv: gate %d (PN532) payload: %s",
-                                 self._gate, ' '.join('%02X' % b for b in payload))
-                else:
-                    logger.debug(
-                        "_recv: gate %d (PN532) DATA ERROR: expect=0x%02X "
-                        "status=0x%02X raw=%s",
-                        self._gate, expect_id, status_byte,
-                        ' '.join('%02X' % b for b in raw) if raw else '(empty)')
-            return payload
-
-        except Exception as e:
-            logger.error("_recv: gate %d (PN532) DATA read failed: %s",
-                         self._gate, str(e))
-            return None
+            logger.debug("_recv: gate %d (PN532) timeout after %.1fs waiting for ready",
+                         self._gate, timeout)
+        return None
     # ─────────────────────────────────────────────────────────────────────────
     # Initialisation
     # ─────────────────────────────────────────────────────────────────────────
@@ -287,57 +288,14 @@ class PN532Driver:
         Returns True if the chip responded, False if all attempts failed.
         """
         for attempt in range(attempts):
-            wait = 0.150 if attempt == 0 else 0.075
             if self._debug >= 2:
                 logger.debug(
                     "_wake_pn532: gate %d (PN532) attempt %d/%d — "
-                    "sending GetFirmwareVersion (post-TX wait=%.0fms)",
-                    self._gate, attempt + 1, attempts, wait * 1000)
+                    "sending GetFirmwareVersion",
+                    self._gate, attempt + 1, attempts)
             try:
-                frame = self._build_frame([_CMD_GETFIRMWAREVERSION])
-                if self._debug >= 2:
-                    logger.debug(
-                        "_wake_pn532: gate %d (PN532) TX  cmd=0x02  frame=%s",
-                        self._gate, ' '.join('%02X' % b for b in frame))
-                self._i2c.i2c_write(frame)
-                time.sleep(wait)
-
-                # --- PHASE 1: CONSUME ACK ---
-                # PN532 sends [Status, 00, 00, FF, 00, FF, 00] to acknowledge.
-                if self._debug >= 2:
-                    logger.debug(
-                        "_wake_pn532: gate %d (PN532) attempt %d — "
-                        "reading ACK (7 bytes)",
-                        self._gate, attempt + 1)
-                ack_result = self._i2c.i2c_read([], 7)
-                ack_raw    = bytearray(ack_result['response'])
-                if self._debug >= 2:
-                    logger.debug(
-                        "_wake_pn532: gate %d (PN532) attempt %d — "
-                        "ACK raw=%s",
-                        self._gate, attempt + 1,
-                        ' '.join('%02X' % b for b in ack_raw) if ack_raw else '(empty)')
-
-                # --- PHASE 2: WAIT FOR DATA ---
-                time.sleep(0.010)
-
-                # --- PHASE 3: READ DATA FRAME ---
-                if self._debug >= 2:
-                    logger.debug(
-                        "_wake_pn532: gate %d (PN532) attempt %d — "
-                        "reading response (15 bytes)",
-                        self._gate, attempt + 1)
-                result = self._i2c.i2c_read([], 15)
-                raw    = bytearray(result['response'])
-
-                if self._debug >= 2:
-                    logger.debug(
-                        "_wake_pn532: gate %d (PN532) attempt %d — "
-                        "DATA raw (%d bytes): %s",
-                        self._gate, attempt + 1, len(raw),
-                        ' '.join('%02X' % b for b in raw) if raw else '(empty)')
-
-                payload = self._check_frame(raw, 0x03)
+                self._send([_CMD_GETFIRMWAREVERSION])
+                payload = self._recv(0x03, read_len=15, timeout=0.500)
                 if payload is not None and len(payload) >= 4:
                     logger.info(
                         "_wake_pn532: gate %d (PN532) OK on attempt %d — "
@@ -346,11 +304,10 @@ class PN532Driver:
                         payload[0], payload[1], payload[2])
                     return True
                 if self._debug >= 2:
-                    status_byte = raw[0] if raw else 0xFF
                     logger.debug(
                         "_wake_pn532: gate %d (PN532) attempt %d — "
-                        "frame parse failed (status=0x%02X), retrying",
-                        self._gate, attempt + 1, status_byte)
+                        "no valid response",
+                        self._gate, attempt + 1)
             except Exception as e:
                 level = logger.debug if attempt == 0 else logger.info
                 level("_wake_pn532: gate %d (PN532) attempt %d failed: %s",
@@ -388,7 +345,7 @@ class PN532Driver:
 
         # SAMConfiguration: Normal mode(0x01), timeout=0x00, IRQ=0x00
         self._send([_CMD_SAMCONFIGURATION, 0x01, 0x00, 0x00])
-        payload = self._recv(self._release_delay, 0x15, read_len=12)
+        payload = self._recv(0x15, read_len=12, timeout=0.200)
         if payload is None:
             logger.warning("init: gate %d (PN532) SAMConfiguration "
                             "no response — reader may be unstable",
@@ -408,7 +365,7 @@ class PN532Driver:
         """
         try:
             self._send([_CMD_GETFIRMWAREVERSION])
-            payload = self._recv(self._release_delay, 0x03, read_len=14)
+            payload = self._recv(0x03, read_len=14, timeout=0.200)
             return payload is not None and len(payload) >= 4
         except Exception as e:
             logger.debug("is_alive: gate %d (PN532) error: %s",
@@ -474,7 +431,7 @@ class PN532Driver:
         # Response CMD code for InListPassiveTarget is 0x4B
         # Worst case: status(1)+frame_overhead(7)+NbTg(1)+per_tag(1+2+1+1+7)=21 bytes
         # Read 32 bytes to cover 7-byte UIDs and any optional ATS data.
-        payload = self._recv(self._scan_delay, 0x4B, read_len=_MAX_RESPONSE_BYTES)
+        payload = self._recv(0x4B, read_len=_MAX_RESPONSE_BYTES, timeout=self._scan_delay + 0.100)
         if payload is None:
             if self._debug >= 2:
                 logger.debug("_list_passive_target: gate %d (PN532) no valid response",
@@ -528,7 +485,7 @@ class PN532Driver:
         # InRelease: Tg=0x00 releases all targets
         self._send([_CMD_INRELEASE, 0x00])
         # Response CMD code for InRelease is 0x53; payload is just [Status]
-        payload = self._recv(self._release_delay, 0x53, read_len=12)
+        payload = self._recv(0x53, read_len=12, timeout=0.200)
         if self._debug >= 2:
             if payload is not None:
                 logger.debug("_release_target: gate %d (PN532) OK  "

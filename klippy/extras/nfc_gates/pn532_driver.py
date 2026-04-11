@@ -245,20 +245,17 @@ class PN532Driver:
         """
         Wake the PN532 from power-save mode using GetFirmwareVersion.
 
-        Two-phase read strategy:
-          1. Send the command, wait, then read 1 status byte.
-             0x01 = chip ready; 0x00 = chip still busy; exception = NACK.
-          2. Only read the full response frame once the status byte is 0x01.
+        Uses a single i2c_write + i2c_read per attempt to avoid Klipper MCU
+        command re-entrancy (two sequential i2c_read calls in one attempt
+        caused recursive send → _do_send loops in mcu.py).
 
-        First attempt uses a longer delay (100 ms) to allow for cold-start.
-        Subsequent attempts use 50 ms.  An additional 30 ms retry gap follows
-        each failed attempt.
+        First attempt waits 150 ms after TX (cold-start settling).
+        Subsequent attempts wait 75 ms.  A 50 ms gap separates each attempt.
 
         Returns True if the chip responded, False if all attempts failed.
         """
         for attempt in range(attempts):
-            # Longer delay on first attempt for cold-start power-on settling
-            wait = 0.100 if attempt == 0 else 0.050
+            wait = 0.150 if attempt == 0 else 0.075
             if self._debug >= 2:
                 logger.debug(
                     "nfc_gates: gate %d (PN532) wake attempt %d/%d — "
@@ -273,36 +270,19 @@ class PN532Driver:
                 self._i2c.i2c_write(frame)
                 time.sleep(wait)
 
-                # Phase 1: read status byte
-                status_result = self._i2c.i2c_read([], 1)
-                status_byte   = bytearray(status_result['response'])[0] \
-                                if status_result['response'] else 0x00
-                if self._debug >= 2:
-                    logger.debug(
-                        "nfc_gates: gate %d (PN532) wake attempt %d — "
-                        "status byte=0x%02X (%s)",
-                        self._gate, attempt + 1, status_byte,
-                        'READY' if status_byte == 0x01 else 'BUSY/NOT_READY')
-
-                if status_byte != 0x01:
-                    # Chip not ready yet — retry
-                    time.sleep(0.030)
-                    continue
-
-                # Phase 2: read full response frame
-                result = self._i2c.i2c_read([], 14)
+                # Single read — STATUS byte is first byte of the response.
+                # If the chip NACKs, i2c_read raises; we catch it below.
+                result = self._i2c.i2c_read([], 15)
                 raw    = bytearray(result['response'])
+
                 if self._debug >= 2:
                     logger.debug(
                         "nfc_gates: gate %d (PN532) wake attempt %d — "
-                        "full response=%s",
-                        self._gate, attempt + 1,
-                        ' '.join('%02X' % b for b in raw))
+                        "raw response (%d bytes): %s",
+                        self._gate, attempt + 1, len(raw),
+                        ' '.join('%02X' % b for b in raw) if raw else '(empty)')
 
-                # Prepend the status byte we already consumed so _check_frame
-                # sees a complete buffer (STATUS + frame body)
-                full = bytearray([status_byte]) + raw
-                payload = self._check_frame(full, 0x03)
+                payload = self._check_frame(raw, 0x03)
                 if payload is not None and len(payload) >= 4:
                     logger.info(
                         "nfc_gates: gate %d (PN532) wake OK on attempt %d — "
@@ -311,15 +291,16 @@ class PN532Driver:
                         payload[0], payload[1], payload[2])
                     return True
                 if self._debug >= 2:
+                    status_byte = raw[0] if raw else 0xFF
                     logger.debug(
                         "nfc_gates: gate %d (PN532) wake attempt %d — "
-                        "status=READY but frame parse failed, retrying",
-                        self._gate, attempt + 1)
+                        "frame parse failed (status=0x%02X), retrying",
+                        self._gate, attempt + 1, status_byte)
             except Exception as e:
                 level = logger.debug if attempt == 0 else logger.info
-                level("nfc_gates: gate %d (PN532) wake attempt %d NACK: %s",
+                level("nfc_gates: gate %d (PN532) wake attempt %d failed: %s",
                       self._gate, attempt + 1, e)
-            time.sleep(0.030)
+            time.sleep(0.050)
 
         logger.warning("nfc_gates: gate %d (PN532) failed to wake after "
                         "%d attempts — check wiring and I2C address 0x%02X",

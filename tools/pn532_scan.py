@@ -255,7 +255,7 @@ def pn532_sam_configuration(bus, address, debug=False):
 def pn532_read_passive_target(bus, address, debug=False):
     """
     Send InListPassiveTarget (MaxTg=1, ISO14443A 106kbps).
-    Returns UID as uppercase hex string if a tag is present, else None.
+    Returns a parsed tag-read dict if a tag is present, else None.
     """
     pn532_send(bus, address, [_CMD_INLISTPASSIVETARGET, 0x01, 0x00], debug)
     # Response command code = 0x4A + 1 = 0x4B
@@ -275,7 +275,17 @@ def pn532_read_passive_target(bus, address, debug=False):
         return None
 
     uid = payload[6:6 + nfcid_len]
-    return ''.join('{:02X}'.format(b) for b in uid)
+    extra_data = payload[6 + nfcid_len:]
+    return {
+        'raw_payload': payload,
+        'nbtg': payload[0],
+        'target_number': payload[1],
+        'atqa': payload[2:4],
+        'sak': payload[4],
+        'nfcid_len': nfcid_len,
+        'uid': uid,
+        'extra_data': extra_data,
+    }
 
 
 def hex_to_ascii(hex_string):
@@ -297,6 +307,39 @@ def hex_to_ascii(hex_string):
         else:
             chars.append('\\x{:02X}'.format(byte))
     return ''.join(chars)
+
+
+def bytes_to_hex(data):
+    """Format bytes as an uppercase hex string without separators."""
+    return ''.join('{:02X}'.format(b) for b in data)
+
+
+def bytes_to_spaced_hex(data):
+    """Format bytes as uppercase hex with spaces between bytes."""
+    return ' '.join('{:02X}'.format(b) for b in data)
+
+
+def bytes_to_ascii(data):
+    """Convert bytes to printable ASCII with non-printable bytes escaped."""
+    return hex_to_ascii(bytes_to_hex(data))
+
+
+def print_tag_read(tag):
+    """Print every field parsed from the PN532 tag-read response."""
+    uid_hex = bytes_to_hex(tag['uid'])
+
+    print("TAG READ", flush=True)
+    print(f"  UID:          hex={uid_hex}  ascii={bytes_to_ascii(tag['uid'])}", flush=True)
+    print(f"  NbTg:         {tag['nbtg']}", flush=True)
+    print(f"  Target:       {tag['target_number']}", flush=True)
+    print(f"  ATQA:         hex={bytes_to_spaced_hex(tag['atqa'])}  ascii={bytes_to_ascii(tag['atqa'])}", flush=True)
+    print(f"  SAK:          hex={tag['sak']:02X}  ascii={bytes_to_ascii([tag['sak']])}", flush=True)
+    print(f"  NFCID length: {tag['nfcid_len']}", flush=True)
+    if tag['extra_data']:
+        print(f"  Extra data:   hex={bytes_to_spaced_hex(tag['extra_data'])}  ascii={bytes_to_ascii(tag['extra_data'])}", flush=True)
+    else:
+        print("  Extra data:   none", flush=True)
+    print(f"  Raw payload:  hex={bytes_to_spaced_hex(tag['raw_payload'])}  ascii={bytes_to_ascii(tag['raw_payload'])}", flush=True)
 
 
 def pn532_release(bus, address, debug=False):
@@ -337,7 +380,7 @@ def scan_bus(bus_num):
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
-POLL_INTERVAL = 15   # seconds between InListPassiveTarget scans
+POLL_INTERVAL = 5   # seconds between InListPassiveTarget scans
 
 
 def main():
@@ -396,7 +439,7 @@ def main():
         else:
             print("  SAMConfiguration OK")
 
-        print("\nReady — scanning every 15 seconds.\n")
+        print(f"\nReady — scanning every {POLL_INTERVAL} seconds.\n")
 
         # ── Polling loop ──────────────────────────────────────────────────
         last_uid = None
@@ -405,12 +448,13 @@ def main():
                 if args.debug:
                     print("--- InListPassiveTarget ---")
 
-                uid = pn532_read_passive_target(bus, address, debug=args.debug)
+                tag = pn532_read_passive_target(bus, address, debug=args.debug)
 
-                if uid:
+                if tag:
                     pn532_release(bus, address, debug=args.debug)
+                    uid = bytes_to_hex(tag['uid'])
                     if uid != last_uid:
-                        print(f"TAG  hex={uid}  ascii={hex_to_ascii(uid)}", flush=True)
+                        print_tag_read(tag)
                         last_uid = uid
                     if args.once:
                         break

@@ -146,6 +146,8 @@ def test_defaults_built_in_values():
     assert d.spoolman_rfid_key  == 'rfid'
     assert d.spoolman_timeout   == 5.0
     assert d.spoolman_cache_ttl == 300.0
+    assert d.startup_polling    == -1
+    assert d.startup_poll_delay == 0.0
     assert d.poll_interval      == 30.0
     assert d.absent_threshold   == 3
     assert d.transceive_delay   == 0.250
@@ -160,6 +162,8 @@ def test_defaults_all_keys_overridden():
         'spoolman_rfid_key':  'nfc_uid',
         'spoolman_timeout':   10.0,
         'spoolman_cache_ttl': 600.0,
+        'startup_polling':    1,
+        'startup_poll_delay': 2.5,
         'poll_interval':      60.0,
         'absent_threshold':   5,
         'transceive_delay':   0.5,
@@ -170,6 +174,8 @@ def test_defaults_all_keys_overridden():
     assert d.spoolman_rfid_key  == 'nfc_uid'
     assert d.spoolman_timeout   == 10.0
     assert d.spoolman_cache_ttl == 600.0
+    assert d.startup_polling    == 1
+    assert d.startup_poll_delay == 2.5
     assert d.poll_interval      == 60.0
     assert d.absent_threshold   == 5
     assert d.transceive_delay   == 0.5
@@ -185,6 +191,8 @@ def test_defaults_partial_override():
     }))
     assert d.spoolman_url     == 'http://mainsailos.local:7912'
     assert d.debug            == 0
+    assert d.startup_polling  == -1
+    assert d.startup_poll_delay == 0.0
     assert d.poll_interval    == 30.0
     assert d.absent_threshold == 3
 
@@ -197,6 +205,30 @@ def test_defaults_poll_interval_below_min_raises():
     try:
         NFCGateDefaults(MockConfig({'poll_interval': 0.5}))
         assert False, "Expected ValueError for poll_interval below minval"
+    except (ValueError, Exception):
+        pass
+
+
+def test_defaults_startup_polling_below_min_raises():
+    try:
+        NFCGateDefaults(MockConfig({'startup_polling': -2}))
+        assert False, "Expected ValueError for startup_polling below minval"
+    except (ValueError, Exception):
+        pass
+
+
+def test_defaults_startup_polling_above_max_raises():
+    try:
+        NFCGateDefaults(MockConfig({'startup_polling': 2}))
+        assert False, "Expected ValueError for startup_polling above maxval"
+    except (ValueError, Exception):
+        pass
+
+
+def test_defaults_startup_poll_delay_below_min_raises():
+    try:
+        NFCGateDefaults(MockConfig({'startup_poll_delay': -0.1}))
+        assert False, "Expected ValueError for startup_poll_delay below minval"
     except (ValueError, Exception):
         pass
 

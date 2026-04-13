@@ -5,7 +5,7 @@
 Each filament gate gets a dedicated PN532 NFC reader wired directly to the lane MCU's I2C bus. When a spool carrying an NFC tag is loaded, the reader detects it, looks the UID up in Spoolman, and updates the Happy Hare gate map automatically — no manual spool selection needed.
 
 ```
-PN532 on EBB42 → Klipper I2C → NFC_Manager → Spoolman lookup → MMU_GATE_MAP
+PN532 on EBB42 → Klipper I2C → NFC_Manager → Spoolman lookup → MMU_SPOOLMAN
 ```
 
 ---
@@ -120,7 +120,7 @@ _NFC_SPOOL_REMOVED  GATE=<n>
 _NFC_TAG_NO_SPOOL   GATE=<n>  UID=<uid>
 ```
 
-The macros in `nfc_macros.cfg` translate these events into `MMU_GATE_MAP` calls. You can edit the macros to match your Happy Hare version without touching Python.
+The macros in `nfc_macros.cfg` translate these events into `MMU_SPOOLMAN UPDATE=1` calls. You can edit the macros to match your Happy Hare version without touching Python.
 
 ---
 
@@ -145,7 +145,7 @@ NFC_Manager updates gate state machine
 On state change: dispatch _NFC_SPOOL_CHANGED / _NFC_SPOOL_REMOVED / _NFC_TAG_NO_SPOOL
         │
         ▼
-nfc_macros.cfg calls MMU_GATE_MAP (or MMU_SPOOLMAN) on Happy Hare
+nfc_macros.cfg calls MMU_SPOOLMAN UPDATE=1 on Happy Hare
 ```
 
 ---

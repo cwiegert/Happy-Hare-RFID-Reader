@@ -18,7 +18,7 @@ SpoolmanClient searches spool extra fields for matching UID
 On match: returns spool_id to NFC_Manager
         │
         ▼
-NFC_Manager dispatches _NFC_SPOOL_CHANGED  →  MMU_GATE_MAP
+NFC_Manager dispatches _NFC_SPOOL_CHANGED  →  MMU_SPOOLMAN UPDATE=1
 ```
 
 The UID is just a string. Spoolman stores it in a custom extra field on the spool record. When a new tag appears at a gate, SpoolmanClient queries the Spoolman API and scans all spool records for a matching extra field value.
@@ -172,7 +172,7 @@ SpoolmanClient is a **lookup and cache client only**.
 
 - It resolves UID → spool record.
 - It does not know which MMU gate the spool is physically on.
-- It does not call `MMU_GATE_MAP` or any Happy Hare command.
+- It does not call `MMU_SPOOLMAN` or any Happy Hare command.
 - It does not write to Spoolman.
 
 Gate assignment belongs to NFC_Manager, which receives the spool_id from SpoolmanClient and decides whether the gate state changed. Happy Hare calls happen in `nfc_macros.cfg`.

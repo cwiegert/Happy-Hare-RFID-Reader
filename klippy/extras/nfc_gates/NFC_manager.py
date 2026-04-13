@@ -28,9 +28,9 @@
 #
 # NFCGate / NFCGateManager own the lane/gate state machine.  They decide
 # whether a read is unchanged, changed, UID-only, or removed, and they are the
-# only layer that orchestrates Happy Hare-facing commands.  All MMU_GATE_MAP
-# and MMU_SPOOLMAN calls should flow from this manager so Happy Hare remains
-# the source of truth for gate maps and Spoolman synchronization.
+# only layer that orchestrates Happy Hare-facing commands.  The default macro
+# boundary uses MMU_SPOOLMAN so Happy Hare remains the source of truth for
+# gate maps and Spoolman synchronization.
 #
 # Intended command flow:
 #   New spool:  _NFC_SPOOL_CHANGED GATE=<gate> SPOOL_ID=<spool_id> UID=<uid>
@@ -559,6 +559,10 @@ class NFCGateDefaults:
                                                    minval=0., maxval=3600.)
         self.poll_interval      = config.getfloat('poll_interval', 30.,
                                                    minval=1., maxval=3600.)
+        self.startup_polling    = config.getint('startup_polling', -1,
+                                                 minval=-1, maxval=1)
+        self.startup_poll_delay = config.getfloat('startup_poll_delay', 0.,
+                                                   minval=0., maxval=3600.)
         self.absent_threshold   = config.getint('absent_threshold', 3,
                                                  minval=1, maxval=255)
         self.transceive_delay   = config.getfloat('transceive_delay', 0.250,
@@ -604,6 +608,13 @@ class NFCGate:
         self._poll_interval    = config.getfloat('poll_interval',
                                                   d.poll_interval if d else 30.,
                                                   minval=1., maxval=3600.)
+        self._startup_polling  = config.getint('startup_polling',
+                                                d.startup_polling if d else -1,
+                                                minval=-1, maxval=1)
+        self._startup_poll_delay = config.getfloat(
+            'startup_poll_delay',
+            d.startup_poll_delay if d else 0.,
+            minval=0., maxval=3600.)
         self._absent_threshold = config.getint('absent_threshold',
                                                 d.absent_threshold if d else 3,
                                                 minval=1, maxval=255)
@@ -901,8 +912,20 @@ class NFCGate:
             else:
                 self._gcode.respond_info(
                     "✅ NFC[%s]: reader ready. "
-                    "Run NFC_GATE NAME=%s READ=1 to start polling."
-                    % (self._name, self._name))
+                    "%s"
+                    % (self._name,
+                       "Startup polling is enabled; first poll in %.1fs."
+                       % self._startup_poll_delay
+                       if self._startup_polling == 1
+                       else "Run NFC_GATE NAME=%s READ=1 to start polling."
+                            % self._name))
+
+        if not self._failed and self._startup_polling == 1:
+            self._polling = True
+            first_poll = self.reactor.monotonic() + self._startup_poll_delay
+            self.reactor.update_timer(self._poll_timer, first_poll)
+            logger.info("nfc_gate: [%s] startup polling enabled; first poll in %.1fs",
+                        self._name, self._startup_poll_delay)
 
         return self.reactor.NEVER
 
@@ -1044,6 +1067,10 @@ class NFCGateManager:
 
         self._poll_interval    = config.getfloat('poll_interval', 30.,
                                                   minval=1., maxval=3600.)
+        self._startup_polling  = config.getint('startup_polling', -1,
+                                                minval=-1, maxval=1)
+        self._startup_poll_delay = config.getfloat('startup_poll_delay', 0.,
+                                                   minval=0., maxval=3600.)
         self._absent_threshold = config.getint('absent_threshold', 3,
                                                 minval=1, maxval=255)
         transceive_delay = config.getfloat('transceive_delay', 0.035,
@@ -1199,8 +1226,17 @@ class NFCGateManager:
         logger.info("nfc_gates: %d/%d readers initialised",
                      ok_count, self._gate_count)
 
-        # Shared [nfc_gates] is not part of the documented path yet.  Keep it
-        # manual-start only, matching the per-lane manager.
+        if self._startup_polling == 1 and ok_count > 0:
+            self._polling = True
+            first_poll = self.reactor.monotonic() + self._startup_poll_delay
+            self.reactor.update_timer(self._poll_timer, first_poll)
+            logger.info("nfc_gates: startup polling enabled; first poll in %.1fs",
+                        self._startup_poll_delay)
+        else:
+            # Shared [nfc_gates] is not part of the documented path yet.  Keep
+            # it manual-start by default, matching the per-lane manager.
+            logger.info("nfc_gates: startup polling disabled; use "
+                        "NFC_GATE NAME=gate0 READ=1 to start polling")
 
     def _handle_disconnect(self):
         self._polling = False

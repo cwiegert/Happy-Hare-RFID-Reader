@@ -53,21 +53,21 @@ Keeping SpoolmanClient gate-agnostic also means it can be used from any context 
 
 ## Decision: Happy Hare Calls Are Behind `_NFC_*` Macros
 
-**What we decided:** NFC_Manager dispatches three GCode macros. Those macros call `MMU_GATE_MAP`. NFC_Manager does not call `MMU_GATE_MAP` directly.
+**What we decided:** NFC_Manager dispatches three GCode macros. Those macros call `MMU_SPOOLMAN`. NFC_Manager does not call `MMU_SPOOLMAN` directly.
 
 ```
 NFC_Manager → _NFC_SPOOL_CHANGED GATE=n SPOOL_ID=id UID=uid
            → _NFC_SPOOL_REMOVED  GATE=n
            → _NFC_TAG_NO_SPOOL   GATE=n UID=uid
 
-nfc_macros.cfg → MMU_GATE_MAP GATE={gate} SPOOLMAN_ID={spool_id}
+nfc_macros.cfg → MMU_SPOOLMAN UPDATE=1 GATE={gate} SPOOLID={spool_id}
 ```
 
-**Why:** Happy Hare's GCode API evolves between versions. The exact command for "tell Happy Hare about this spool" belongs in editable GCode config, not Python. The default macro uses the explicit gate-map form because NFC_Manager runs outside Happy Hare's selected-gate context and already knows the physical gate that produced the read. The older HH PN532 skeleton's `MMU_GATE_MAP NEXT_SPOOLID=<id>` does not identify the lane by itself, so it is not the right default for this external manager design.
+**Why:** Happy Hare's GCode API evolves between versions. The exact command for "tell Happy Hare about this spool" belongs in editable GCode config, not Python. The default macro uses `MMU_SPOOLMAN UPDATE=1` because Happy Hare owns the Spoolman-backed gate mapping and cache. NFC_Manager already knows the physical gate that produced the read, so it passes both `GATE` and `SPOOLID` into Happy Hare's Spoolman synchronization path.
 
 This also makes the integration boundary visible. Anyone debugging a Happy Hare integration problem knows to look in `nfc_macros.cfg` — not in `pn532_driver.py`.
 
-**Corollary:** If a Happy Hare version requires an additional `MMU_SPOOLMAN` call, add it to `nfc_macros.cfg` alongside `MMU_GATE_MAP`. Do not add it to `PN532Driver` or `SpoolmanClient`.
+**Corollary:** If a Happy Hare version requires a different synchronization command, adjust `nfc_macros.cfg`. Do not add it to `PN532Driver` or `SpoolmanClient`.
 
 ---
 
@@ -106,7 +106,7 @@ absent_threshold: 3    # consecutive missed reads
 
 **What we decided:** On startup, NFC does not blindly overwrite Happy Hare's gate map with whatever the readers see at boot time.
 
-**Why:** Happy Hare already starts with a known gate/filament map from its own config and persisted state. Tags may not be physically near readers at startup. A spool may be in a gate but temporarily unreadable. If NFC declared every gate empty on boot and then started filling them in as reads succeed, it would create a noisy burst of `MMU_GATE_MAP` updates during Klipper startup.
+**Why:** Happy Hare already starts with a known gate/filament map from its own config and persisted state. Tags may not be physically near readers at startup. A spool may be in a gate but temporarily unreadable. If NFC declared every gate empty on boot and then started filling them in as reads succeed, it would create a noisy burst of `MMU_SPOOLMAN UPDATE=1` updates during Klipper startup.
 
 **Current implication:** NFC_Manager treats reads as events (state changes), not as complete authority over the gate map. It updates Happy Hare when something changes, not when it confirms that the gate is in the state it was already in.
 
@@ -161,7 +161,7 @@ The merge strategy (copy-if-absent, append-missing-sections) means that new feat
                                ┌─────────────────┐
                                │  nfc_macros.cfg  │
                                │                  │
-                               │  MMU_GATE_MAP    │
+                               │  MMU_SPOOLMAN    │
                                │  (Happy Hare)    │
                                └─────────────────┘
 ```

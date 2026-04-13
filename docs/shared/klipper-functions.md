@@ -189,7 +189,7 @@ gcode:
     {% set spool_id = params.SPOOL_ID | int %}
     {% set uid      = params.UID %}
     { action_respond_info("😊 NFC gate %d: spool %d detected (UID %s). Sending to Happy Hare." % (gate, spool_id, uid)) }
-    MMU_GATE_MAP GATE={gate} SPOOLMAN_ID={spool_id}
+    MMU_SPOOLMAN UPDATE=1 GATE={gate} SPOOLID={spool_id}
 ```
 
 ### `_NFC_SPOOL_REMOVED`
@@ -208,8 +208,8 @@ Default body:
 [gcode_macro _NFC_SPOOL_REMOVED]
 gcode:
     {% set gate = params.GATE | int %}
-    { action_respond_info("🧹 NFC gate %d: spool removed. Clearing Happy Hare gate." % gate) }
-    MMU_GATE_MAP GATE={gate} SPOOLMAN_ID=-1
+    { action_respond_info("🧹 NFC gate %d: spool removed. Clearing Happy Hare Spoolman gate." % gate) }
+    MMU_SPOOLMAN UPDATE=1 GATE={gate} SPOOLID=-1
 ```
 
 ### `_NFC_TAG_NO_SPOOL`
@@ -239,29 +239,30 @@ gcode:
 If you want unknown tags to clear the Happy Hare gate, add:
 
 ```gcode
-MMU_GATE_MAP GATE={gate} SPOOLMAN_ID=-1
+MMU_SPOOLMAN UPDATE=1 GATE={gate} SPOOLID=-1
 ```
 
 ## Happy Hare Commands Used By The Default Macros
 
 | Command | Parameters | Meaning |
 |---|---|---|
-| `MMU_GATE_MAP GATE=<gate> SPOOLMAN_ID=<id>` | `GATE`, `SPOOLMAN_ID` | Tells Happy Hare the resolved spool ID for one explicit gate |
-| `MMU_GATE_MAP GATE=<gate> SPOOLMAN_ID=-1` | `GATE`, `SPOOLMAN_ID=-1` | Clears the spool assignment for one explicit gate |
+| `MMU_SPOOLMAN UPDATE=1 GATE=<gate> SPOOLID=<id>` | `UPDATE`, `GATE`, `SPOOLID` | Writes the resolved spool ID to Happy Hare's Spoolman-backed gate map |
+| `MMU_SPOOLMAN UPDATE=1 GATE=<gate> SPOOLID=-1` | `UPDATE`, `GATE`, `SPOOLID=-1` | Clears the Spoolman-backed gate assignment |
 
-The default command uses the explicit gate form because NFC_Manager runs outside Happy Hare's selected-gate context:
+The default command uses `MMU_SPOOLMAN UPDATE=1` because Happy Hare owns the Spoolman-backed gate mapping and cache:
 
 ```gcode
-MMU_GATE_MAP GATE=<gate> SPOOLMAN_ID=<spool_id>
+MMU_SPOOLMAN UPDATE=1 GATE=<gate> SPOOLID=<spool_id>
 ```
 
-The older Happy Hare PN532 skeleton used the selected/next spool form:
+Older or different Happy Hare flows may show commands such as:
 
 ```gcode
 MMU_GATE_MAP NEXT_SPOOLID=<ID>
+MMU_GATE_MAP GATE=<gate> SPOOLMAN_ID=<spool_id>
 ```
 
-That is not enough for this external NFC_Manager architecture because it does not identify which physical gate was read. Keep Happy Hare command differences inside `nfc_macros.cfg`. Do not put Happy Hare commands in `PN532Driver` or `SpoolmanClient`.
+Those are not the default here. `NEXT_SPOOLID` does not identify which physical gate was read, and `MMU_GATE_MAP` alone does not write the Spoolman DB gate mapping. Keep Happy Hare command differences inside `nfc_macros.cfg`. Do not put Happy Hare commands in `PN532Driver` or `SpoolmanClient`.
 
 ## Test Macro Boundary Without Hardware
 

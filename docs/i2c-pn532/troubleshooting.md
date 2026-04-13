@@ -180,22 +180,22 @@ The includes in `printer.cfg` are in the wrong order. Fix:
 
 ---
 
-## Polling Is Running But MMU_GATE_MAP Is Not Called
+## Polling Is Running But Happy Hare Is Not Updating
 
 The NFC reader is detecting tags and looking up spools, but Happy Hare is not being updated.
 
 Check `nfc_macros.cfg`. The default `_NFC_SPOOL_CHANGED` calls:
 
 ```gcode
-MMU_GATE_MAP GATE=<gate> SPOOLMAN_ID=<spool_id>
+MMU_SPOOLMAN UPDATE=1 GATE=<gate> SPOOLID=<spool_id>
 ```
 
 Possible causes:
 
 - The macro was accidentally deleted or commented out.
-- Your installed `~/printer_data/config/NFC/nfc_macros.cfg` still has the older HH-skeleton body, `MMU_GATE_MAP NEXT_SPOOLID=...`.
-- Your Happy Hare version expects a different explicit gate-map parameter spelling — check the Happy Hare changelog.
-- Happy Hare is in a state where it rejects `MMU_GATE_MAP` (e.g. a print is active with gate locks on).
+- Your installed `~/printer_data/config/NFC/nfc_macros.cfg` still has an older body such as `MMU_GATE_MAP NEXT_SPOOLID=...` or `MMU_GATE_MAP GATE=...`.
+- Moonraker does not have Spoolman configured, so Happy Hare cannot write the gate mapping to the Spoolman DB.
+- Happy Hare is in a state where it rejects `MMU_SPOOLMAN UPDATE=1` (e.g. a print is active with gate locks on).
 
 Test the macro boundary directly, without hardware:
 

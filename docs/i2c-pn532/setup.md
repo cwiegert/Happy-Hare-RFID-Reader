@@ -114,10 +114,12 @@ All polling, Spoolman, timing, and logging settings are inherited from the base 
 
 ```ini
 [nfc_gate lane2]
-mmu_gate:   2
-i2c_mcu:    lane2
-i2c_bus:    i2c3_PB3_PB4
-debug:      2          ; verbose logging for this lane only
+mmu_gate:         2
+i2c_mcu:          lane2
+i2c_bus:          i2c3_PB3_PB4
+debug:            2          ; verbose logging for this lane only
+startup_polling:  1          ; optional: auto-start this lane after init
+startup_poll_delay: 4.0      ; optional: stagger first startup poll
 ```
 
 See [Configuration Reference](../shared/configuration.md) for a complete list of all available settings.
@@ -187,6 +189,24 @@ NFC_GATE NAME=lane0 READ=1
 ```
 
 To start all lanes, run `READ=1` for each. Background polling runs at `poll_interval` seconds (default 30).
+
+By default, `startup_polling: -1` keeps polling manual-start only. Set `startup_polling: 1` in the base `[nfc_gate]` section or in a specific `[nfc_gate laneN]` section if you want polling to begin automatically after PN532 init succeeds.
+
+When enabling startup polling on multiple lanes, stagger `startup_poll_delay` per lane so all readers do not enter their first poll cycle at the same time:
+
+```ini
+[nfc_gate lane0]
+startup_polling:    1
+startup_poll_delay: 0.0
+
+[nfc_gate lane1]
+startup_polling:    1
+startup_poll_delay: 2.0
+
+[nfc_gate lane2]
+startup_polling:    1
+startup_poll_delay: 4.0
+```
 
 ---
 

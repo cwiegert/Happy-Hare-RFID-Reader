@@ -115,8 +115,60 @@ The cache prevents repeated Spoolman API calls when the same spool stays on a ga
 ### Polling
 
 ```ini
-poll_interval:    30
-absent_threshold: 3
+startup_polling:    -1
+startup_poll_delay: 0.0
+poll_interval:      30
+absent_threshold:   3
+```
+
+#### `startup_polling`
+
+Controls whether polling starts automatically after Klipper connects and the PN532 delayed init succeeds.
+
+| Value | Behaviour |
+|---:|---|
+| `-1` | Default — manual start only. Run `NFC_GATE NAME=<lane> READ=1` when you want polling. |
+| `0` | Explicitly disabled on startup. Useful as a lane-level override when the base section enables startup polling. |
+| `1` | Start polling automatically after the reader initializes successfully. |
+
+Accepted range: `-1` – `1`.
+
+#### `startup_poll_delay`
+
+Seconds to wait before the first automatic poll when `startup_polling: 1`.
+
+| Value | Behaviour |
+|---:|---|
+| `0.0` | Default — first poll is scheduled immediately after PN532 init succeeds |
+| `2.0`, `4.0`, etc. | Staggers lane startup so all readers do not enter their first poll cycle at the same time |
+
+Accepted range: `0.0` – `3600.0` seconds.
+
+The base `[nfc_gate]` value applies to every lane. Override it in a specific `[nfc_gate laneN]` section when one reader should behave differently:
+
+```ini
+[nfc_gate lane4]
+mmu_gate:         4
+i2c_mcu:          lane4
+i2c_bus:          i2c3_PB3_PB4
+startup_polling: 1
+startup_poll_delay: 8.0
+```
+
+For multi-lane automatic startup, stagger each lane:
+
+```ini
+[nfc_gate lane0]
+startup_polling:    1
+startup_poll_delay: 0.0
+
+[nfc_gate lane1]
+startup_polling:    1
+startup_poll_delay: 2.0
+
+[nfc_gate lane2]
+startup_polling:    1
+startup_poll_delay: 4.0
 ```
 
 #### `poll_interval`
@@ -306,7 +358,7 @@ Called when a new UID is resolved to a Spoolman spool.
 
 Default body:
 ```gcode
-MMU_GATE_MAP GATE={gate} SPOOLMAN_ID={spool_id}
+MMU_SPOOLMAN UPDATE=1 GATE={gate} SPOOLID={spool_id}
 ```
 
 ### `_NFC_SPOOL_REMOVED`
@@ -317,7 +369,7 @@ Called after `absent_threshold` consecutive missed polls.
 
 Default body:
 ```gcode
-MMU_GATE_MAP GATE={gate} SPOOLMAN_ID=-1
+MMU_SPOOLMAN UPDATE=1 GATE={gate} SPOOLID=-1
 ```
 
 ### `_NFC_TAG_NO_SPOOL`

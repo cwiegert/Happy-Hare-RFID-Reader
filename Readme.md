@@ -73,17 +73,31 @@ spoolman_url:      auto
 spoolman_rfid_key: rfid_tag
 ```
 
-Restart Klipper and verify:
+Add the Moonraker update manager block to `~/printer_data/config/moonraker.conf`:
+
+```ini
+[update_manager emu_nfc_reader]
+type:             git_repo
+path:             ~/emu-nfc-reader
+origin:           git@github.com:<your-github-username>/NFC-Reader.git
+primary_branch:   main
+managed_services: klipper
+install_script:   install.sh
+```
+
+Restart Klipper and Moonraker:
 
 ```bash
-sudo systemctl restart klipper
+sudo systemctl restart klipper moonraker
 ```
+
+Verify:
 
 ```gcode
 NFC_GATE_STATUS
 ```
 
-See [Install & Uninstall](docs/shared/install-uninstall.md) for the Moonraker update manager block and full first-boot checklist.
+See [Install & Uninstall](docs/shared/install-uninstall.md) for the full first-boot checklist and uninstall steps.
 
 ---
 

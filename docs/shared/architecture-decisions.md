@@ -60,10 +60,10 @@ NFC_Manager → _NFC_SPOOL_CHANGED GATE=n SPOOL_ID=id UID=uid
            → _NFC_SPOOL_REMOVED  GATE=n
            → _NFC_TAG_NO_SPOOL   GATE=n UID=uid
 
-nfc_macros.cfg → MMU_GATE_MAP NEXT_SPOOLID={spool_id}
+nfc_macros.cfg → MMU_GATE_MAP GATE={gate} SPOOLMAN_ID={spool_id}
 ```
 
-**Why:** Happy Hare's GCode API evolves between versions. The exact command for "tell Happy Hare about this spool" is currently modeled after the HH PN532 skeleton's `MMU_GATE_MAP NEXT_SPOOLID=<id>`, may later include `MMU_SPOOLMAN UPDATE=1`, and could change again. By keeping the actual command in an editable GCode macro, users can adjust the Happy Hare call for their version without touching Python.
+**Why:** Happy Hare's GCode API evolves between versions. The exact command for "tell Happy Hare about this spool" belongs in editable GCode config, not Python. The default macro uses the explicit gate-map form because NFC_Manager runs outside Happy Hare's selected-gate context and already knows the physical gate that produced the read. The older HH PN532 skeleton's `MMU_GATE_MAP NEXT_SPOOLID=<id>` does not identify the lane by itself, so it is not the right default for this external manager design.
 
 This also makes the integration boundary visible. Anyone debugging a Happy Hare integration problem knows to look in `nfc_macros.cfg` — not in `pn532_driver.py`.
 

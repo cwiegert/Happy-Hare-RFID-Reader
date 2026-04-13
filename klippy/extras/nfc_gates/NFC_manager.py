@@ -486,7 +486,9 @@ class KlipperInterface:
             else:
                 logger.warning("nfc_gates: unknown event type %r", event_type)
                 return
+            logger.info("nfc_gates: dispatching GCode: %s", script)
             gcode.run_script(script)
+            logger.info("nfc_gates: dispatched GCode OK: %s", script)
         except Exception:
             logger.exception("nfc_gates: GCode dispatch failed for gate %d event %r",
                               gate, event_type)
@@ -693,6 +695,7 @@ class NFCGate:
             "  NFC_GATE NAME=%s INIT=1    - re-run reader init" % self._name,
             "  NFC_GATE NAME=%s SCAN=1    - scan hardware once, no Spoolman/HH dispatch" % self._name,
             "  NFC_GATE NAME=%s POLL=1    - run one full NFC_Manager poll for this gate" % self._name,
+            "  NFC_GATE NAME=%s APPLY=1   - send cached spool to Happy Hare now" % self._name,
             "  NFC_GATE NAME=%s CLEAR_CACHE=1 - clear cached spool lookup, no HH dispatch" % self._name,
             "  NFC_GATE NAME=%s READ=1    - start timer polling" % self._name,
             "  NFC_GATE NAME=%s READ=0    - stop timer polling" % self._name,
@@ -764,6 +767,24 @@ class NFCGate:
             "Spoolman again."
             % (self._name, self._gate))
 
+    def _apply_current_spool(self, gcmd):
+        """Dispatch the current cached spool to Happy Hare immediately."""
+        if self._state.current_spool is None:
+            gcmd.respond_info(
+                "NFC_GATE[%s]: no cached spool_id to apply; run POLL=1 first"
+                % self._name)
+            return
+        uid_hex = self._state.current_uid or ''
+        spool_id = self._state.current_spool
+        logger.info(
+            "nfc_gate: [%s] gate %d — manual apply spool=%s uid=%s",
+            self._name, self._gate, spool_id, uid_hex)
+        self._klipper.dispatch(EVENT_CHANGED, self._gate, uid_hex, spool_id)
+        gcmd.respond_info(
+            "NFC_GATE[%s]: dispatched cached spool_id=%s for gate %d to "
+            "Happy Hare"
+            % (self._name, spool_id, self._gate))
+
     def _cmd_low_level_debug(self, gcmd):
         if _low_level_requested(gcmd) and self._polling:
             self._polling = False
@@ -807,6 +828,9 @@ class NFCGate:
             self._poll()
             gcmd.respond_info("NFC_GATE[%s]: one poll complete; %s" %
                               (self._name, self.status_line().strip()))
+            return
+        if gcmd.get_int("APPLY", 0):
+            self._apply_current_spool(gcmd)
             return
         self._cmd_help(gcmd)
 
@@ -1284,6 +1308,24 @@ class NFCGateManager:
             if hasattr(reader, '_release_current_target'):
                 reader._release_current_target(reason="manual_scan")
 
+    def _apply_current_spool_gate(self, gcmd, i):
+        """Dispatch the current cached spool for one gate to Happy Hare."""
+        state = self._states[i]
+        if state.current_spool is None:
+            gcmd.respond_info(
+                "NFC_GATE[gate%d]: no cached spool_id to apply; run POLL=1 first"
+                % i)
+            return
+        uid_hex = state.current_uid or ''
+        spool_id = state.current_spool
+        logger.info(
+            "nfc_gates: gate %d — manual apply spool=%s uid=%s",
+            i, spool_id, uid_hex)
+        self._klipper.dispatch(EVENT_CHANGED, i, uid_hex, spool_id)
+        gcmd.respond_info(
+            "NFC_GATE[gate%d]: dispatched cached spool_id=%s to Happy Hare"
+            % (i, spool_id))
+
     def _clear_spool_cache_gate(self, gcmd, i):
         """Clear cached spool resolution for one gate without dispatching."""
         state = self._states[i]
@@ -1375,6 +1417,9 @@ class NFCGateManager:
             gcmd.respond_info("NFC_GATE[gate%d]: one poll complete; %s" %
                               (gate, self._gate_status_line(gate)))
             return
+        if gcmd.get_int("APPLY", 0):
+            self._apply_current_spool_gate(gcmd, gate)
+            return
 
         lines = [
             "NFC_GATE NAME=gate%d commands:" % gate,
@@ -1382,6 +1427,7 @@ class NFCGateManager:
             "  NFC_GATE NAME=gate%d INIT=1" % gate,
             "  NFC_GATE NAME=gate%d SCAN=1" % gate,
             "  NFC_GATE NAME=gate%d POLL=1" % gate,
+            "  NFC_GATE NAME=gate%d APPLY=1" % gate,
             "  NFC_GATE NAME=gate%d CLEAR_CACHE=1" % gate,
             "  NFC_GATE NAME=gate%d READ=1" % gate,
             "  NFC_GATE NAME=gate%d READ=0" % gate,

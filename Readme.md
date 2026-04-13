@@ -165,6 +165,7 @@ NFC_GATE NAME=lane0 STATUS=1      ; show one gate
 NFC_GATE NAME=lane0 INIT=1        ; initialise PN532
 NFC_GATE NAME=lane0 SCAN=1        ; one hardware read, no state machine
 NFC_GATE NAME=lane0 POLL=1        ; one full poll including Spoolman lookup
+NFC_GATE NAME=lane0 APPLY=1       ; force cached spool to Happy Hare
 NFC_GATE NAME=lane0 CLEAR_CACHE=1 ; clear cached spool_id, no HH dispatch
 NFC_GATE NAME=lane0 READ=1        ; start reactor timer polling
 NFC_GATE NAME=lane0 READ=0        ; stop reactor timer polling

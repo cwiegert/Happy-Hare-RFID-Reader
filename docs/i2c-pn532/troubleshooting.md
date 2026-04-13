@@ -187,14 +187,14 @@ The NFC reader is detecting tags and looking up spools, but Happy Hare is not be
 Check `nfc_macros.cfg`. The default `_NFC_SPOOL_CHANGED` calls:
 
 ```gcode
-MMU_GATE_MAP NEXT_SPOOLID=<spool_id>
+MMU_GATE_MAP GATE=<gate> SPOOLMAN_ID=<spool_id>
 ```
 
 Possible causes:
 
 - The macro was accidentally deleted or commented out.
-- Your installed `~/printer_data/config/NFC/nfc_macros.cfg` still has an older macro body such as `MMU_GATE_MAP GATE=... SPOOLMAN_ID=...`.
-- `MMU_GATE_MAP NEXT_SPOOLID=...` is not valid in your Happy Hare version — check the Happy Hare changelog.
+- Your installed `~/printer_data/config/NFC/nfc_macros.cfg` still has the older HH-skeleton body, `MMU_GATE_MAP NEXT_SPOOLID=...`.
+- Your Happy Hare version expects a different explicit gate-map parameter spelling — check the Happy Hare changelog.
 - Happy Hare is in a state where it rejects `MMU_GATE_MAP` (e.g. a print is active with gate locks on).
 
 Test the macro boundary directly, without hardware:

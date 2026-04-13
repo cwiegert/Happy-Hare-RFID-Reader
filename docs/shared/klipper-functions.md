@@ -24,6 +24,7 @@ This page is the operator reference for every Klipper command and macro used by 
 | `NFC_GATE NAME=<lane> INIT=1` | `NAME`, `INIT` | Runs PN532 initialization for one lane |
 | `NFC_GATE NAME=<lane> SCAN=1` | `NAME`, `SCAN` | Reads hardware once, no Spoolman lookup, no state-machine dispatch |
 | `NFC_GATE NAME=<lane> POLL=1` | `NAME`, `POLL` | Runs one full manager poll: read, lookup, state update, macro dispatch if changed |
+| `NFC_GATE NAME=<lane> APPLY=1` | `NAME`, `APPLY` | Sends the lane's cached spool assignment to Happy Hare immediately |
 | `NFC_GATE NAME=<lane> CLEAR_CACHE=1` | `NAME`, `CLEAR_CACHE` | Clears cached spool resolution without dispatching a Happy Hare change |
 | `NFC_GATE NAME=<lane> READ=1` | `NAME`, `READ` | Starts reactor-timer polling for one lane |
 | `NFC_GATE NAME=<lane> READ=0` | `NAME`, `READ` | Stops reactor-timer polling for one lane |
@@ -38,6 +39,7 @@ This page is the operator reference for every Klipper command and macro used by 
 | `INIT` | `1` | `NFC_GATE` | Re-run PN532 wake, firmware check, and SAM configuration |
 | `SCAN` | `1` | `NFC_GATE` | Hardware read only; useful to get UID without triggering Happy Hare |
 | `POLL` | `1` | `NFC_GATE` | Full pipeline once; can trigger `_NFC_*` macros if state changes |
+| `APPLY` | `1` | `NFC_GATE` | Dispatches `_NFC_SPOOL_CHANGED` using the lane's cached `spool_id` and UID. Use after `POLL=1` when you need to force the Happy Hare handoff without changing the tag |
 | `CLEAR_CACHE` | `1` | `NFC_GATE` | Clears the lane's cached `spool_id`, clears the Spoolman lookup cache, and forces the next tag read to resolve Spoolman again. Alias: `CLEAR=1` |
 | `READ` | `0` or `1` | `NFC_GATE` | `1` starts timer polling, `0` stops it |
 | `HELP` | `1` | `NFC_GATE` | Print command help |
@@ -106,6 +108,20 @@ Runs the complete manager path once:
 
 Use it to answer: "Does the complete NFC to Happy Hare pipeline work?"
 
+### `NFC_GATE NAME=<lane> APPLY=1`
+
+```gcode
+NFC_GATE NAME=lane4 APPLY=1
+```
+
+Forces the current cached lane assignment through the Happy Hare macro boundary. It does not read the PN532 and does not call Spoolman. It simply dispatches:
+
+```gcode
+_NFC_SPOOL_CHANGED GATE=<gate> SPOOL_ID=<cached_spool_id> UID=<cached_uid>
+```
+
+Use this after `POLL=1` or active polling has already resolved a UID to a spool, but Happy Hare did not update. If this command prints "no cached spool_id", run `NFC_GATE NAME=<lane> POLL=1` first.
+
 ### `NFC_GATE NAME=<lane> CLEAR_CACHE=1`
 
 ```gcode
@@ -173,9 +189,7 @@ gcode:
     {% set spool_id = params.SPOOL_ID | int %}
     {% set uid      = params.UID %}
     { action_respond_info("😊 NFC gate %d: spool %d detected (UID %s). Sending to Happy Hare." % (gate, spool_id, uid)) }
-    MMU_GATE_MAP NEXT_SPOOLID={spool_id}
-    # Alternate Happy Hare variants may use explicit gate mapping:
-    # MMU_GATE_MAP GATE={gate} SPOOLMAN_ID={spool_id}
+    MMU_GATE_MAP GATE={gate} SPOOLMAN_ID={spool_id}
 ```
 
 ### `_NFC_SPOOL_REMOVED`
@@ -194,10 +208,8 @@ Default body:
 [gcode_macro _NFC_SPOOL_REMOVED]
 gcode:
     {% set gate = params.GATE | int %}
-    { action_respond_info("🧹 NFC gate %d: spool removed. Clearing Happy Hare next spool." % gate) }
-    MMU_GATE_MAP NEXT_SPOOLID=-1
-    # Alternate Happy Hare variants may use explicit gate mapping:
-    # MMU_GATE_MAP GATE={gate} SPOOLMAN_ID=-1
+    { action_respond_info("🧹 NFC gate %d: spool removed. Clearing Happy Hare gate." % gate) }
+    MMU_GATE_MAP GATE={gate} SPOOLMAN_ID=-1
 ```
 
 ### `_NFC_TAG_NO_SPOOL`
@@ -224,32 +236,32 @@ gcode:
         (gate, uid, uid)) }
 ```
 
-If you want unknown tags to clear Happy Hare's next spool, add:
+If you want unknown tags to clear the Happy Hare gate, add:
 
 ```gcode
-MMU_GATE_MAP NEXT_SPOOLID=-1
+MMU_GATE_MAP GATE={gate} SPOOLMAN_ID=-1
 ```
 
 ## Happy Hare Commands Used By The Default Macros
 
 | Command | Parameters | Meaning |
 |---|---|---|
-| `MMU_GATE_MAP NEXT_SPOOLID=<id>` | `NEXT_SPOOLID` integer spool ID | Tells Happy Hare the resolved next spool ID |
-| `MMU_GATE_MAP NEXT_SPOOLID=-1` | `NEXT_SPOOLID=-1` | Clears the next spool assignment |
+| `MMU_GATE_MAP GATE=<gate> SPOOLMAN_ID=<id>` | `GATE`, `SPOOLMAN_ID` | Tells Happy Hare the resolved spool ID for one explicit gate |
+| `MMU_GATE_MAP GATE=<gate> SPOOLMAN_ID=-1` | `GATE`, `SPOOLMAN_ID=-1` | Clears the spool assignment for one explicit gate |
 
-The default command is modeled after the Happy Hare PN532 skeleton:
-
-```gcode
-MMU_GATE_MAP NEXT_SPOOLID=<ID>
-```
-
-Some Happy Hare variants may use an explicit gate form instead:
+The default command uses the explicit gate form because NFC_Manager runs outside Happy Hare's selected-gate context:
 
 ```gcode
 MMU_GATE_MAP GATE=<gate> SPOOLMAN_ID=<spool_id>
 ```
 
-Keep that difference inside `nfc_macros.cfg`. Do not put Happy Hare commands in `PN532Driver` or `SpoolmanClient`.
+The older Happy Hare PN532 skeleton used the selected/next spool form:
+
+```gcode
+MMU_GATE_MAP NEXT_SPOOLID=<ID>
+```
+
+That is not enough for this external NFC_Manager architecture because it does not identify which physical gate was read. Keep Happy Hare command differences inside `nfc_macros.cfg`. Do not put Happy Hare commands in `PN532Driver` or `SpoolmanClient`.
 
 ## Test Macro Boundary Without Hardware
 

@@ -306,7 +306,7 @@ Called when a new UID is resolved to a Spoolman spool.
 
 Default body:
 ```gcode
-MMU_GATE_MAP NEXT_SPOOLID={spool_id}
+MMU_GATE_MAP GATE={gate} SPOOLMAN_ID={spool_id}
 ```
 
 ### `_NFC_SPOOL_REMOVED`
@@ -317,7 +317,7 @@ Called after `absent_threshold` consecutive missed polls.
 
 Default body:
 ```gcode
-MMU_GATE_MAP NEXT_SPOOLID=-1
+MMU_GATE_MAP GATE={gate} SPOOLMAN_ID=-1
 ```
 
 ### `_NFC_TAG_NO_SPOOL`

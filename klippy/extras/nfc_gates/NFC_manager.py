@@ -820,21 +820,17 @@ class NFCGate:
             self._failed = True
             logger.error("nfc_gate: [%s] init error: %s", self._name, e)
 
+        gcode = self._printer.lookup_object('gcode')
         if self._failed:
-            if self._debug >= 2:
-                logger.debug("nfc_gate: [%s] init failed — polling thread "
-                              "will NOT start", self._name)
+            gcode.respond_info(
+                "NFC[%s]: reader not ready — check wiring. "
+                "Run NFC_GATE NAME=%s INIT=1 after fixing."
+                % (self._name, self._name))
         else:
-            if self._debug >= 2:
-                logger.debug("nfc_gate: [%s] init OK — starting polling thread "
-                              "(interval=%.0fs)", self._name, self._poll_interval)
-            self._stop_event.clear()
-            if not self._thread.is_alive():
-                self._thread = threading.Thread(
-                    target=self._poll_loop,
-                    name='nfc-gate-%s' % self._name,
-                    daemon=True)
-                self._thread.start()
+            gcode.respond_info(
+                "NFC[%s]: reader ready. "
+                "Run NFC_GATE NAME=%s READ=1 to start polling."
+                % (self._name, self._name))
 
     def _handle_disconnect(self):
         if self._debug >= 2:

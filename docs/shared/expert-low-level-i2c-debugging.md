@@ -37,7 +37,7 @@ init: gate 0 (PN532) low_level_debug enabled — skipping wake and SAMConfigurat
 You must run the manual init sequence (Phase 1 + Phase 2 below) before any tag read commands will work. Then ask for the command list:
 
 ```gcode
-NFC_GATE NAME=lane0 HELP=1
+NFC_GATE GATE=0 HELP=1
 ```
 
 This prints the full manual init sequence with the exact commands to paste, in order.
@@ -55,7 +55,7 @@ Every command prints:
 ```
 NFC_GATE[lane0]: FIRMWARE WRITE before: 00 00 FF 02 FE D4 02 2A 00
 NFC_GATE[lane0]: FIRMWARE WRITE after:  OK
-NFC_GATE[lane0]: NEXT: NFC_GATE NAME=lane0 STEP=FIRMWARE_ACK
+NFC_GATE[lane0]: NEXT: NFC_GATE GATE=0 STEP=FIRMWARE_ACK
 ```
 
 - **before**: the bytes that are about to be sent.
@@ -130,12 +130,12 @@ Run one command at a time. Wait for the response before running the next. If any
 ### Phase 1: Wake and firmware check
 
 ```gcode
-NFC_GATE NAME=lane0 STEP=WAKEUP
-NFC_GATE NAME=lane0 STEP=READY
-NFC_GATE NAME=lane0 STEP=FIRMWARE_WRITE
-NFC_GATE NAME=lane0 STEP=FIRMWARE_ACK
-NFC_GATE NAME=lane0 STEP=FIRMWARE_READY
-NFC_GATE NAME=lane0 STEP=FIRMWARE_RESPONSE
+NFC_GATE GATE=0 STEP=WAKEUP
+NFC_GATE GATE=0 STEP=READY
+NFC_GATE GATE=0 STEP=FIRMWARE_WRITE
+NFC_GATE GATE=0 STEP=FIRMWARE_ACK
+NFC_GATE GATE=0 STEP=FIRMWARE_READY
+NFC_GATE GATE=0 STEP=FIRMWARE_RESPONSE
 ```
 
 **What each step does:**
@@ -154,10 +154,10 @@ If `FIRMWARE_WRITE` succeeds but `FIRMWARE_ACK` returns wrong bytes or errors, t
 ### Phase 2: SAM configuration
 
 ```gcode
-NFC_GATE NAME=lane0 STEP=SAM_WRITE
-NFC_GATE NAME=lane0 STEP=SAM_ACK
-NFC_GATE NAME=lane0 STEP=SAM_READY
-NFC_GATE NAME=lane0 STEP=SAM_RESPONSE
+NFC_GATE GATE=0 STEP=SAM_WRITE
+NFC_GATE GATE=0 STEP=SAM_ACK
+NFC_GATE GATE=0 STEP=SAM_READY
+NFC_GATE GATE=0 STEP=SAM_RESPONSE
 ```
 
 `SAMConfiguration` sets the PN532 to normal mode (no SAM involvement). It must succeed before `InListPassiveTarget` will work.
@@ -167,10 +167,10 @@ NFC_GATE NAME=lane0 STEP=SAM_RESPONSE
 With the PN532 initialized, you can test tag detection:
 
 ```gcode
-NFC_GATE NAME=lane0 STEP=PASSIVE_WRITE
-NFC_GATE NAME=lane0 STEP=PASSIVE_ACK
-NFC_GATE NAME=lane0 STEP=PASSIVE_READY
-NFC_GATE NAME=lane0 STEP=PASSIVE_RESPONSE LEN=30
+NFC_GATE GATE=0 STEP=PASSIVE_WRITE
+NFC_GATE GATE=0 STEP=PASSIVE_ACK
+NFC_GATE GATE=0 STEP=PASSIVE_READY
+NFC_GATE GATE=0 STEP=PASSIVE_RESPONSE LEN=30
 ```
 
 Hold a tag near the reader before running `PASSIVE_WRITE`. The `PASSIVE_RESPONSE` bytes will contain the UID if a tag was found.
@@ -203,14 +203,14 @@ Hold a tag near the reader before running `PASSIVE_WRITE`. The `PASSIVE_RESPONSE
 `FIRMWARE_ACK_DIRECT` writes `GetFirmwareVersion` and immediately reads the ACK frame with a configurable delay between write and read:
 
 ```gcode
-NFC_GATE NAME=lane0 STEP=FIRMWARE_ACK_DIRECT DELAY=0.050
+NFC_GATE GATE=0 STEP=FIRMWARE_ACK_DIRECT DELAY=0.050
 ```
 
 Use this to find the minimum delay that still produces a valid ACK. Start at 50 ms and increase:
 
 ```gcode
-NFC_GATE NAME=lane0 STEP=FIRMWARE_ACK_DIRECT DELAY=0.100
-NFC_GATE NAME=lane0 STEP=FIRMWARE_ACK_DIRECT DELAY=0.200
+NFC_GATE GATE=0 STEP=FIRMWARE_ACK_DIRECT DELAY=0.100
+NFC_GATE GATE=0 STEP=FIRMWARE_ACK_DIRECT DELAY=0.200
 ```
 
 If you find that ACK reads fail below a certain delay, that is a signal about your bus latency (CAN round-trip + PN532 processing). Increase `transceive_delay` to match.
@@ -224,7 +224,7 @@ These bypass the `STEP=` sequence entirely and give direct bus access.
 ### `READY_READ` — Read the PN532 status byte
 
 ```gcode
-NFC_GATE NAME=lane0 READY_READ=1
+NFC_GATE GATE=0 READY_READ=1
 ```
 
 Reads 1 byte from the PN532 I2C address.
@@ -241,7 +241,7 @@ Use this to check whether the PN532 is alive and whether a previous command comp
 ### `ACK_READ` — Read the ACK frame
 
 ```gcode
-NFC_GATE NAME=lane0 ACK_READ=1 LEN=7
+NFC_GATE GATE=0 ACK_READ=1 LEN=7
 ```
 
 First reads the STATUS byte. If STATUS is `01` (ready), reads `LEN` more bytes.
@@ -259,7 +259,7 @@ The `01` is STATUS (ready). The remaining 6 bytes are the PN532 ACK frame. If yo
 ### `RAW_READ` — Read raw bytes
 
 ```gcode
-NFC_GATE NAME=lane0 RAW_READ=1 LEN=1
+NFC_GATE GATE=0 RAW_READ=1 LEN=1
 ```
 
 Reads exactly `LEN` bytes from the PN532 I2C address without any interpretation. The raw bytes are printed to the console.
@@ -269,8 +269,8 @@ Reads exactly `LEN` bytes from the PN532 I2C address without any interpretation.
 ### `RAW_WRITE` — Write raw bytes
 
 ```gcode
-NFC_GATE NAME=lane0 RAW_WRITE=00
-NFC_GATE NAME=lane0 RAW_WRITE=00,00,FF,02,FE,D4,02,2A,00
+NFC_GATE GATE=0 RAW_WRITE=00
+NFC_GATE GATE=0 RAW_WRITE=00,00,FF,02,FE,D4,02,2A,00
 ```
 
 Writes the specified bytes exactly as given. Accepts space, comma, colon, or dash-separated hex values. No framing is added.
@@ -280,7 +280,7 @@ Writes the specified bytes exactly as given. Accepts space, comma, colon, or das
 ### `RAW_CMD` — Write a framed PN532 command
 
 ```gcode
-NFC_GATE NAME=lane0 RAW_CMD=02
+NFC_GATE GATE=0 RAW_CMD=02
 ```
 
 Builds and sends a complete PN532 command frame for the given command byte. For command `0x02` (`GetFirmwareVersion`) with no additional parameters, the full frame is:

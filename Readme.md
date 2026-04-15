@@ -108,10 +108,10 @@ These are the commands you'll actually use at the Fluidd/Mainsail console:
 
 ```gcode
 NFC_GATE_STATUS                    ; see all gates at a glance
-NFC_GATE NAME=lane0 SCAN=1         ; read a tag and show its UID
-NFC_GATE NAME=lane0 POLL=1         ; full cycle: read → Spoolman → Happy Hare
-NFC_GATE NAME=lane0 READ=1         ; start automatic background polling
-NFC_GATE NAME=lane0 READ=0         ; stop polling
+NFC_GATE GATE=0 SCAN=1         ; read a tag and show its UID
+NFC_GATE GATE=0 POLL=1         ; full cycle: read → Spoolman → Happy Hare
+NFC_GATE GATE=0 READ=1         ; start automatic background polling
+NFC_GATE GATE=0 READ=0         ; stop polling
 ```
 
 See [Commands & Macros](docs/shared/klipper-functions.md) for everything, including how to test the Happy Hare handoff without hardware.

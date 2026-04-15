@@ -702,20 +702,20 @@ class NFCGate:
 
     def _cmd_help(self, gcmd):
         lines = [
-            "NFC_GATE NAME=%s commands:" % self._name,
-            "  NFC_GATE NAME=%s STATUS=1  - show this gate state" % self._name,
-            "  NFC_GATE NAME=%s INIT=1    - re-run reader init" % self._name,
-            "  NFC_GATE NAME=%s SCAN=1    - scan hardware once, no Spoolman/HH dispatch" % self._name,
-            "  NFC_GATE NAME=%s POLL=1    - run one full NFC_Manager poll for this gate" % self._name,
-            "  NFC_GATE NAME=%s APPLY=1   - send cached spool to Happy Hare now" % self._name,
-            "  NFC_GATE NAME=%s CLEAR_CACHE=1 - clear cached spool lookup, no HH dispatch" % self._name,
-            "  NFC_GATE NAME=%s HH_SYNC=1 SPOOL_ID=<n> - seed lane cache from HH gate map (called by NFC_HH_SYNC_CACHE macro)" % self._name,
-            "  NFC_GATE NAME=%s READ=1    - start timer polling" % self._name,
-            "  NFC_GATE NAME=%s READ=0    - stop timer polling" % self._name,
+            "NFC_GATE GATE=%d commands:" % self._gate,
+            "  NFC_GATE GATE=%d STATUS=1  - show this gate state" % self._gate,
+            "  NFC_GATE GATE=%d INIT=1    - re-run reader init" % self._gate,
+            "  NFC_GATE GATE=%d SCAN=1    - scan hardware once, no Spoolman/HH dispatch" % self._gate,
+            "  NFC_GATE GATE=%d POLL=1    - run one full NFC_Manager poll for this gate" % self._gate,
+            "  NFC_GATE GATE=%d APPLY=1   - send cached spool to Happy Hare now" % self._gate,
+            "  NFC_GATE GATE=%d CLEAR_CACHE=1 - clear cached spool lookup, no HH dispatch" % self._gate,
+            "  NFC_GATE GATE=%d HH_SYNC=1 SPOOL_ID=<n> - seed lane cache from HH gate map (called by NFC_HH_SYNC_CACHE macro)" % self._gate,
+            "  NFC_GATE GATE=%d READ=1    - start timer polling" % self._gate,
+            "  NFC_GATE GATE=%d READ=0    - stop timer polling" % self._gate,
         ]
         if self._low_level_debug:
             lines.extend(_low_level_help_lines(
-                "NFC_GATE NAME=%s" % self._name))
+                "NFC_GATE GATE=%d" % self._gate))
         gcmd.respond_info('\n'.join(lines))
 
     def _manual_scan(self, gcmd):
@@ -808,7 +808,7 @@ class NFCGate:
         try:
             return _run_low_level_debug(
                 gcmd, self._reader, self._name,
-                "NFC_GATE NAME=%s" % self._name,
+                "NFC_GATE GATE=%d" % self._gate,
                 self._low_level_debug)
         except Exception as e:
             gcmd.respond_info("NFC_GATE[%s]: low-level debug failed: %s" %
@@ -910,7 +910,7 @@ class NFCGate:
     def _hh_sync(self, gcmd):
         """Receive a spool_id from NFC_HH_SYNC_CACHE and set the lane seed.
 
-        Called by NFC_GATE NAME=<lane> HH_SYNC=1 SPOOL_ID=<n>.
+        Called by NFC_GATE GATE=<n> HH_SYNC=1 SPOOL_ID=<n>.
         The macro reads HH template vars (which GCode macros can access) and
         passes the resolved spool_id here so Python can update the seed without
         needing to walk the HH object itself.
@@ -950,8 +950,8 @@ class NFCGate:
 
             self._gcode.register_mux_command(
                 cmd='NFC_GATE',
-                key='NAME',
-                value=self._name,
+                key='GATE',
+                value=str(self._gate),
                 func=self.cmd_NFC_GATE,
                 desc="Control or test one configured NFC gate"
             )
@@ -1000,8 +1000,8 @@ class NFCGate:
             if self._failed:
                 self._gcode.respond_info(
                     "❌ NFC[%s]: reader not ready — check wiring. "
-                    "Run NFC_GATE NAME=%s INIT=1 after fixing."
-                    % (self._name, self._name))
+                    "Run NFC_GATE GATE=%d INIT=1 after fixing."
+                    % (self._name, self._gate))
             else:
                 seed_note = ("  HH seed: spool_id=%d" % self._hh_seed_spool_id
                              if self._hh_seed_spool_id is not None
@@ -1013,8 +1013,8 @@ class NFCGate:
                        "Startup polling is enabled; first poll in %.1fs."
                        % self._startup_poll_delay
                        if self._startup_polling == 1
-                       else "Run NFC_GATE NAME=%s READ=1 to start polling."
-                            % self._name))
+                       else "Run NFC_GATE GATE=%d READ=1 to start polling."
+                            % self._gate))
 
         if not self._failed and self._startup_polling == 1:
             self._polling = True
@@ -1037,8 +1037,8 @@ class NFCGate:
             return self.reactor.NEVER
         if self._failed:
             logger.warning("nfc_gate: [%s] polling stopped — reader failed; "
-                           "run NFC_GATE NAME=%s INIT=1 first",
-                           self._name, self._name)
+                           "run NFC_GATE GATE=%d INIT=1 first",
+                           self._name, self._gate)
             self._polling = False
             return self.reactor.NEVER
         if self._debug >= 2:
@@ -1307,8 +1307,8 @@ class NFCGateManager:
         for i in range(self._gate_count):
             gcode.register_mux_command(
                 cmd='NFC_GATE',
-                key='NAME',
-                value='gate%d' % i,
+                key='GATE',
+                value=str(i),
                 func=lambda gcmd, gate=i: self.cmd_NFC_GATE(gcmd, gate),
                 desc="Control or test one configured NFC gate")
 
@@ -1399,7 +1399,7 @@ class NFCGateManager:
             # Shared [nfc_gates] is not part of the documented path yet.  Keep
             # it manual-start by default, matching the per-lane manager.
             logger.info("nfc_gates: startup polling disabled; use "
-                        "NFC_GATE NAME=gate0 READ=1 to start polling")
+                        "NFC_GATE GATE=0 READ=1 to start polling")
 
     def _handle_disconnect(self):
         self._polling = False
@@ -1567,7 +1567,7 @@ class NFCGateManager:
         try:
             return _run_low_level_debug(
                 gcmd, self._readers[i], "gate%d" % i,
-                "NFC_GATE NAME=gate%d" % i,
+                "NFC_GATE GATE=%d" % i,
                 self._low_level_debug)
         except Exception as e:
             gcmd.respond_info("NFC_GATE[gate%d]: low-level debug failed: %s" %
@@ -1620,19 +1620,19 @@ class NFCGateManager:
             return
 
         lines = [
-            "NFC_GATE NAME=gate%d commands:" % gate,
-            "  NFC_GATE NAME=gate%d STATUS=1" % gate,
-            "  NFC_GATE NAME=gate%d INIT=1" % gate,
-            "  NFC_GATE NAME=gate%d SCAN=1" % gate,
-            "  NFC_GATE NAME=gate%d POLL=1" % gate,
-            "  NFC_GATE NAME=gate%d APPLY=1" % gate,
-            "  NFC_GATE NAME=gate%d CLEAR_CACHE=1" % gate,
-            "  NFC_GATE NAME=gate%d READ=1" % gate,
-            "  NFC_GATE NAME=gate%d READ=0" % gate,
+            "NFC_GATE GATE=%d commands:" % gate,
+            "  NFC_GATE GATE=%d STATUS=1" % gate,
+            "  NFC_GATE GATE=%d INIT=1" % gate,
+            "  NFC_GATE GATE=%d SCAN=1" % gate,
+            "  NFC_GATE GATE=%d POLL=1" % gate,
+            "  NFC_GATE GATE=%d APPLY=1" % gate,
+            "  NFC_GATE GATE=%d CLEAR_CACHE=1" % gate,
+            "  NFC_GATE GATE=%d READ=1" % gate,
+            "  NFC_GATE GATE=%d READ=0" % gate,
         ]
         if self._low_level_debug:
             lines.extend(_low_level_help_lines(
-                "NFC_GATE NAME=gate%d" % gate))
+                "NFC_GATE GATE=%d" % gate))
         gcmd.respond_info('\n'.join(lines))
 
     cmd_NFC_GATE_STATUS_help = (

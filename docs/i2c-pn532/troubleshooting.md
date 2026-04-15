@@ -69,7 +69,7 @@ Check in this order:
 
 Then try:
 ```gcode
-NFC_GATE NAME=lane0 INIT=1
+NFC_GATE GATE=0 INIT=1
 ```
 
 Still failing? Go to [Expert: Low-Level I2C Debugging](../shared/expert-low-level-i2c-debugging.md).
@@ -120,7 +120,7 @@ The BME280 (address `0x76`) and PN532 (address `0x24`) share the PB3/PB4 bus wit
 The hardware is working — the PN532 read the tag. The Spoolman lookup failed.
 
 ```gcode
-NFC_GATE NAME=lane0 POLL=1
+NFC_GATE GATE=0 POLL=1
 ```
 
 Check:
@@ -188,10 +188,10 @@ Common macro issues:
 
 ```gcode
 NFC_GATE_STATUS                    ; all gates — current state
-NFC_GATE NAME=lane0 STATUS=1       ; one gate
-NFC_GATE NAME=lane0 INIT=1         ; re-initialize the PN532
-NFC_GATE NAME=lane0 SCAN=1         ; one raw read, no state machine or Spoolman
-NFC_GATE NAME=lane0 POLL=1         ; one complete cycle, watch for console output
+NFC_GATE GATE=0 STATUS=1       ; one gate
+NFC_GATE GATE=0 INIT=1         ; re-initialize the PN532
+NFC_GATE GATE=0 SCAN=1         ; one raw read, no state machine or Spoolman
+NFC_GATE GATE=0 POLL=1         ; one complete cycle, watch for console output
 ```
 
 For deeper investigation, enable expert debug mode:
@@ -205,7 +205,7 @@ console_log_level: info
 
 Then:
 ```gcode
-NFC_GATE NAME=lane0 HELP=1    ; lists all available debug commands
+NFC_GATE GATE=0 HELP=1    ; lists all available debug commands
 ```
 
 See [Expert: Low-Level I2C Debugging](../shared/expert-low-level-i2c-debugging.md) for the complete step-by-step manual sequence.

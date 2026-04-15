@@ -126,7 +126,7 @@ When Klipper connects, each lane initialises automatically and reports to the co
 or, if the gate was empty in Happy Hare:
 
 ```
-✅ NFC[lane0]: reader ready.  HH reports gate empty  Run NFC_GATE NAME=lane0 READ=1 to start polling.
+✅ NFC[lane0]: reader ready.  HH reports gate empty  Run NFC_GATE GATE=0 READ=1 to start polling.
 ```
 
 **The HH seed line is important.** It means NFC_Manager read Happy Hare's gate map on startup and pre-loaded the lane cache with the spool HH already knows about. The first poll will verify the physical tag matches that spool — if it does, no redundant dispatch is sent to Happy Hare. If the spool was swapped while Klipper was down, the mismatch is detected and `_NFC_SPOOL_CHANGED` fires normally.
@@ -136,7 +136,7 @@ If Happy Hare wasn't ready when the NFC init ran, the seed step is skipped. Run 
 ### 3. Initialize a lane manually
 
 ```gcode
-NFC_GATE NAME=lane0 INIT=1
+NFC_GATE GATE=0 INIT=1
 ```
 
 This runs the PN532 `GetFirmwareVersion` and `SAMConfiguration` handshake. Expected output:
@@ -151,7 +151,7 @@ If it fails, check [Troubleshooting](troubleshooting.md).
 Hold an NFC tag near the reader, then:
 
 ```gcode
-NFC_GATE NAME=lane0 SCAN=1
+NFC_GATE GATE=0 SCAN=1
 ```
 
 The UID prints to the console. This is a raw hardware read — no Spoolman lookup, no Happy Hare update.
@@ -161,7 +161,7 @@ The UID prints to the console. This is a raw hardware read — no Spoolman looku
 With a registered tag (see [Spoolman Integration](../shared/spoolman-integration.md)):
 
 ```gcode
-NFC_GATE NAME=lane0 POLL=1
+NFC_GATE GATE=0 POLL=1
 ```
 
 Expected console output:
@@ -178,7 +178,7 @@ This runs the full chain: PN532 read → Spoolman lookup → state update → Ha
 Once a lane works end-to-end, start automatic polling:
 
 ```gcode
-NFC_GATE NAME=lane0 READ=1
+NFC_GATE GATE=0 READ=1
 ```
 
 To start all lanes, run `READ=1` for each. Polling runs at the `poll_interval` (default: 30 seconds).

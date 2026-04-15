@@ -124,7 +124,7 @@ Follow this sequence to avoid chasing phantom failures:
 4. Connect VCC and GND
 5. Connect SDA and SCL
 6. Restart Klipper
-7. Run `NFC_GATE NAME=lane0 INIT=1`
-8. If INIT passes, run `NFC_GATE NAME=lane0 SCAN=1` with a tag nearby
+7. Run `NFC_GATE GATE=0 INIT=1`
+8. If INIT passes, run `NFC_GATE GATE=0 SCAN=1` with a tag nearby
 
 If the BME280 breaks only after the PN532 is connected, the fault is physical — mode selection, swapped SDA/SCL, or pull-up interaction. It is not a Spoolman or Happy Hare issue.

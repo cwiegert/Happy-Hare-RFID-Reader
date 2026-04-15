@@ -11,17 +11,17 @@ This is the day-to-day reference for operating the NFC gate reader from the Flui
 | Command | What it does |
 |---|---|
 | `NFC_GATE_STATUS` | Show current state of every configured gate |
-| `NFC_GATE NAME=<lane> STATUS=1` | Show one gate's state |
-| `NFC_GATE NAME=<lane> INIT=1` | Initialize (or re-initialize) the PN532 reader |
-| `NFC_GATE NAME=<lane> SCAN=1` | One raw read — shows UID, no Spoolman lookup |
-| `NFC_GATE NAME=<lane> POLL=1` | Full cycle: read → Spoolman → Happy Hare |
-| `NFC_GATE NAME=<lane> APPLY=1` | Force cached spool assignment to Happy Hare |
-| `NFC_GATE NAME=<lane> CLEAR_CACHE=1` | Clear cached spool, force fresh Spoolman lookup |
-| `NFC_GATE NAME=<lane> READ=1` | Start background polling |
-| `NFC_GATE NAME=<lane> READ=0` | Stop background polling |
-| `NFC_GATE NAME=<lane> HELP=1` | Show available commands |
+| `NFC_GATE GATE=<n> STATUS=1` | Show one gate's state |
+| `NFC_GATE GATE=<n> INIT=1` | Initialize (or re-initialize) the PN532 reader |
+| `NFC_GATE GATE=<n> SCAN=1` | One raw read — shows UID, no Spoolman lookup |
+| `NFC_GATE GATE=<n> POLL=1` | Full cycle: read → Spoolman → Happy Hare |
+| `NFC_GATE GATE=<n> APPLY=1` | Force cached spool assignment to Happy Hare |
+| `NFC_GATE GATE=<n> CLEAR_CACHE=1` | Clear cached spool, force fresh Spoolman lookup |
+| `NFC_GATE GATE=<n> READ=1` | Start background polling |
+| `NFC_GATE GATE=<n> READ=0` | Stop background polling |
+| `NFC_GATE GATE=<n> HELP=1` | Show available commands |
 | `NFC_HH_SYNC_CACHE` | Re-seed all lane caches from the current Happy Hare gate map |
-| `NFC_GATE NAME=<lane> HH_SYNC=1 SPOOL_ID=<n>` | Seed one lane's cache directly (called by `NFC_HH_SYNC_CACHE`) |
+| `NFC_GATE GATE=<n> HH_SYNC=1 SPOOL_ID=<n>` | Seed one lane's cache directly (called by `NFC_HH_SYNC_CACHE`) |
 
 ---
 
@@ -49,7 +49,7 @@ The seed is always cleared after the first `CHANGED` event — it fires at most 
 **Console output at startup:**
 ```
 ✅ NFC[lane0]: reader ready.  HH seed: spool_id=42  Startup polling is enabled; first poll in 0.0s.
-✅ NFC[lane1]: reader ready.  HH reports gate empty  Run NFC_GATE NAME=lane1 READ=1 to start polling.
+✅ NFC[lane1]: reader ready.  HH reports gate empty  Run NFC_GATE GATE=1 READ=1 to start polling.
 ```
 
 **If Happy Hare wasn't ready** when the NFC init ran (rare — both init at `klippy:connect`), the seed step is skipped and all first-poll reads dispatch normally. Run `NFC_HH_SYNC_CACHE` to manually re-seed.
@@ -64,7 +64,7 @@ Re-seeds all NFC lane caches from the current Happy Hare gate map. Use this any 
 NFC_HH_SYNC_CACHE
 ```
 
-The macro reads `printer.mmu.gate_spool_id` for each gate and calls `NFC_GATE NAME=laneN HH_SYNC=1 SPOOL_ID=<n>` per lane. The Python side receives the spool_id and sets the seed. On the next poll for each lane, if the physical tag matches the seed, the dispatch is suppressed.
+The macro reads `printer.mmu.gate_spool_id` for each gate and calls `NFC_GATE GATE=N HH_SYNC=1 SPOOL_ID=<n>` per lane. The Python side receives the spool_id and sets the seed. On the next poll for each lane, if the physical tag matches the seed, the dispatch is suppressed.
 
 **When to use:**
 - Happy Hare wasn't fully initialised when the PN532 init ran and the startup seed was skipped
@@ -93,22 +93,22 @@ NFC gate status  (5 gates configured):
 
 ---
 
-### `NFC_GATE NAME=<lane> STATUS=1`
+### `NFC_GATE GATE=<n> STATUS=1`
 
 Same as `NFC_GATE_STATUS` but for a single lane.
 
 ```gcode
-NFC_GATE NAME=lane4 STATUS=1
+NFC_GATE GATE=4 STATUS=1
 ```
 
 ---
 
-### `NFC_GATE NAME=<lane> INIT=1`
+### `NFC_GATE GATE=<n> INIT=1`
 
 Runs the PN532 initialization sequence: wakeup → `GetFirmwareVersion` → `SAMConfiguration`.
 
 ```gcode
-NFC_GATE NAME=lane0 INIT=1
+NFC_GATE GATE=0 INIT=1
 ```
 
 **When to use:** After first wiring, after a failed startup, or after flashing lane MCU firmware.
@@ -122,12 +122,12 @@ If this fails, see [Troubleshooting](../i2c-pn532/troubleshooting.md).
 
 ---
 
-### `NFC_GATE NAME=<lane> SCAN=1`
+### `NFC_GATE GATE=<n> SCAN=1`
 
 Reads the PN532 hardware once and prints the raw tag UID. Does not look up Spoolman and does not update Happy Hare.
 
 ```gcode
-NFC_GATE NAME=lane0 SCAN=1
+NFC_GATE GATE=0 SCAN=1
 ```
 
 **When to use:**
@@ -137,7 +137,7 @@ NFC_GATE NAME=lane0 SCAN=1
 
 ---
 
-### `NFC_GATE NAME=<lane> POLL=1`
+### `NFC_GATE GATE=<n> POLL=1`
 
 Runs one complete cycle of the NFC manager pipeline:
 
@@ -148,7 +148,7 @@ Runs one complete cycle of the NFC manager pipeline:
 5. If state changed: dispatches `_NFC_SPOOL_CHANGED`, `_NFC_SPOOL_REMOVED`, or `_NFC_TAG_NO_SPOOL`
 
 ```gcode
-NFC_GATE NAME=lane0 POLL=1
+NFC_GATE GATE=0 POLL=1
 ```
 
 **When to use:** Testing the complete pipeline end-to-end, or verifying a specific tag is registered correctly.
@@ -166,7 +166,7 @@ Open the spool record in Spoolman, set the 'rfid_tag' extra field to: 04AABBCCDD
 
 ---
 
-### `NFC_GATE NAME=<lane> APPLY=1`
+### `NFC_GATE GATE=<n> APPLY=1`
 
 Forces the lane's cached spool assignment through to Happy Hare immediately. Does not read the PN532, does not query Spoolman — it just dispatches:
 
@@ -175,19 +175,19 @@ _NFC_SPOOL_CHANGED GATE=<gate> SPOOL_ID=<cached_id> UID=<cached_uid>
 ```
 
 ```gcode
-NFC_GATE NAME=lane0 APPLY=1
+NFC_GATE GATE=0 APPLY=1
 ```
 
 **When to use:** When a poll or polling cycle already resolved a spool, but Happy Hare didn't update (e.g. it was in a locked state during the scan). If you get "no cached spool_id", run `POLL=1` first.
 
 ---
 
-### `NFC_GATE NAME=<lane> CLEAR_CACHE=1`
+### `NFC_GATE GATE=<n> CLEAR_CACHE=1`
 
 Clears the lane's cached spool ID and forces a fresh Spoolman lookup on the next tag read.
 
 ```gcode
-NFC_GATE NAME=lane0 CLEAR_CACHE=1
+NFC_GATE GATE=0 CLEAR_CACHE=1
 ```
 
 Clears:
@@ -206,25 +206,25 @@ This is the correct way to force a re-read after editing a spool's UID registrat
 
 ---
 
-### `NFC_GATE NAME=<lane> HH_SYNC=1 SPOOL_ID=<n>`
+### `NFC_GATE GATE=<n> HH_SYNC=1 SPOOL_ID=<n>`
 
 Seeds this lane's cache with a spool_id from Happy Hare's gate map. On the next poll, if the physical tag resolves to that spool_id, the dispatch is suppressed (HH already knows).
 
 ```gcode
-NFC_GATE NAME=lane0 HH_SYNC=1 SPOOL_ID=42
+NFC_GATE GATE=0 HH_SYNC=1 SPOOL_ID=42
 ```
 
 This command is normally called automatically by the `NFC_HH_SYNC_CACHE` macro — you won't need it directly in normal operation. Use `NFC_HH_SYNC_CACHE` to sync all lanes at once.
 
 ---
 
-### `NFC_GATE NAME=<lane> READ=1` / `READ=0`
+### `NFC_GATE GATE=<n> READ=1` / `READ=0`
 
 Starts or stops background timer polling on one lane.
 
 ```gcode
-NFC_GATE NAME=lane0 READ=1    ; start polling
-NFC_GATE NAME=lane0 READ=0    ; stop polling
+NFC_GATE GATE=0 READ=1    ; start polling
+NFC_GATE GATE=0 READ=0    ; stop polling
 ```
 
 While polling is running, the lane runs `POLL=1` automatically every `poll_interval` seconds (default: 30). Macro dispatches happen automatically when gate state changes.
@@ -237,10 +237,10 @@ For production use, you want all lanes polling automatically. There are two ways
 
 **Manually after boot** (default — useful during setup):
 ```gcode
-NFC_GATE NAME=lane0 READ=1
-NFC_GATE NAME=lane1 READ=1
-NFC_GATE NAME=lane2 READ=1
-NFC_GATE NAME=lane3 READ=1
+NFC_GATE GATE=0 READ=1
+NFC_GATE GATE=1 READ=1
+NFC_GATE GATE=2 READ=1
+NFC_GATE GATE=3 READ=1
 ```
 
 **Automatically on boot** (for set-and-forget operation): Add `startup_polling: 1` to each lane in `pn532_i2C.cfg`. Stagger the startup delays so all readers don't poll at the same moment:
@@ -383,20 +383,20 @@ low_level_debug: True
 Restart Klipper, then:
 
 ```gcode
-NFC_GATE NAME=lane0 HELP=1    ; shows all available commands including debug steps
+NFC_GATE GATE=0 HELP=1    ; shows all available commands including debug steps
 ```
 
 | Command | What it does |
 |---|---|
-| `NFC_GATE NAME=<lane> STEP=WAKEUP` | Send PN532 wake byte |
-| `NFC_GATE NAME=<lane> STEP=FIRMWARE_WRITE` | Send `GetFirmwareVersion` command frame |
-| `NFC_GATE NAME=<lane> STEP=FIRMWARE_ACK` | Read ACK for firmware command |
-| `NFC_GATE NAME=<lane> STEP=FIRMWARE_RESPONSE` | Read and parse firmware response |
-| `NFC_GATE NAME=<lane> STEP=SAM_WRITE` | Send `SAMConfiguration` command |
-| `NFC_GATE NAME=<lane> STEP=PASSIVE_WRITE` | Send `InListPassiveTarget` (scan for tag) |
-| `NFC_GATE NAME=<lane> STEP=PASSIVE_RESPONSE` | Read raw tag-detect response |
-| `NFC_GATE NAME=<lane> RAW_READ=1 LEN=<n>` | Raw PN532 transport read |
-| `NFC_GATE NAME=<lane> RAW_WRITE=<hex>` | Raw PN532 transport write |
+| `NFC_GATE GATE=<n> STEP=WAKEUP` | Send PN532 wake byte |
+| `NFC_GATE GATE=<n> STEP=FIRMWARE_WRITE` | Send `GetFirmwareVersion` command frame |
+| `NFC_GATE GATE=<n> STEP=FIRMWARE_ACK` | Read ACK for firmware command |
+| `NFC_GATE GATE=<n> STEP=FIRMWARE_RESPONSE` | Read and parse firmware response |
+| `NFC_GATE GATE=<n> STEP=SAM_WRITE` | Send `SAMConfiguration` command |
+| `NFC_GATE GATE=<n> STEP=PASSIVE_WRITE` | Send `InListPassiveTarget` (scan for tag) |
+| `NFC_GATE GATE=<n> STEP=PASSIVE_RESPONSE` | Read raw tag-detect response |
+| `NFC_GATE GATE=<n> RAW_READ=1 LEN=<n>` | Raw PN532 transport read |
+| `NFC_GATE GATE=<n> RAW_WRITE=<hex>` | Raw PN532 transport write |
 
 > [!WARNING]
 > Low-level commands bypass the normal state machine. Sending the wrong sequence can leave the PN532 in a state where normal polling fails until it is restarted. Use only during manual bring-up. Set `low_level_debug: False` before printing.

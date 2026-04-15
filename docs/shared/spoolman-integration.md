@@ -39,7 +39,7 @@ You need the UID of each NFC tag before you can register it. There are a few way
 
 Hold the tag near the reader and run:
 ```gcode
-NFC_GATE NAME=lane0 SCAN=1
+NFC_GATE GATE=0 SCAN=1
 ```
 The UID prints in the console.
 
@@ -77,7 +77,7 @@ The system normalizes everything to uppercase hex before comparing.
 With the registered spool loaded on a gate, run a full poll:
 
 ```gcode
-NFC_GATE NAME=lane0 POLL=1
+NFC_GATE GATE=0 POLL=1
 ```
 
 **Success:**
@@ -150,4 +150,4 @@ console_output:    True
 console_log_level: 3
 ```
 
-Restart Klipper, then run `NFC_GATE NAME=lane0 POLL=1`.
+Restart Klipper, then run `NFC_GATE GATE=0 POLL=1`.

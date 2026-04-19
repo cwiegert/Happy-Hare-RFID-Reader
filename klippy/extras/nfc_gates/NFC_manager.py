@@ -588,7 +588,7 @@ class NFCGateDefaults:
                                                    minval=0.050, maxval=2.0)
         self.crc_delay          = config.getfloat('crc_delay', 0.050,
                                                    minval=0.005, maxval=1.0)
-        self.debug              = config.getint('debug', 1, minval=0, maxval=2)
+        self.debug              = config.getint('debug', 2, minval=0, maxval=4)
         self.console_output, self.console_log_level = _get_console_config(config)
         self.low_level_debug    = _get_low_level_debug(config)
         self.i2c_address        = config.getint('i2c_address', 0x24,
@@ -644,8 +644,8 @@ class NFCGate:
                                                   d.crc_delay if d else 0.050,
                                                   minval=0.005, maxval=1.0)
         self._debug            = config.getint('debug',
-                                               d.debug if d else 1,
-                                               minval=0, maxval=2)
+                                               d.debug if d else 2,
+                                               minval=0, maxval=4)
         self._low_level_debug  = _get_low_level_debug(
             config, d.low_level_debug if d else False)
         console_output, console_log_level = _get_console_config(
@@ -701,6 +701,7 @@ class NFCGate:
         self._suppress_next_dispatch_uid   = None
         self._suppress_next_dispatch_spool = None  # paired with uid — suppress only when both match
         self._hh_seed_spool_id = None   # set on startup from HH gate map; cleared after first match
+        self._hh_confirmed_spool = None  # last spool HH acknowledged; enables _check_hh_cleared
         self._failed     = False
         self._klipper    = KlipperInterface(self.printer, self.reactor)
         self._polling    = False
@@ -1080,25 +1081,22 @@ class NFCGate:
     def _check_hh_cleared(self):
         """Reset lane cache if HH cleared this gate from outside the NFC system.
 
-        If Happy Hare's gate_spool_id for this gate is -1 (empty) but the NFC
-        lane cache still holds a spool assignment, it means HH was updated by
-        something other than an NFC poll — a manual MMU_GATE_MAP command, an
-        automated unload, a filament swap, etc.
-
-        Resetting the lane state forces the next tag read to be treated as a
-        fresh detection, which dispatches _NFC_SPOOL_CHANGED and re-populates
-        HH on that same poll cycle.  If the tag has actually been removed, the
-        normal absent-threshold path fires _NFC_SPOOL_REMOVED as usual.
+        Only active after HH has confirmed the spool at least once (_hh_confirmed_spool
+        is set when HH's gate_spool_id matches what NFC dispatched).  This prevents a
+        loop where NFC dispatches spool 49, HH hasn't processed it yet, the check sees
+        HH=-1, clears the cache, NFC dispatches again next poll, and so on forever.
         """
         if self._state.current_spool is None:
             return  # Lane cache already empty — nothing to cross-check
+        if self._hh_confirmed_spool != self._state.current_spool:
+            return  # HH hasn't acknowledged this spool yet — don't second-guess it
         mmu = self.printer.lookup_object('mmu', None)
         if mmu is None:
             return
         try:
-            status        = mmu.get_status(self.reactor.monotonic())
+            status         = mmu.get_status(self.reactor.monotonic())
             gate_spool_ids = status.get('gate_spool_id', [])
-            hh_spool      = int(gate_spool_ids[self._gate] or -1)
+            hh_spool       = int(gate_spool_ids[self._gate] or -1)
         except (IndexError, TypeError, ValueError):
             return
         nfc_spool = self._state.current_spool
@@ -1116,6 +1114,7 @@ class NFCGate:
             self._state.current_uid   = None
             self._state.current_spool = None
             self._state.miss_count    = 0
+            self._hh_confirmed_spool  = None
 
     def _poll(self):
         self._check_hh_cleared()
@@ -1203,6 +1202,7 @@ class NFCGate:
             if self._hh_seed_spool_id is not None:
                 if event_type == EVENT_CHANGED and spool == self._hh_seed_spool_id:
                     suppress = True
+                    self._hh_confirmed_spool = spool  # HH already had it — treat as confirmed
                     logger.info(
                         "nfc_gate: [%s] gate %d — startup HH sync: "
                         "spool=%d matches HH seed; cache seeded silently "
@@ -1247,10 +1247,14 @@ class NFCGate:
                     if event_type == EVENT_CHANGED and spool is not None:
                         self._spoolman.update_spool_location(spool, gate)
                     elif event_type == EVENT_REMOVED and spool is not None:
-                        # Clear the gate location so Spoolman doesn't show the
-                        # spool as still sitting in this gate after removal.
                         self._spoolman.clear_spool_location(spool)
                 self._klipper.dispatch(event_type, gate, uid, spool)
+                # Mark HH as confirmed once we dispatch CHANGED — _check_hh_cleared
+                # will not fire until HH has had a chance to process this dispatch.
+                if event_type == EVENT_CHANGED and spool is not None:
+                    self._hh_confirmed_spool = spool
+                elif event_type == EVENT_REMOVED:
+                    self._hh_confirmed_spool = None
 
         if (uid_hex is not None and self._suppress_next_dispatch_uid is not None
                 and uid_hex == self._suppress_next_dispatch_uid):

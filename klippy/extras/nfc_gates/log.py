@@ -30,22 +30,26 @@
 #   from .log import logger           # inside nfc_gates/
 #   from nfc_gates.log import logger  # from nfc_gate.py (top-level extra)
 
+import datetime
 import logging
 import os
+import re
 
 _LOGGER_NAME = 'nfc_gate'
 _LOG_FILENAME = 'nfc_reader.log'
 _CONSOLE_HANDLER_NAME = 'nfc_gate_console'
 _LEVELS = {
-    'debug': logging.DEBUG,
-    '0': logging.DEBUG,
+    'off': logging.CRITICAL + 1,
+    '0': logging.CRITICAL + 1,  # 0 = no logging
     'error': logging.ERROR,
-    '1': logging.ERROR,     # 1 = errors only
+    '1': logging.ERROR,          # 1 = errors only
     'warning': logging.WARNING,
     'warn': logging.WARNING,
-    '2': logging.WARNING,   # 2 = warnings and errors
+    '2': logging.WARNING,        # 2 = warnings and errors
     'info': logging.INFO,
-    '3': logging.INFO,      # 3 = info, warnings, and errors (real-time debug)
+    '3': logging.INFO,           # 3 = info, warnings, and errors
+    'debug': logging.DEBUG,
+    '4': logging.DEBUG,          # 4 = everything (verbose)
 }
 
 _console_gcode = None
@@ -57,10 +61,11 @@ _console_level = logging.WARNING
 def _normalise_level(level, default=logging.WARNING):
     if isinstance(level, int):
         return {
-            0: logging.DEBUG,
-            1: logging.ERROR,    # 1 = errors only
-            2: logging.WARNING,  # 2 = warnings and errors
-            3: logging.INFO,     # 3 = info, warnings, and errors (real-time debug)
+            0: logging.CRITICAL + 1,  # 0 = no logging
+            1: logging.ERROR,          # 1 = errors only
+            2: logging.WARNING,        # 2 = warnings and errors
+            3: logging.INFO,           # 3 = info, warnings, and errors
+            4: logging.DEBUG,          # 4 = everything (verbose)
         }.get(level, default)
     return _LEVELS.get(str(level).strip().lower(), default)
 
@@ -122,6 +127,65 @@ class _GCodeConsoleHandler(logging.Handler):
         _respond_to_console(record)
 
 
+_ARCHIVE_RE = re.compile(r'nfc_reader\.log\.(\d{4}-\d{2}-\d{2})$')
+_MAX_ARCHIVES = 7
+_MAX_ARCHIVE_DAYS = 7
+
+
+def _get_log_date(path):
+    """Return the date of the first log entry in *path*, or None.
+
+    Reads the first non-empty line and parses the leading YYYY-MM-DD stamp
+    written by our formatter.  Using the log content (rather than filesystem
+    mtime/ctime) is reliable on Linux where ctime is not a creation timestamp.
+    Returns None if the file is empty, unreadable, or has an unexpected format.
+    """
+    try:
+        with open(path, 'rb') as f:
+            for _ in range(10):          # skip any leading blank lines
+                raw = f.readline()
+                if not raw:
+                    return None          # EOF — empty file
+                line = raw.decode('utf-8', errors='replace').strip()
+                if line:
+                    # format: "YYYY-MM-DD HH:MM:SS LEVEL    message"
+                    return datetime.date.fromisoformat(line[:10])
+    except Exception:
+        pass
+    return None
+
+
+def _prune_old_archives(log_dir):
+    """Delete archives beyond _MAX_ARCHIVES or older than _MAX_ARCHIVE_DAYS.
+
+    Scans *log_dir* for files matching nfc_reader.log.YYYY-MM-DD, sorts them
+    newest-first, and removes any that are either past position _MAX_ARCHIVES
+    in that list or whose date is more than _MAX_ARCHIVE_DAYS days ago.
+    """
+    cutoff = datetime.date.today() - datetime.timedelta(days=_MAX_ARCHIVE_DAYS)
+    archives = []
+    try:
+        for name in os.listdir(log_dir):
+            m = _ARCHIVE_RE.match(name)
+            if m:
+                try:
+                    d = datetime.date.fromisoformat(m.group(1))
+                    archives.append((d, os.path.join(log_dir, name)))
+                except ValueError:
+                    pass
+    except OSError:
+        return
+
+    archives.sort(key=lambda x: x[0], reverse=True)   # newest first
+
+    for i, (d, path) in enumerate(archives):
+        if i >= _MAX_ARCHIVES or d < cutoff:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
 def _find_klipper_log_dir():
     """
     Return the directory that klippy.log lives in by inspecting the root
@@ -133,6 +197,82 @@ def _find_klipper_log_dir():
     return os.path.expanduser('~/printer_data/logs')
 
 
+_LOG_FORMATTER = logging.Formatter(
+    '%(asctime)s %(levelname)-8s %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S')
+
+
+class _DateRotatingFileHandler(logging.FileHandler):
+    """FileHandler that rotates nfc_reader.log at the first write after midnight.
+
+    On every emit() the current date is compared against the date of the first
+    log entry.  When the day has advanced the open file is closed, renamed to
+    nfc_reader.log.YYYY-MM-DD (using the date from its first entry), old
+    archives are pruned, and a fresh file is opened.
+
+    Rotation happens on day advance only — not on restart.  If Klipper runs
+    continuously across midnight the first write after midnight triggers the
+    rename.  If Klipper restarts on the same day the existing file is reused.
+    """
+
+    def __init__(self, path):
+        # Perform a startup rotation if the file already contains stale entries
+        # (Klipper restarted the same day we already have a previous-day file).
+        self._do_rotate_if_stale(path)
+        super(_DateRotatingFileHandler, self).__init__(path, mode='a',
+                                                       encoding='utf-8',
+                                                       delay=False)
+        self._log_path = path
+        self._current_day = datetime.date.today()
+
+    # ── public ────────────────────────────────────────────────────────────────
+
+    def emit(self, record):
+        today = datetime.date.today()
+        if today != self._current_day:
+            self._rotate(self._current_day)
+            self._current_day = today
+        super(_DateRotatingFileHandler, self).emit(record)
+
+    # ── internal ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _do_rotate_if_stale(log_path):
+        """Rename *log_path* at startup if its first entry is from a prior day."""
+        if not os.path.exists(log_path):
+            return
+        log_date = _get_log_date(log_path)
+        if log_date is None or log_date >= datetime.date.today():
+            return
+        archive = '{}.{}'.format(log_path, log_date.isoformat())
+        try:
+            os.rename(log_path, archive)
+        except OSError:
+            pass  # Cannot rotate — keep writing to the existing file
+
+    def _rotate(self, rotate_date):
+        """Close the current stream, rename the file, prune archives, reopen."""
+        try:
+            self.stream.flush()
+            self.stream.close()
+        except Exception:
+            pass
+        self.stream = None
+
+        archive = '{}.{}'.format(self._log_path, rotate_date.isoformat())
+        try:
+            os.rename(self._log_path, archive)
+        except OSError:
+            pass  # Cannot rename — new writes will append to the existing file
+
+        _prune_old_archives(os.path.dirname(self._log_path) or '.')
+
+        try:
+            self.stream = self._open()
+        except Exception:
+            pass
+
+
 def _build_logger():
     logger = logging.getLogger(_LOGGER_NAME)
     if logger.handlers:
@@ -140,10 +280,8 @@ def _build_logger():
 
     log_path = os.path.join(_find_klipper_log_dir(), _LOG_FILENAME)
 
-    fh = logging.FileHandler(log_path)
-    fh.setFormatter(logging.Formatter(
-        '%(asctime)s %(levelname)-8s %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'))
+    fh = _DateRotatingFileHandler(log_path)
+    fh.setFormatter(_LOG_FORMATTER)
 
     logger.addHandler(fh)
     logger.setLevel(logging.DEBUG)
@@ -172,10 +310,8 @@ def configure(path='', printer=None, console_output=None, console_log_level=None
                 _lg.removeHandler(h)
                 h.close()
         _lg.propagate = False
-        fh = logging.FileHandler(expanded)
-        fh.setFormatter(logging.Formatter(
-            '%(asctime)s %(levelname)-8s %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'))
+        fh = _DateRotatingFileHandler(expanded)
+        fh.setFormatter(_LOG_FORMATTER)
         _lg.addHandler(fh)
 
     if (printer is not None or console_output is not None or

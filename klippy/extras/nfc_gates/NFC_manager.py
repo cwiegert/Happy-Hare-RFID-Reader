@@ -427,7 +427,7 @@ class GateState:
         self.miss_count       = 0
         self.absent_threshold = absent_threshold
 
-    def process_read(self, uid_hex, spool_id):
+    def process_read(self, uid_hex, spool_id, scan_mode=False):
         if uid_hex is not None:
             self.miss_count = 0
             if self.current_uid == uid_hex and self.current_spool == spool_id:
@@ -438,12 +438,13 @@ class GateState:
                 return (EVENT_CHANGED, self.gate, uid_hex, spool_id)
             return (EVENT_UID_ONLY, self.gate, uid_hex, None)
         else:
-            self.miss_count += 1
-            if self.miss_count >= self.absent_threshold and self.current_uid is not None:
-                old_spool          = self.current_spool
-                self.current_uid   = None
-                self.current_spool = None
-                return (EVENT_REMOVED, self.gate, None, old_spool)
+            if not scan_mode:
+                self.miss_count += 1
+                if self.miss_count >= self.absent_threshold and self.current_uid is not None:
+                    old_spool          = self.current_spool
+                    self.current_uid   = None
+                    self.current_spool = None
+                    return (EVENT_REMOVED, self.gate, None, old_spool)
             return None
 
     def __repr__(self):
@@ -584,6 +585,13 @@ class NFCGateDefaults:
         self.low_level_debug    = _get_low_level_debug(config)
         self.i2c_address        = config.getint('i2c_address', 0x24,
                                                  minval=0, maxval=127)
+        self.scan_jog_mm        = config.getfloat('scan_jog_mm', 50.0,
+                                                   minval=1.0, maxval=500.0)
+        self.scan_max_mm        = config.getfloat('scan_max_mm', 600.0,
+                                                   minval=10.0, maxval=5000.0)
+        self.scan_interval      = config.getfloat('scan_interval', 2.0,
+                                                   minval=0.5, maxval=60.0)
+        self.scan_enabled       = config.getboolean('scan_enabled', True)
 
         self._printer = config.get_printer()
         gcode         = self._printer.lookup_object('gcode')
@@ -607,6 +615,8 @@ class NFCGateDefaults:
 
 
 class NFCGate:
+    _active_scan_gate = None  # class-level scan lock; shared across all instances
+
     def __init__(self, config, defaults=None):
         self.printer  = config.get_printer()
         self.reactor  = self.printer.get_reactor()
@@ -699,6 +709,22 @@ class NFCGate:
         self._klipper    = KlipperInterface(self.printer, self.reactor)
         self._polling    = False
         self._poll_timer = self.reactor.register_timer(self._poll_timer_event)
+
+        self._scan_jog_mm   = config.getfloat('scan_jog_mm',
+                                               d.scan_jog_mm if d else 50.0,
+                                               minval=1.0, maxval=500.0)
+        self._scan_max_mm   = config.getfloat('scan_max_mm',
+                                               d.scan_max_mm if d else 600.0,
+                                               minval=10.0, maxval=5000.0)
+        self._scan_interval = config.getfloat('scan_interval',
+                                               d.scan_interval if d else 2.0,
+                                               minval=0.5, maxval=60.0)
+        self._scan_enabled  = config.getboolean('scan_enabled',
+                                                 d.scan_enabled if d else True)
+        self._scan_timer        = None
+        self._scan_mode         = False
+        self._scan_mm_total     = 0.0
+        self._prev_gate_status  = -1   # -1 = unknown; prevents false trigger on cold start
 
         # delayed-init state
         self._gcode = None
@@ -1069,6 +1095,10 @@ class NFCGate:
                          self._name)
         self._polling = False
         self.reactor.update_timer(self._poll_timer, self.reactor.NEVER)
+        if self._scan_timer is not None:
+            self.reactor.update_timer(self._scan_timer, self.reactor.NEVER)
+        if NFCGate._active_scan_gate == self._gate:
+            NFCGate._active_scan_gate = None
 
     def _poll_timer_event(self, eventtime):
         if not self._polling:
@@ -1079,6 +1109,40 @@ class NFCGate:
                            self._name, self._gate)
             self._polling = False
             return self.reactor.NEVER
+
+        # Scan-jog gate-status edge detection.
+        # Reads HH gate_status on every tick — Python dict only, no I2C.
+        # When gate is empty (curr==0) skip the I2C read entirely.
+        # On 0→1 transition with HH idle and not printing, enter scan mode.
+        if self._scan_enabled:
+            mmu = self.printer.lookup_object('mmu', None)
+            if mmu is not None:
+                try:
+                    status        = mmu.get_status(eventtime)
+                    gate_statuses = status.get('gate_status', [])
+                    if self._gate < len(gate_statuses):
+                        curr   = int(gate_statuses[self._gate] or 0)
+                        action = status.get('action', '').lower()
+                        prev   = self._prev_gate_status
+                        self._prev_gate_status = curr
+                        if curr == 0:
+                            return self.reactor.monotonic() + self._poll_interval
+                        if (prev == 0 and curr == 1
+                                and action == 'idle'
+                                and not self._is_printing()):
+                            if NFCGate._active_scan_gate is not None:
+                                if self._debug >= 3:
+                                    logger.info(
+                                        "nfc_gate: [%s] gate %d — scan trigger "
+                                        "deferred: gate %d already scanning",
+                                        self._name, self._gate,
+                                        NFCGate._active_scan_gate)
+                            else:
+                                self._start_scan_mode()
+                                return self.reactor.NEVER
+                except Exception:
+                    pass
+
         if self._debug >= 4:
             logger.debug("nfc_gate: [%s] poll cycle start — "
                          "current state: uid=%s spool=%s misses=%d",
@@ -1213,7 +1277,8 @@ class NFCGate:
         else:
             spool_id = None
 
-        event = self._state.process_read(uid_hex, spool_id)
+        event = self._state.process_read(uid_hex, spool_id,
+                                         scan_mode=self._scan_mode)
 
         # ── debug=4 compact per-poll trace ───────────────────────────────────
         # One line per poll: lane, gate, what was read, and what action fired.
@@ -1332,6 +1397,100 @@ class NFCGate:
                 and uid_hex == self._suppress_next_dispatch_uid):
             self._suppress_next_dispatch_uid   = None
             self._suppress_next_dispatch_spool = None
+
+        return uid_hex is not None
+
+    # ── Scan-and-jog mode ────────────────────────────────────────────────────
+
+    def _is_printing(self):
+        ps = self.printer.lookup_object('print_stats', None)
+        if ps is None:
+            return False
+        return ps.get_status(0).get('state', '') == 'printing'
+
+    def _start_scan_mode(self):
+        NFCGate._active_scan_gate = self._gate
+        self._scan_mode     = True
+        self._scan_mm_total = 0.0
+        self._scan_timer    = self.reactor.register_timer(
+            self._scan_step_event,
+            self.reactor.monotonic() + 0.5)
+        if self._debug >= 3:
+            logger.info(
+                "nfc_gate: [%s] gate %d scan mode started — "
+                "step=%.1fmm max=%.1fmm interval=%.1fs",
+                self._name, self._gate,
+                self._scan_jog_mm, self._scan_max_mm, self._scan_interval)
+
+    def _scan_step_event(self, eventtime):
+        if not self._scan_mode:
+            return self.reactor.NEVER
+
+        if self._is_printing():
+            logger.warning(
+                "nfc_gate: [%s] scan mode: print started — aborting",
+                self._name)
+            self._rewind_and_exit_scan()
+            return self.reactor.NEVER
+
+        try:
+            tag_found = self._poll()
+        except Exception:
+            logger.exception("nfc_gate: [%s] scan step poll error", self._name)
+            tag_found = False
+
+        if tag_found:
+            self._finish_scan()
+            return self.reactor.NEVER
+
+        if self._scan_mm_total >= self._scan_max_mm:
+            logger.warning(
+                "nfc_gate: [%s] scan mode: no tag after %.1fmm — rewinding",
+                self._name, self._scan_mm_total)
+            self._rewind_and_exit_scan()
+            return self.reactor.NEVER
+
+        self._run_jog(self._scan_jog_mm)
+        self._scan_mm_total += self._scan_jog_mm
+        if self._debug >= 4:
+            logger.info(
+                "nfc_gate: [%s] scan mode: no tag — jogged %.1fmm (total %.1fmm)",
+                self._name, self._scan_jog_mm, self._scan_mm_total)
+        return eventtime + self._scan_interval
+
+    def _finish_scan(self):
+        self._scan_mode = False
+        NFCGate._active_scan_gate = None
+        self._run_rewind()
+        if self._debug >= 3:
+            logger.info(
+                "nfc_gate: [%s] gate %d scan mode: tag identified after %.1fmm — rewound",
+                self._name, self._gate, self._scan_mm_total)
+        self.reactor.update_timer(
+            self._poll_timer,
+            self.reactor.monotonic() + self._poll_interval)
+
+    def _rewind_and_exit_scan(self):
+        self._scan_mode = False
+        NFCGate._active_scan_gate = None
+        self._run_rewind()
+        self.reactor.update_timer(
+            self._poll_timer,
+            self.reactor.monotonic() + self._poll_interval)
+
+    def _run_jog(self, mm):
+        gcode = self.printer.lookup_object('gcode')
+        gcode.run_script(
+            "MMU_SELECT_GATE GATE=%d\nMMU_TEST_MOVE MOVE=%.2f"
+            % (self._gate, mm))
+
+    def _run_rewind(self):
+        gcode = self.printer.lookup_object('gcode')
+        gcode.run_script(
+            "MMU_SELECT_GATE GATE=%d\nMMU_UNLOAD restore=0"
+            % self._gate)
+
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _hh_filament_label(self):
         """Return a short string describing this gate's HH spool assignment."""

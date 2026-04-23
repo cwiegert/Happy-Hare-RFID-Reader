@@ -206,6 +206,48 @@ def test_defaults_absent_threshold_zero_raises():
     except (ValueError, Exception):
         pass
 
+# ── Scan-jog config keys ──────────────────────────────────────────────────────
+
+def test_scan_defaults():
+    d = NFCGateDefaults(MockConfig())
+    assert d.scan_jog_mm   == 50.0
+    assert d.scan_max_mm   == 600.0
+    assert d.scan_interval == 2.0
+    assert d.scan_enabled  == True
+
+def test_scan_keys_overridden():
+    d = NFCGateDefaults(MockConfig({
+        'scan_jog_mm':   25.0,
+        'scan_max_mm':   300.0,
+        'scan_interval': 1.5,
+        'scan_enabled':  False,
+    }))
+    assert d.scan_jog_mm   == 25.0
+    assert d.scan_max_mm   == 300.0
+    assert d.scan_interval == 1.5
+    assert d.scan_enabled  == False
+
+def test_scan_jog_mm_below_min_raises():
+    try:
+        NFCGateDefaults(MockConfig({'scan_jog_mm': 0.5}))
+        assert False, "Expected error for scan_jog_mm below minval"
+    except (ValueError, Exception):
+        pass
+
+def test_scan_max_mm_below_min_raises():
+    try:
+        NFCGateDefaults(MockConfig({'scan_max_mm': 5.0}))
+        assert False, "Expected error for scan_max_mm below minval"
+    except (ValueError, Exception):
+        pass
+
+def test_scan_interval_below_min_raises():
+    try:
+        NFCGateDefaults(MockConfig({'scan_interval': 0.1}))
+        assert False, "Expected error for scan_interval below minval"
+    except (ValueError, Exception):
+        pass
+
 
 if __name__ == '__main__':
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]

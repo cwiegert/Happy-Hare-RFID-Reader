@@ -1495,10 +1495,12 @@ class NFCGate:
             % (self._gate, mm))
 
     def _run_rewind(self):
+        if self._scan_mm_total <= 0.0:
+            return
         gcode = self.printer.lookup_object('gcode')
         gcode.run_script(
-            "MMU_SELECT GATE=%d\nMMU_UNLOAD restore=0"
-            % self._gate)
+            "MMU_SELECT GATE=%d\nMMU_TEST_MOVE MOVE=%.2f"
+            % (self._gate, -self._scan_mm_total))
 
     # ─────────────────────────────────────────────────────────────────────────
 

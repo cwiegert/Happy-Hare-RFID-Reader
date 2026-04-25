@@ -931,10 +931,30 @@ class NFCGate:
             if hh_spool > 0:
                 self._hh_seed_spool_id  = hh_spool
                 self._hh_seed_available = bool(hh_avail)
-                logger.info(
-                    "nfc_gate: [%s] gate %d — HH seed: spool_id=%d  "
-                    "gate_status=%s  (will verify on first physical scan)",
-                    self._name, self._gate, hh_spool, hh_avail)
+
+                if bool(hh_avail) and self._spoolman is not None:
+                    # Gate is physically loaded — pre-populate NFC cache from
+                    # Spoolman so status is correct before the first physical scan.
+                    uid = self._spoolman.get_uid_for_spool(hh_spool)
+                    if uid:
+                        self._state.current_uid   = uid
+                        self._state.current_spool = hh_spool
+                        self._hh_confirmed_spool  = hh_spool
+                        logger.info(
+                            "nfc_gate: [%s] gate %d — startup: seeded from "
+                            "HH+Spoolman spool_id=%d uid=%s",
+                            self._name, self._gate, hh_spool, uid)
+                    else:
+                        logger.info(
+                            "nfc_gate: [%s] gate %d — HH seed: spool_id=%d "
+                            "available (no UID in Spoolman — will verify on "
+                            "first poll)",
+                            self._name, self._gate, hh_spool)
+                else:
+                    logger.info(
+                        "nfc_gate: [%s] gate %d — HH seed: spool_id=%d  "
+                        "gate_status=%s  (will verify on first physical scan)",
+                        self._name, self._gate, hh_spool, hh_avail)
             else:
                 logger.info(
                     "nfc_gate: [%s] gate %d — HH reports gate empty/unknown "
@@ -1322,74 +1342,11 @@ class NFCGate:
                 logger.info("nfc_gate: [%s] gate %d — %s uid=%s spool=%s",
                             self._name, gate, event_type, uid, spool)
 
-            # Determine whether to suppress the Happy Hare dispatch.
-            suppress = False
-
-            # ── Startup HH seed match ────────────────────────────────────────
-            # On the first poll after a Klipper restart, if the resolved spool
-            # matches what HH already has in its gate map, silently absorb the
-            # event — the NFC cache is now seeded, but HH does not need to be
-            # told something it already knows.  The seed is always cleared here
-            # so it fires at most once, regardless of match.
-            if self._hh_seed_spool_id is not None:
-                if event_type == EVENT_CHANGED and spool == self._hh_seed_spool_id:
-                    if self._hh_seed_available:
-                        # HH had spool AND marked gate available — nothing to do
-                        suppress = True
-                        self._hh_confirmed_spool = spool
-                        logger.info(
-                            "nfc_gate: [%s] gate %d — startup HH sync: "
-                            "spool=%d matches HH seed (available); absorbed silently",
-                            self._name, gate, spool)
-                    else:
-                        # HH had the spool ID but gate_status=0 — let dispatch through
-                        # so MMU_GATE_MAP AVAILABLE=1 gets applied
-                        logger.info(
-                            "nfc_gate: [%s] gate %d — startup HH sync: "
-                            "spool=%d matches HH seed but gate_status=0; "
-                            "dispatching to set AVAILABLE=1",
-                            self._name, gate, spool)
-                elif event_type == EVENT_CHANGED:
-                    logger.info(
-                        "nfc_gate: [%s] gate %d — startup HH sync: "
-                        "resolved spool=%s differs from HH seed=%d; "
-                        "dispatching CHANGED (spool swapped since last restart?)",
-                        self._name, gate, spool, self._hh_seed_spool_id)
-                self._hh_seed_spool_id   = None  # one-shot — always clear
-                self._hh_seed_available  = False
-
-            # ── CLEAR_CACHE suppress ─────────────────────────────────────────
-            # Only suppress when the uid AND spool both match the pre-clear
-            # state.  A different spool on the same uid is a real change and
-            # must dispatch — that is exactly the case CLEAR_CACHE is for.
-            if (self._suppress_next_dispatch_uid is not None
-                    and uid == self._suppress_next_dispatch_uid):
-                if spool == self._suppress_next_dispatch_spool:
-                    suppress = True
-                    logger.info(
-                        "nfc_gate: [%s] gate %d — cache refresh for uid=%s "
-                        "spool=%s unchanged; no GCode dispatch",
-                        self._name, gate, uid, spool)
-                else:
-                    logger.info(
-                        "nfc_gate: [%s] gate %d — cache refresh: uid=%s "
-                        "spool changed %s → %s; dispatching CHANGED",
-                        self._name, gate, uid,
-                        self._suppress_next_dispatch_spool, spool)
-                self._suppress_next_dispatch_uid   = None
-                self._suppress_next_dispatch_spool = None
-
-            if not suppress:
-                if self._spoolman is not None:
-                    if event_type == EVENT_CHANGED and spool is not None:
-                        self._spoolman.update_spool_location(spool, gate)
-                    elif event_type == EVENT_REMOVED and spool is not None:
-                        self._spoolman.clear_spool_location(spool)
-
-        if (uid_hex is not None and self._suppress_next_dispatch_uid is not None
-                and uid_hex == self._suppress_next_dispatch_uid):
-            self._suppress_next_dispatch_uid   = None
-            self._suppress_next_dispatch_spool = None
+            if self._spoolman is not None:
+                if event_type == EVENT_CHANGED and spool is not None:
+                    self._spoolman.update_spool_location(spool, gate)
+                elif event_type == EVENT_REMOVED and spool is not None:
+                    self._spoolman.clear_spool_location(spool)
 
         return uid_hex is not None
 

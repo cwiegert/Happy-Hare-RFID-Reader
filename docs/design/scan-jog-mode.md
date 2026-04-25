@@ -1,7 +1,8 @@
 # Design: Scan-and-Jog Mode (Spool Pre-load NFC Identification)
 
 > Engineering reference — not end-user documentation.
-> Status: **Proposed** — not yet implemented.
+> Status: **Implemented** — branch `scan-jog-mode`, not yet merged to `main`
+> Source: `klippy/extras/nfc_gates/NFC_manager.py`
 
 ---
 
@@ -165,10 +166,11 @@ def _poll_event(self, eventtime):
             and action == 'idle'
             and not self._is_printing()):
         if NfcGate._active_scan_gate is not None:
-            logger.info(
-                "nfc_gate: [%s] gate %d — scan trigger deferred: "
-                "gate %d already scanning",
-                self._name, self._gate, NfcGate._active_scan_gate)
+            if self._debug >= 3:
+                logger.info(
+                    "nfc_gate: [%s] gate %d — scan trigger deferred: "
+                    "gate %d already scanning",
+                    self._name, self._gate, NfcGate._active_scan_gate)
         else:
             self._start_scan_mode()
             return self.reactor.NEVER   # poll resumes when scan exits
@@ -200,10 +202,11 @@ def _start_scan_mode(self):
         self._scan_step_event,
         self.reactor.monotonic() + 0.5
     )
-    logger.info(
-        "nfc_gate: [%s] gate %d scan mode started — "
-        "step=%.1fmm max=%.1fmm interval=%.1fs",
-        self._name, self._gate, self._scan_jog_mm, self._scan_max_mm, self._scan_interval)
+    if self._debug >= 3:
+        logger.info(
+            "nfc_gate: [%s] gate %d scan mode started — "
+            "step=%.1fmm max=%.1fmm interval=%.1fs",
+            self._name, self._gate, self._scan_jog_mm, self._scan_max_mm, self._scan_interval)
 ```
 
 ### Scan step (the loop body)
@@ -234,9 +237,10 @@ def _scan_step_event(self, eventtime):
 
     self._run_jog(self._scan_jog_mm)
     self._scan_mm_total += self._scan_jog_mm
-    logger.info(
-        "nfc_gate: [%s] scan mode: no tag — jogged %.1fmm (total %.1fmm)",
-        self._name, self._scan_jog_mm, self._scan_mm_total)
+    if self._debug >= 4:
+        logger.info(
+            "nfc_gate: [%s] scan mode: no tag — jogged %.1fmm (total %.1fmm)",
+            self._name, self._scan_jog_mm, self._scan_mm_total)
     return eventtime + self._scan_interval  # ← reschedules next attempt
 ```
 
@@ -248,9 +252,10 @@ def _finish_scan(self):
     NfcGate._active_scan_gate = None
     # Rewind so filament is at parked position — _poll() already identified the tag
     self._run_rewind()
-    logger.info(
-        "nfc_gate: [%s] gate %d scan mode: tag identified after %.1fmm — rewound",
-        self._name, self._gate, self._scan_mm_total)
+    if self._debug >= 3:
+        logger.info(
+            "nfc_gate: [%s] gate %d scan mode: tag identified after %.1fmm — rewound",
+            self._name, self._gate, self._scan_mm_total)
     # Resume normal polling
     self.reactor.update_timer(
         self._poll_timer,
@@ -336,6 +341,23 @@ When `_poll()` identifies a tag during a scan step, the normal path runs immedia
 
 ---
 
+## Logging
+
+Scan-jog messages follow the standard debug level conventions defined in [Error Handling and Logging](error-logging.md):
+
+| Message | Level gate | `nfc_reader.log` | `klippy.log` |
+|---|---|---|---|
+| `scan mode started` | `debug >= 3` | ✅ | ❌ |
+| `scan trigger deferred: gate N already scanning` | `debug >= 3` | ✅ | ❌ |
+| `tag identified after Xmm — rewound` | `debug >= 3` | ✅ | ❌ |
+| `no tag — jogged Xmm (total Xmm)` | `debug >= 4` | ✅ | ❌ |
+| `print started — aborting` | warning (always) | ✅ | ✅ |
+| `no tag after Xmm — rewinding` | warning (always) | ✅ | ✅ |
+
+Set `debug: 3` on the test lane to observe scan start and success. Set `debug: 4` to also see each individual jog step.
+
+---
+
 ## Happy Hare Compatibility Notes
 
 - `MMU_SELECT_GATE` and `MMU_TEST_MOVE` are standard Happy Hare v2.x commands. `MMU_SELECT_GATE GATE=N` selects the lane before any move; `MMU_TEST_MOVE MOVE=mm` drives the gear stepper at its configured default speed and accel.
@@ -344,7 +366,7 @@ When `_poll()` identifies a tag during a scan step, the normal path runs immedia
 
 ---
 
-## Open Questions (Pre-implementation)
+## Open Questions (Needs Hardware Verification)
 
-1. **`_poll()` return value** — confirm that `_poll()` returns a truthy value when a tag is successfully identified and falsy otherwise, so `_scan_step_event` can use it as the exit condition.
-2. **Multi-lane simultaneous scan** — handled by `NfcGate._active_scan_gate`. The second lane to trigger logs a deferral and stays in normal polling; it will not re-trigger on the same load event. It will resume normal polling and identify the tag on the next poll tick once the first scan completes.
+1. **`MMU_TEST_MOVE` direction convention** — confirm that positive `MOVE` values advance filament toward the MMU (into the gate) on all HH versions. Negative values retract toward the spool.
+2. **`scan_jog_mm` default** — 50 mm per step is a starting point; tune after observing how many steps are typically needed to rotate the hub over the antenna.

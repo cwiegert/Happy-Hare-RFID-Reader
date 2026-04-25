@@ -72,16 +72,16 @@ Format: `YYYY-MM-DD HH:MM:SS LEVEL    message`. The level field is left-padded t
 | None | `0` | Nothing | — | — |
 | Errors | `1` | Init failures, hardware errors, I2C errors | ✅ | ✅ |
 | Warnings | `2` | Unexpected conditions, config problems, lifecycle warnings **(default)** | ✅ | ✅ |
-| Integration | `3` | Spoolman lookups, HH gate sync, dispatch decisions, cache hits | ✅ | ❌ |
-| Trace | `4` | Full I2C frame trace, every byte, every poll event | ✅ | ❌ |
+| Integration | `3` | Spoolman lookups, HH gate sync, dispatch decisions, cache hits, scan mode start/success/deferred | ✅ | ❌ |
+| Trace | `4` | Full I2C frame trace, every byte, every poll event, per-jog-step scan progress | ✅ | ❌ |
 
 `debug` accepts **integers only** (0–4). It is read with `config.getint()` so string values like `debug: info` are rejected. The `console_log_level` parameter accepts both integers and strings (`error`, `warning`, `info`, `debug`).
 
 The `debug` integer is an application-layer gate — code uses guards like `if self._debug >= 3: logger.info(...)`. The Python logger itself is always set to `DEBUG` (passes everything). The `_KlippyForwardHandler` does the sink routing: `WARNING+` records reach klippy.log, `INFO` and `DEBUG` records stay in nfc_reader.log only.
 
 **For normal printing:** `debug: 2`. Warnings and errors only. Minimal file volume.
-**During setup:** `debug: 3`. Spoolman lookups and HH sync events visible without per-poll noise.
-**Diagnosing I2C problems:** `debug: 4`. Every I2C byte logged for `_send`, `_read_ack`, `_recv`.
+**During setup / testing scan-jog:** `debug: 3`. Spoolman lookups, HH sync events, scan start/success visible without per-poll noise.
+**Diagnosing I2C problems or scan-jog step detail:** `debug: 4`. Every I2C byte logged; each jog step distance logged.
 
 ---
 

@@ -154,6 +154,34 @@ def test_uid_only_to_spool_update():
     event = gs.process_read('A3F200CC', 1042)
     assert_event(event, EVENT_CHANGED, spool=1042)
 
+# ── scan_mode parameter ───────────────────────────────────────────────────────
+
+def test_scan_mode_suppresses_miss_count():
+    """No-read ticks with scan_mode=True do not increment miss_count."""
+    gs = GateState(gate=0, absent_threshold=3)
+    gs.process_read('A3F200CC', 1042)
+    for _ in range(10):
+        assert_silent(gs.process_read(None, None, scan_mode=True))
+    assert gs.miss_count == 0, f"miss_count should be 0 in scan mode, got {gs.miss_count}"
+
+def test_scan_mode_tag_found_fires_event():
+    """Tag found during scan mode still fires EVENT_CHANGED normally."""
+    gs = GateState(gate=0)
+    event = gs.process_read('A3F200CC', 1042, scan_mode=True)
+    assert_event(event, EVENT_CHANGED, uid='A3F200CC', spool=1042)
+
+def test_scan_mode_off_resumes_miss_count():
+    """After scan ends (scan_mode=False), removal threshold applies normally."""
+    gs = GateState(gate=0, absent_threshold=2)
+    gs.process_read('A3F200CC', 1042)
+    # scan ticks do not count toward removal
+    gs.process_read(None, None, scan_mode=True)
+    gs.process_read(None, None, scan_mode=True)
+    # back to normal — threshold should fire after 2 real misses
+    assert_silent(gs.process_read(None, None))
+    event = gs.process_read(None, None)
+    assert_event(event, EVENT_REMOVED)
+
 
 if __name__ == '__main__':
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]

@@ -16,8 +16,14 @@ import unittest.mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__),
                                 '..', 'klippy', 'extras', 'nfc_gates'))
 
-with unittest.mock.patch('logging.FileHandler',
-                         side_effect=lambda *a, **k: logging.NullHandler()):
+# Patch logging.FileHandler with a real class (not a Mock) so that
+# isinstance(handler, logging.FileHandler) keeps working when pytest
+# installs its own root-logger handlers during collection.
+class _FakeFileHandler(logging.Handler):
+    def __init__(self, *a, **k): super().__init__()
+    def emit(self, record): pass
+
+with unittest.mock.patch('logging.FileHandler', _FakeFileHandler):
     import log as _log_module
 
 _normalise_level = _log_module._normalise_level

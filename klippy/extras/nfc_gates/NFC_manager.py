@@ -1342,11 +1342,31 @@ class NFCGate:
                 logger.info("nfc_gate: [%s] gate %d — %s uid=%s spool=%s",
                             self._name, gate, event_type, uid, spool)
 
+            suppress = (self._hh_seed_spool_id is not None
+                        and event_type == EVENT_CHANGED
+                        and spool == self._hh_seed_spool_id
+                        and self._hh_seed_available)
+            self._hh_seed_spool_id  = None  # one-shot, always clear
+            self._hh_seed_available = False
+
             if self._spoolman is not None:
                 if event_type == EVENT_CHANGED and spool is not None:
                     self._spoolman.update_spool_location(spool, gate)
                 elif event_type == EVENT_REMOVED and spool is not None:
                     self._spoolman.clear_spool_location(spool)
+
+            if suppress:
+                if self._debug >= 3:
+                    logger.info(
+                        "nfc_gate: [%s] gate %d — startup seed match "
+                        "spool=%s; skipping HH dispatch",
+                        self._name, gate, spool)
+            else:
+                self._klipper.dispatch(event_type, gate, uid, spool)
+                if event_type == EVENT_CHANGED and spool is not None:
+                    self._hh_confirmed_spool = spool
+                elif event_type == EVENT_REMOVED:
+                    self._hh_confirmed_spool = None
 
         return uid_hex is not None
 
@@ -1360,8 +1380,10 @@ class NFCGate:
 
     def _start_scan_mode(self):
         NFCGate._active_scan_gate = self._gate
-        self._scan_mode     = True
-        self._scan_mm_total = 0.0
+        self._scan_mode          = True
+        self._scan_mm_total      = 0.0
+        self._hh_seed_spool_id   = None  # seed irrelevant during scan-jog
+        self._hh_seed_available  = False
         self._scan_timer    = self.reactor.register_timer(
             self._scan_step_event,
             self.reactor.monotonic() + 0.5)
@@ -1748,6 +1770,7 @@ class NFCGateManager:
                         self._spoolman.update_spool_location(spool, gate)
                     elif event_type == EVENT_REMOVED and spool is not None:
                         self._spoolman.clear_spool_location(spool)
+                self._klipper.dispatch(event_type, gate, uid, spool)
         elif self._debug >= 4:
             logger.debug("nfc_gates: gate %d — no state change (%r)",
                          i, self._states[i])

@@ -1425,26 +1425,17 @@ class NFCGate:
 
         self._run_jog(self._scan_jog_mm)
         self._scan_mm_total += self._scan_jog_mm
-        msg = ("NFC Gate[%d] - moved %.1fmm  total %.1fmm / %.1fmm"
-               % (self._gate, self._scan_jog_mm,
-                  self._scan_mm_total, self._scan_max_mm))
-        logger.warning(msg)
-        gcode = self.printer.lookup_object('gcode', None)
-        if gcode is not None:
-            try:
-                gcode.respond_info(msg)
-            except Exception:
-                pass
+        logger.warning("NFC Gate[%d] - moved %.1fmm  total %.1fmm / %.1fmm",
+                       self._gate, self._scan_jog_mm,
+                       self._scan_mm_total, self._scan_max_mm)
         return eventtime + self._scan_interval
 
     def _finish_scan(self):
         self._scan_mode = False
         NFCGate._active_scan_gate = None
+        logger.warning("NFC Gate[%d]: tag found — rewinding %.1fmm",
+                       self._gate, self._scan_mm_total)
         self._run_rewind()
-        if self._debug >= 3:
-            logger.info(
-                "nfc_gate: [%s] gate %d scan mode: tag identified after %.1fmm — rewound",
-                self._name, self._gate, self._scan_mm_total)
         self.reactor.update_timer(
             self._poll_timer,
             self.reactor.monotonic() + self._poll_interval)
@@ -1452,6 +1443,8 @@ class NFCGate:
     def _rewind_and_exit_scan(self):
         self._scan_mode = False
         NFCGate._active_scan_gate = None
+        logger.warning("NFC Gate[%d]: no tag found — rewinding %.1fmm",
+                       self._gate, self._scan_mm_total)
         self._run_rewind()
         self.reactor.update_timer(
             self._poll_timer,

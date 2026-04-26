@@ -591,7 +591,7 @@ class NFCGateDefaults:
                                                    minval=10.0, maxval=5000.0)
         self.scan_interval      = config.getfloat('scan_interval', 2.0,
                                                    minval=0.5, maxval=60.0)
-        self.scan_poll_interval = config.getfloat('scan_poll_interval', 0.5,
+        self.scan_poll_interval = config.getfloat('scan_poll_interval', 0.1,
                                                    minval=0.1, maxval=5.0)
         self.scan_enabled       = config.getboolean('scan_enabled', True)
 
@@ -737,7 +737,7 @@ class NFCGate:
                                                d.scan_interval if d else 2.0,
                                                minval=0.5, maxval=60.0)
         self._scan_poll_interval = config.getfloat('scan_poll_interval',
-                                                    d.scan_poll_interval if d else 0.5,
+                                                    d.scan_poll_interval if d else 0.1,
                                                     minval=0.1, maxval=5.0)
         self._scan_enabled  = config.getboolean('scan_enabled',
                                                  d.scan_enabled if d else True)

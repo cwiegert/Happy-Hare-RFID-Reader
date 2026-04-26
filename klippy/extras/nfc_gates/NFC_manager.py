@@ -1541,18 +1541,15 @@ class NFCGate:
         NFCGate._active_scan_gate    = self._gate
         self._scan_mode              = True
         self._scan_mm_total          = 0.0
+        # First scan tick reads before any motion. If the tag is already under
+        # the antenna, JOG_SCAN can complete without moving the filament.
         self._scan_next_chunk_time   = self.reactor.monotonic()
         self._hh_seed_spool_id       = None
         self._hh_seed_available      = False
 
-        first_chunk = min(self._scan_jog_mm, self._scan_max_mm)
-        self._run_jog(first_chunk)
-        self._scan_mm_total = first_chunk
-        next_event = self._scan_next_event_time(first_chunk)
-        self._scan_next_chunk_time = next_event
         self._scan_timer = self.reactor.register_timer(
             self._scan_step_event,
-            next_event)
+            self.reactor.monotonic())
         if self._debug >= 3:
             logger.info(
                 "nfc_gate: [%s] gate %d scan mode started — "

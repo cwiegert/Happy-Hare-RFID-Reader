@@ -373,16 +373,14 @@ def test_scan_step_print_start_aborts():
     assert rewound, "_rewind_and_exit_scan was not called on print start"
     assert result == g.reactor.NEVER
 
-def test_scan_starts_with_one_chunk_and_delayed_read():
-    """_start_scan_mode queues one chunk and schedules read after it finishes."""
+def test_scan_starts_without_immediate_jog():
+    """_start_scan_mode schedules an immediate read before first motion."""
     g = _make_gate(gate=1, scan_max_mm=200.0)
     g._start_scan_mode()
     scripts = g.printer.gcode_scripts
-    assert len(scripts) == 1
-    assert 'MMU_SELECT GATE=1' in scripts[0]
-    assert 'MMU_TEST_MOVE MOVE=50.00' in scripts[0]
-    assert g._scan_mm_total == 50.0
-    assert g._scan_next_chunk_time == pytest_approx(100.725)
+    assert len(scripts) == 0
+    assert g._scan_mm_total == 0.0
+    assert g._scan_next_chunk_time == pytest_approx(100.0)
 
 def test_scan_step_issues_one_chunk_when_due():
     """No tag + due chunk issues scan_jog_mm, not the full scan distance."""

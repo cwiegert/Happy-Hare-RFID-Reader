@@ -723,7 +723,7 @@ class NFCGate:
         self._hh_seed_spool_id   = None  # set on startup from HH gate map; cleared after first match
         self._hh_seed_available  = False  # True only when HH had the gate marked available at seed time
         self._hh_confirmed_spool = None  # last spool HH acknowledged; enables _check_hh_cleared
-        self._hh_load_paused     = False  # True while HH reports filament loaded from this gate
+        self._hh_load_paused     = False  # True while HH owns this gate assignment
         self._failed     = False
         self._klipper    = KlipperInterface(self.printer, self.reactor)
         self._polling    = False
@@ -749,6 +749,7 @@ class NFCGate:
         self._scan_mode            = False
         self._scan_mm_total        = 0.0
         self._scan_next_chunk_time = 0.0
+        self._scan_idle_ready_time = 0.0
         self._prev_gate_status     = -1   # -1 = unknown; prevents false trigger on cold start
         self._scan_pending      = False  # armed on 0→1 edge; fires when HH confirms idle
 
@@ -1147,14 +1148,29 @@ class NFCGate:
                 try:
                     status        = mmu.get_status(eventtime)
                     gate_statuses = status.get('gate_status', [])
+                    gate_spool_ids = status.get('gate_spool_id', [])
                     if self._gate < len(gate_statuses):
                         curr   = int(gate_statuses[self._gate] or 0)
+                        try:
+                            hh_spool = int(gate_spool_ids[self._gate] or -1)
+                        except (IndexError, TypeError, ValueError):
+                            hh_spool = -1
                         action = status.get('action', '').lower()
                         prev   = self._prev_gate_status
                         self._prev_gate_status = curr
                         if curr == 0:
                             self._scan_pending = False
-                            if self._hh_load_paused:
+                            nfc_spool = self._state.current_spool
+                            if hh_spool > 0 and nfc_spool == hh_spool:
+                                if not self._hh_load_paused:
+                                    self._hh_load_paused = True
+                                    logger.info(
+                                        "nfc_gate: [%s] gate %d — HH has "
+                                        "assigned spool=%d; suspending NFC poll",
+                                        self._name, self._gate, hh_spool)
+                                self._state.miss_count = 0
+                                return self.reactor.monotonic() + self._poll_interval
+                            if self._hh_load_paused and hh_spool <= 0:
                                 self._hh_load_paused      = False
                                 self._state.current_uid   = None
                                 self._state.current_spool = None
@@ -1169,6 +1185,7 @@ class NFCGate:
                         # 0→1 edge: arm pending flag and let HH fully settle
                         if prev == 0 and curr == 1:
                             self._scan_pending = True
+                            self._scan_idle_ready_time = 0.0
                             if self._debug >= 3:
                                 logger.info(
                                     "nfc_gate: [%s] gate %d — gate loaded; "
@@ -1178,7 +1195,19 @@ class NFCGate:
                         if (self._scan_pending and curr == 1
                                 and action == 'idle'
                                 and not self._is_printing()):
+                            now = self.reactor.monotonic()
+                            if self._scan_idle_ready_time <= 0.0:
+                                self._scan_idle_ready_time = now + 2.0
+                                if self._debug >= 3:
+                                    logger.info(
+                                        "nfc_gate: [%s] gate %d — HH idle; "
+                                        "waiting 2.0s before scan-jog",
+                                        self._name, self._gate)
+                                return self._scan_idle_ready_time
+                            if now < self._scan_idle_ready_time:
+                                return self._scan_idle_ready_time
                             self._scan_pending = False
+                            self._scan_idle_ready_time = 0.0
                             if NFCGate._active_scan_gate is not None:
                                 if self._debug >= 3:
                                     logger.info(
@@ -1187,11 +1216,13 @@ class NFCGate:
                                         self._name, self._gate,
                                         NFCGate._active_scan_gate)
                                 self._scan_pending = True  # re-arm; retry next tick
+                                self._scan_idle_ready_time = now + 1.0
+                                return self._scan_idle_ready_time
                             else:
                                 self._start_scan_mode()
                                 return self.reactor.NEVER
                         if self._scan_pending:
-                            return self.reactor.monotonic() + self._poll_interval
+                            return self.reactor.monotonic() + 1.0
                 except Exception:
                     pass
 
@@ -1250,40 +1281,40 @@ class NFCGate:
             self._state.miss_count    = 0
             self._hh_confirmed_spool  = None
 
-    def _hh_gate_is_available(self):
-        """Return True when HH has this gate marked as available (gate_status >= 1).
+    def _hh_gate_matches_current_spool(self):
+        """Return True when HH already owns this gate's current spool.
 
-        Polling suspends only when HH explicitly marks the gate as available —
-        meaning filament is physically present and confirmed by HH's own sensor.
-        Gates that are merely 'assigned' (spool ID set but status=0) keep
-        polling so NFC can verify the physical tag.
+        HH may report a gate as merely assigned (gate_spool_id > 0,
+        gate_status == 0) or available/loaded (gate_status >= 1).  Once NFC has
+        read and cached that same spool, either state is enough to stop NFC
+        polling until HH clears the assignment.
         """
+        nfc_spool = self._state.current_spool
+        if nfc_spool is None:
+            return False
         mmu = self.printer.lookup_object('mmu', None)
         if mmu is None:
             return False
         try:
-            status      = mmu.get_status(self.reactor.monotonic())
-            gate_status = status.get('gate_status', [])
-            gstat       = int(gate_status[self._gate] or 0)
-            return gstat >= 1
+            status         = mmu.get_status(self.reactor.monotonic())
+            gate_spool_ids = status.get('gate_spool_id', [])
+            hh_spool       = int(gate_spool_ids[self._gate] or -1)
+            return hh_spool == nfc_spool
         except (IndexError, TypeError, ValueError):
             return False
 
     def _poll(self):
-        # Suspend scanning once HH has a spool assigned to this gate AND NFC
-        # has already read the tag at least once (current_spool is set).
-        # Requiring a confirmed scan first ensures the UID is always populated
-        # in the status before polling stops.  If the tag has never been read
-        # (e.g. startup with HH already populated), polling continues until the
-        # first successful scan, then suspends.
+        # Suspend scanning once HH already has the same spool assigned to this
+        # gate and NFC has read the tag at least once. Requiring the local NFC
+        # cache to have a spool keeps the UID visible in status output.
         if (not self._scan_mode
-                and self._hh_gate_is_available()
+                and self._hh_gate_matches_current_spool()
                 and self._state.current_spool is not None):
             if not self._hh_load_paused:
                 self._hh_load_paused = True
                 logger.info(
                     "nfc_gate: [%s] gate %d — spool confirmed by NFC; "
-                    "HH gate available — suspending poll until ejected",
+                    "HH owns same spool — suspending poll until ejected",
                     self._name, self._gate)
             self._state.miss_count = 0
             return
@@ -1491,6 +1522,12 @@ class NFCGate:
         """Return the time to wait before issuing the next scan chunk."""
         return (abs(mm) / self._get_scan_speed()) + 0.10
 
+    def _scan_next_event_time(self, mm):
+        """Return when it is safe to read after a queued scan chunk."""
+        return self.reactor.monotonic() + max(
+            self._scan_chunk_interval(mm),
+            self._scan_poll_interval)
+
     def _resume_poll_after_rewind(self):
         """Restart regular polling after the queued rewind move can finish."""
         delay = self._poll_interval
@@ -1504,15 +1541,18 @@ class NFCGate:
         NFCGate._active_scan_gate    = self._gate
         self._scan_mode              = True
         self._scan_mm_total          = 0.0
-        # Poll once before moving; if the tag is already readable, scan exits
-        # without adding any motion. Otherwise the first chunk fires on tick 1.
         self._scan_next_chunk_time   = self.reactor.monotonic()
         self._hh_seed_spool_id       = None
         self._hh_seed_available      = False
 
+        first_chunk = min(self._scan_jog_mm, self._scan_max_mm)
+        self._run_jog(first_chunk)
+        self._scan_mm_total = first_chunk
+        next_event = self._scan_next_event_time(first_chunk)
+        self._scan_next_chunk_time = next_event
         self._scan_timer = self.reactor.register_timer(
             self._scan_step_event,
-            self.reactor.monotonic() + self._scan_poll_interval)
+            next_event)
         if self._debug >= 3:
             logger.info(
                 "nfc_gate: [%s] gate %d scan mode started — "
@@ -1527,6 +1567,10 @@ class NFCGate:
         if not self._scan_mode:
             return self.reactor.NEVER
 
+        now = self.reactor.monotonic()
+        if now < self._scan_next_chunk_time:
+            return self._scan_next_chunk_time
+
         if self._is_printing():
             logger.warning(
                 "nfc_gate: [%s] scan mode: print started — aborting",
@@ -1534,8 +1578,9 @@ class NFCGate:
             self._rewind_and_exit_scan()
             return self.reactor.NEVER
 
-        # Poll every tick while the stepper moves. Jog is non-blocking so the
-        # reactor fires this timer freely between chunks.
+        # Read only between completed chunks. Polling the PN532 while the lane
+        # MCU is handling trsync-sensitive gear motion can starve the MCU and
+        # cause Klipper "Timer too close" shutdowns.
         try:
             tag_found = self._poll()
         except Exception:
@@ -1556,19 +1601,17 @@ class NFCGate:
         # Issue the next chunk only after the previous one has had time to
         # complete. Interval = chunk_mm / gear_short_move_speed + small accel
         # buffer. This replaces the manual scan_interval config.
-        now = self.reactor.monotonic()
-        if now >= self._scan_next_chunk_time:
-            remaining = self._scan_max_mm - self._scan_mm_total
-            chunk = min(self._scan_jog_mm, remaining)
-            self._run_jog(chunk)
-            self._scan_mm_total += chunk
-            self._scan_next_chunk_time = now + self._scan_chunk_interval(chunk)
-            msg = ("NFC Gate[%d] - moved %.1fmm  total %.1fmm / %.1fmm"
-                   % (self._gate, chunk, self._scan_mm_total, self._scan_max_mm))
-            logger.info(msg)
-            self._console(msg)
+        remaining = self._scan_max_mm - self._scan_mm_total
+        chunk = min(self._scan_jog_mm, remaining)
+        self._run_jog(chunk)
+        self._scan_mm_total += chunk
+        self._scan_next_chunk_time = self._scan_next_event_time(chunk)
+        msg = ("NFC Gate[%d] - moved %.1fmm  total %.1fmm / %.1fmm"
+               % (self._gate, chunk, self._scan_mm_total, self._scan_max_mm))
+        logger.info(msg)
+        self._console(msg)
 
-        return self.reactor.monotonic() + self._scan_poll_interval
+        return self._scan_next_chunk_time
 
     def _finish_scan(self):
         self._scan_mode = False

@@ -108,15 +108,18 @@ class GCodeCapture:
 
 class MockMMU:
     def __init__(self, gate_status=None, action='idle',
-                 gear_short_move_speed=80.0):
+                 gear_short_move_speed=80.0, gate_spool_id=None):
         self._gate_status          = gate_status or []
+        self._gate_spool_id        = (
+            gate_spool_id if gate_spool_id is not None
+            else [-1] * len(self._gate_status))
         self._action               = action
         self.gear_short_move_speed = gear_short_move_speed
 
     def get_status(self, eventtime):
         return {
             'gate_status':   self._gate_status,
-            'gate_spool_id': [-1] * len(self._gate_status),
+            'gate_spool_id': self._gate_spool_id,
             'action':        self._action,
         }
 
@@ -179,8 +182,11 @@ def _make_gate(gate=0, scan_jog_mm=50.0, scan_max_mm=200.0,
     g._scan_mm_total      = 0.0
     g._scan_start_time    = 0.0
     g._scan_next_chunk_time = 0.0
+    g._scan_idle_ready_time = 0.0
     g._scan_timer         = None
     g._prev_gate_status   = -1
+    g._hh_load_paused     = False
+    g._hh_confirmed_spool = None
     g._state              = GateState(gate)
     g.reactor             = MockReactor()
     g.printer             = MockPrinter()
@@ -232,6 +238,23 @@ def test_empty_gate_returns_next_poll_without_scan():
     assert result == pytest_approx(130.0), f"Expected 130.0, got {result}"
     assert not g._scan_mode
 
+def test_assigned_matching_spool_suspends_without_polling():
+    """HH assigned + matching NFC cache should not keep reading the PN532."""
+    g = _make_gate()
+    g.printer.set_mmu(MockMMU(gate_status=[0], gate_spool_id=[49]))
+    g._state.current_uid = '04448F92D32A81'
+    g._state.current_spool = 49
+    g._prev_gate_status = 0
+    called = []
+    g._poll = lambda: called.append(True)
+
+    result = g._poll_timer_event(100.0)
+
+    assert called == []
+    assert g._hh_load_paused
+    assert result == pytest_approx(130.0)
+    assert '[polling suspended]' in g.status_line()
+
 def test_cold_start_no_false_trigger():
     """prev=-1 → curr=1 must not trigger scan (prevents cold-start false fire)."""
     g = _make_gate()
@@ -242,13 +265,18 @@ def test_cold_start_no_false_trigger():
     g._poll_timer_event(100.0)
     assert not g._scan_mode
 
-def test_load_transition_starts_scan():
-    """0→1 with HH idle and not printing starts scan mode."""
+def test_load_transition_waits_for_idle_settle_before_scan():
+    """0→1 with HH idle waits 2s before starting scan mode."""
     g = _make_gate()
     g.printer.set_mmu(MockMMU(gate_status=[1], action='idle'))
     g.printer.set_print_state('standby')
     g._prev_gate_status = 0
     result = g._poll_timer_event(100.0)
+    assert not g._scan_mode
+    assert result == pytest_approx(102.0)
+
+    g.reactor._time = 102.0
+    result = g._poll_timer_event(102.0)
     assert g._scan_mode
     assert NFCGate._active_scan_gate == 0
     assert result == g.reactor.NEVER
@@ -305,7 +333,7 @@ def test_scan_step_tag_found_exits_loop():
     assert result == g.reactor.NEVER
 
 def test_scan_step_no_tag_reschedules_at_poll_interval():
-    """With no tag and time remaining, the timer reschedules at poll_interval."""
+    """If a chunk is still moving, no NFC poll happens before it finishes."""
     g = _make_gate(scan_max_mm=200.0, scan_poll_interval=0.5)
     g._scan_mode       = True
     g._scan_start_time = 100.0   # scan just started
@@ -315,7 +343,7 @@ def test_scan_step_no_tag_reschedules_at_poll_interval():
     g.printer.set_mmu(MockMMU(gear_short_move_speed=80.0))
     g._poll = lambda: False
     result = g._scan_step_event(100.0)
-    assert result == pytest_approx(100.5)   # monotonic(100) + poll_interval(0.5)
+    assert result == pytest_approx(101.0)
 
 def test_scan_step_timeout_rewinds_and_exits():
     """After scan_max_mm/speed + 5s slack, _rewind_and_exit_scan is called."""
@@ -345,13 +373,16 @@ def test_scan_step_print_start_aborts():
     assert rewound, "_rewind_and_exit_scan was not called on print start"
     assert result == g.reactor.NEVER
 
-def test_scan_starts_without_immediate_jog():
-    """_start_scan_mode waits for the first scan tick before issuing a chunk."""
+def test_scan_starts_with_one_chunk_and_delayed_read():
+    """_start_scan_mode queues one chunk and schedules read after it finishes."""
     g = _make_gate(gate=1, scan_max_mm=200.0)
     g._start_scan_mode()
     scripts = g.printer.gcode_scripts
-    assert len(scripts) == 0, f"Expected no gcode yet, got {len(scripts)}"
-    assert g._scan_mm_total == 0.0
+    assert len(scripts) == 1
+    assert 'MMU_SELECT GATE=1' in scripts[0]
+    assert 'MMU_TEST_MOVE MOVE=50.00' in scripts[0]
+    assert g._scan_mm_total == 50.0
+    assert g._scan_next_chunk_time == pytest_approx(100.725)
 
 def test_scan_step_issues_one_chunk_when_due():
     """No tag + due chunk issues scan_jog_mm, not the full scan distance."""
@@ -371,7 +402,7 @@ def test_scan_step_issues_one_chunk_when_due():
     assert 'MMU_TEST_MOVE MOVE=50.00' in scripts[0]
     assert g._scan_mm_total == 50.0
     assert g._scan_next_chunk_time == pytest_approx(100.725)
-    assert result == pytest_approx(100.5)
+    assert result == pytest_approx(100.725)
 
 def test_scan_step_does_not_stack_chunks_before_interval():
     """Chunks are not queued until the calculated move interval has elapsed."""
@@ -388,7 +419,7 @@ def test_scan_step_does_not_stack_chunks_before_interval():
 
     assert len(g.printer.gcode_scripts) == 0
     assert g._scan_mm_total == 50.0
-    assert result == pytest_approx(100.5)
+    assert result == pytest_approx(100.725)
 
 def test_get_scan_speed_reads_from_hh():
     """_get_scan_speed returns gear_short_move_speed from the mmu object."""

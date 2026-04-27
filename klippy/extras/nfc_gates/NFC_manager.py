@@ -47,7 +47,7 @@
 #   Same tag:   no command
 
 import re
-import bus as bus_module
+import .bus as bus_module
 
 from . import hh_status, pn532_driver, scan_jog
 from .log            import configure, logger

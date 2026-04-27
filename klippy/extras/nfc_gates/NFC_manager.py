@@ -806,7 +806,18 @@ class NFCGate:
                 curr = hh.status
                 prev = self._prev_gate_status
                 self._prev_gate_status = curr
-                if curr == 0:
+                if self._debug >= 3:
+                    logger.info(
+                        "nfc_gate: [%s] gate %d — HH poll: "
+                        "prev=%s curr=%s action=%s pending=%s printing=%s "
+                        "active_scan=%s load_paused=%s",
+                        self._name, self._gate,
+                        prev, curr, hh.action,
+                        getattr(self, '_scan_pending', False),
+                        self._is_printing(),
+                        NFCGate._active_scan_gate if NFCGate._active_scan_gate is not None else 'none',
+                        self._hh_load_paused)
+                if curr <= 0:
                     self._scan_pending = False
                     nfc_spool = self._state.current_spool
                     if hh.assigned and nfc_spool == hh.spool:
@@ -831,7 +842,7 @@ class NFCGate:
                         return self.reactor.monotonic() + 1.0
                     return self.reactor.monotonic() + self._poll_interval
                 # 0→1 edge: arm pending flag and let HH fully settle
-                if prev == 0 and curr == 1:
+                if prev < 1  and curr >= 1:
                     self._scan_pending = True
                     self._scan_idle_ready_time = 0.0
                     if self._debug >= 3:
@@ -845,11 +856,11 @@ class NFCGate:
                         and not self._is_printing()):
                     now = self.reactor.monotonic()
                     if self._scan_idle_ready_time <= 0.0:
-                        self._scan_idle_ready_time = now + 2.0
+                        self._scan_idle_ready_time = now + 0.5
                         if self._debug >= 3:
                             logger.info(
                                 "nfc_gate: [%s] gate %d — HH idle; "
-                                "waiting 2.0s before scan-jog",
+                                "waiting 0.5s before scan-jog",
                                 self._name, self._gate)
                         return self._scan_idle_ready_time
                     if now < self._scan_idle_ready_time:
@@ -1041,24 +1052,31 @@ class NFCGate:
             self._hh_seed_spool_id  = None  # one-shot, always clear
             self._hh_seed_available = False
 
-            if self._spoolman is not None:
-                if event_type == EVENT_CHANGED and spool is not None:
-                    self._spoolman.update_spool_location(spool, gate)
-                elif event_type == EVENT_REMOVED and spool is not None:
-                    self._spoolman.clear_spool_location(spool)
-
-            if suppress:
+            if self._is_printing():
                 if self._debug >= 3:
                     logger.info(
-                        "nfc_gate: [%s] gate %d — startup seed match "
-                        "spool=%s; skipping HH dispatch",
-                        self._name, gate, spool)
+                        "nfc_gate: [%s] gate %d — %s detected during print; "
+                        "Spoolman and HH dispatch suppressed",
+                        self._name, gate, event_type)
             else:
-                self._klipper.dispatch(event_type, gate, uid, spool)
-                if event_type == EVENT_CHANGED and spool is not None:
-                    self._hh_confirmed_spool = spool
-                elif event_type == EVENT_REMOVED:
-                    self._hh_confirmed_spool = None
+                if self._spoolman is not None:
+                    if event_type == EVENT_CHANGED and spool is not None:
+                        self._spoolman.update_spool_location(spool, gate)
+                    elif event_type == EVENT_REMOVED and spool is not None:
+                        self._spoolman.clear_spool_location(spool)
+
+                if suppress:
+                    if self._debug >= 3:
+                        logger.info(
+                            "nfc_gate: [%s] gate %d — startup seed match "
+                            "spool=%s; skipping HH dispatch",
+                            self._name, gate, spool)
+                else:
+                    self._klipper.dispatch(event_type, gate, uid, spool)
+                    if event_type == EVENT_CHANGED and spool is not None:
+                        self._hh_confirmed_spool = spool
+                    elif event_type == EVENT_REMOVED:
+                        self._hh_confirmed_spool = None
 
         return uid_hex is not None
 

@@ -51,9 +51,31 @@ If `mmu` is not registered (HH not installed), `hh_status.read()` returns `HHGat
 
 ---
 
+## Print Guard: Writes Suppressed During Printing
+
+Spoolman location writes and HH GCode dispatch are both suppressed while `print_stats.state == 'printing'` — Klipper's exact state for an actively running print. A print job may run for hours; the guard covers the entire window.
+
+**Paused prints are explicitly excluded.** When the user pauses (`state == 'paused'`), the guard clears immediately. A filament load, unload, or spool swap during a pause goes through the full write path normally — Spoolman is updated and HH dispatch fires. This is intentional: pausing to swap filament is exactly the moment the system should respond.
+
+| `print_stats.state` | Writes suppressed |
+|---|---|
+| `printing` | Yes |
+| `paused` | No |
+| `standby`, `complete`, `cancelled`, `error` | No |
+
+I2C reads, Spoolman UID lookups, and GateState updates continue in all states — the system always tracks what is on each gate internally, it just does not act on changes while the print is running.
+
+This matches HH's own behaviour: HH does not permit gate map edits during an active (non-paused) print. Issuing `MMU_GATE_MAP` or a Spoolman PATCH while `state == 'printing'` could interfere with the in-progress job.
+
+When the print ends or is cancelled, the next poll cycle re-reads the tag and dispatches any pending change automatically. No user action is required to re-sync.
+
+The guard applies to all event types: `EVENT_CHANGED`, `EVENT_UID_ONLY`, and `EVENT_REMOVED`. Scan-jog mode has a separate guard that prevents the jog routine from starting while `state == 'printing'`; scan-jog is also permitted during a pause.
+
+---
+
 ## NFC → HH: GCode Macro Dispatch
 
-`KlipperInterface.dispatch()` schedules a GCode script via `reactor.register_callback()`:
+`KlipperInterface.dispatch()` schedules a GCode script via `reactor.register_callback()`. This only runs when the print guard above is not active:
 
 ```
 EVENT_CHANGED   → "_NFC_SPOOL_CHANGED GATE={gate} SPOOL_ID={spool_id} UID={uid}"
@@ -70,7 +92,7 @@ MMU_GATE_MAP GATE={gate} SPOOLID={spool_id} AVAILABLE=1 SYNC=1 QUIET=1
 MMU_GATE_MAP GATE={gate} APPLY=1
 ```
 
-`SYNC=1` tells HH to synchronize the assignment to Spoolman. `AVAILABLE=1` marks the gate as having filament loaded. `APPLY=1` pushes the updated map into the active print state. NFC also calls `_spoolman.update_spool_location(spool_id, gate)` directly before dispatching, setting the Spoolman `location` field to `MMU_GATE_<n>`.
+`SYNC=1` tells HH to synchronize the assignment to Spoolman. `AVAILABLE=1` marks the gate as having filament loaded. `APPLY=1` pushes the updated map into the active print state. NFC also calls `_spoolman.update_spool_location(spool_id, gate)` directly before dispatching, setting the Spoolman `location` field to `MMU_GATE_<n>`. Both the Spoolman PATCH and this macro call are skipped when the print guard is active.
 
 ### `_NFC_SPOOL_REMOVED`
 

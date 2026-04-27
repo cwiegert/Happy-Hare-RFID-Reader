@@ -24,15 +24,7 @@
 
 __version__ = '1.0.0'
 
-import sys
-import os
-
-# Klipper adds klippy/ to sys.path but not klippy/extras/.
-# The nfc_gates package lives in extras/, so we add this file's directory
-# (the extras/ dir) to sys.path so the absolute import below resolves.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from nfc_gates.NFC_manager import NFCGate, NFCGateDefaults, _lane_instances
+from .nfc_gates.NFC_manager import NFCGate, NFCGateDefaults, _lane_instances
 
 # Tracks which printer object owns the current _lane_instances contents.
 # A new Printer is created on every Klipper RESTART, so when this changes

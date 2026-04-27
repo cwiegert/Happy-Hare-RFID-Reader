@@ -110,12 +110,44 @@ _poll()
   ├─ [D] reader.read_tag()  — I2C → PN532 → UID hex string or None
   ├─ [E] spoolman.lookup_spool_by_uid()  — UID → spool_id (TTL cached)
   ├─ [F] GateState.process_read(uid_hex, spool_id, scan_mode)  → event or None
-  └─ [G] suppress / dispatch logic  → KlipperInterface.dispatch() or skip
+  └─ [G] print-guard / suppress / dispatch logic
+       ├─ printing?  → log suppression, return — no writes, no HH dispatch
+       ├─ startup seed match?  → skip HH dispatch only
+       └─ normal path  → Spoolman location write + KlipperInterface.dispatch()
 ```
 
 Steps [A] and [B] are the suspend/resume gate. Steps [D]–[G] only run when the gate is actively scanning.
 
 Returns `True` if a tag was read (used by scan mode to detect success), `False` otherwise.
+
+### [G] Print Guard
+
+Before any write is issued, `_poll()` checks `_is_printing()`, which returns `True` only when `print_stats.state == 'printing'` (Klipper's exact string for an actively running print).
+
+Klipper `print_stats.state` values:
+
+| State | `_is_printing()` | Writes allowed |
+|---|---|---|
+| `printing` | True | No — suppressed |
+| `paused` | False | **Yes** — filament swaps permitted |
+| `standby`, `complete`, `cancelled`, `error` | False | Yes |
+
+A print job can run for hours. During that entire window, with `state == 'printing'`, Spoolman and HH writes are suppressed. The moment the user pauses (`state → 'paused'`), the guard clears and a filament load, unload, or spool swap goes through the full write path normally — exactly as it would outside a print.
+
+What the guard allows vs suppresses:
+
+- **Allowed:** I2C tag read [D], Spoolman UID lookup [E], GateState update [F]. The tag is identified and state is tracked internally.
+- **Suppressed:** Spoolman location PATCH (`update_spool_location`, `clear_spool_location`) and HH GCode dispatch (`KlipperInterface.dispatch`). No external writes happen.
+
+At `debug >= 3`, a log line is written to `nfc_reader.log` noting the suppression:
+
+```
+nfc_gate: [laneN] gate N — EVENT_CHANGED detected during print; Spoolman and HH dispatch suppressed
+```
+
+When the print finishes (`state → 'complete'` or `'cancelled'`), the next normal poll tick re-reads the tag. If GateState still reflects a change, `process_read()` fires the event again and the full write path executes normally. No manual intervention is needed to sync state after a print.
+
+**Why reads are still allowed during printing:** I2C traffic is harmless and maintaining an accurate internal picture of what is on each gate costs nothing. Suppressing writes only — not reads — means the system is always up to date and responds immediately when the print ends or is paused.
 
 ### [A] Suspend Check
 

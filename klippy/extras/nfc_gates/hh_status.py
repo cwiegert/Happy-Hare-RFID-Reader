@@ -65,7 +65,7 @@ def read(printer, gate, eventtime=None):
 
     gate_state = 0
     if gate < len(gate_statuses):
-        gate_state = _as_int(gate_statuses[gate], 0)
+        gate_state = _as_int(gate_statuses[gate], -1)
 
     return HHGateStatus(
         present=True,

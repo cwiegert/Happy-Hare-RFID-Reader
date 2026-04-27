@@ -193,16 +193,13 @@ def console(gate, msg):
 
 def run_jog(gate, mm):
     gcode = gate.printer.lookup_object('gcode')
-    if gate._scan_mm_total == 0.0:
-        gcode.run_script("MMU_SELECT GATE=%d\nMMU_TEST_MOVE MOVE=%.2f QUIET=1"
-                         % (gate._gate, mm))
-    else:
-        gcode.run_script("MMU_TEST_MOVE MOVE=%.2f QUIET=1" % mm)
+    gcode.run_script("MMU_SELECT GATE=%d\nMMU_TEST_MOVE MOVE=%.2f QUIET=1"
+                     % (gate._gate, mm))
 
 
 def run_rewind(gate):
     if gate._scan_mm_total <= 0.0:
         return
     gcode = gate.printer.lookup_object('gcode')
-    gcode.run_script("MMU_TEST_MOVE MOVE=%.2f QUIET=1\nM400" %
-                     -gate._scan_mm_total)
+    gcode.run_script("MMU_SELECT GATE=%d\nMMU_TEST_MOVE MOVE=%.2f QUIET=1\nM400"
+                     % (gate._gate, -gate._scan_mm_total))

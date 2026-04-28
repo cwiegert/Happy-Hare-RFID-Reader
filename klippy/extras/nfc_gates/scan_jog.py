@@ -212,5 +212,7 @@ def run_rewind(gate):
     if gate._scan_mm_total <= 0.0:
         return
     gcode = gate.printer.lookup_object('gcode')
+    #gcode.run_script("MMU_SELECT GATE=%.2f\nMMU_TEST_MOVE MOVE=%.2f QUIET=1\nM400"
+     #                % (gate._gate, -gate._scan_mm_total))
     gcode.run_script("MMU_TEST_MOVE MOVE=%.2f QUIET=1\nM400"
-                     % (gate._gate, -gate._scan_mm_total))
+                     % (-gate._scan_mm_total))

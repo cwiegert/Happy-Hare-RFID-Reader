@@ -52,7 +52,7 @@ NFC tags sit on the spool hub. When Happy Hare parks filament at the gate the hu
 ```gcode
 NFC_GATE GATE=0 JOG_SCAN=1
 ```
-This runs the exact same sequence with the same precondition checks (HH idle, not printing, no other gate scanning).
+This runs the exact same sequence with the same precondition checks (HH idle, not printing, no other gate scanning)
 
 **Configurable per lane** — see [Configuration Reference](docs/shared/configuration.md):
 

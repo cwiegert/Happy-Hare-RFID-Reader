@@ -110,6 +110,8 @@ def start(gate, max_mm=None):
     gate._hh_seed_spool_id = None
     gate._hh_seed_available = False
     gate._scan_found_event = None
+    gate._state.current_uid   = None  # force changed event on first read
+    gate._state.current_spool = None
     gate._scan_gate_selected = False  # deferred to first jog (must run from timer, not GCode handler)
 
     gate._scan_timer = gate.reactor.register_timer(

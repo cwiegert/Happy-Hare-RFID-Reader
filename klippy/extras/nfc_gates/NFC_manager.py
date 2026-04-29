@@ -850,7 +850,7 @@ class NFCGate:
                                 self._name, self._gate, hh.spool)
                         self._state.miss_count = 0
                         return self.reactor.monotonic() + self._poll_interval
-                    if self._hh_load_paused and not hh.assigned:
+                    if self._hh_load_paused:
                         self._hh_load_paused      = False
                         self._state.current_uid   = None
                         self._state.current_spool = None

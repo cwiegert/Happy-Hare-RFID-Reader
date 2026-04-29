@@ -50,8 +50,8 @@ def manual_jog_scan(gate, gcmd):
     gate.reactor.update_timer(gate._poll_timer, gate.reactor.NEVER)
     start(gate, max_mm=max_mm)
     gcmd.respond_info(
-        "NFC_GATE[%s]: scan-jog started for gate %d "
-        "(max=%.0fmm  poll=%.2fs)"
+        "🔍 NFC_GATE[%s]: scan-jog started for gate %d"
+        " (max=%.0fmm  poll=%.2fs)"
         % (gate._name, gate._gate,
            gate._scan_max_mm, gate._scan_poll_interval))
 
@@ -247,5 +247,5 @@ def run_rewind(gate):
         return
     gcode = gate.printer.lookup_object('gcode')
     gcode.run_script("MMU_TEST_MOVE MOVE=%.2f QUIET=1\nM400"
-                     % (-gate._scan_mm_total - 10))
+                     % (-(gate._scan_mm_total - 10))
     gcode.run_script("mmu_check_gate")

@@ -4,6 +4,7 @@
 
 GATE_EMPTY = 0
 GATE_AVAILABLE = 1
+GATE_INBUFFER = 2
 FILAMENT_POS_UNLOADED = 0
 
 
@@ -134,7 +135,7 @@ def all_lanes_parked_or_empty(printer, eventtime=None):
         return False, "Happy Hare gate status unavailable"
 
     for lane, gate_state in enumerate(status.gate_statuses):
-        if gate_state not in (GATE_EMPTY, GATE_AVAILABLE):
+        if gate_state not in (GATE_EMPTY, GATE_AVAILABLE, GATE_INBUFFER):
             return False, "lane %d is not parked or empty (status=%d)" % (
                 lane, gate_state)
 

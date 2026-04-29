@@ -431,7 +431,8 @@ class NFCGate:
         self._scan_idle_ready_time = 0.0
         self._scan_found_event     = None  # cached event suppressed during jog; dispatched after rewind
         self._prev_gate_status     = -1   # -1 = unknown; prevents false trigger on cold start
-        self._scan_pending      = False  # armed on 0→1 edge; fires when HH confirms idle
+        self._scan_pending           = False  # armed on 0→1 edge; fires when HH confirms idle
+        self._scan_deferred_notified = False  # True after first console msg for this deferral
 
         # delayed-init state
         self._gcode = None
@@ -864,6 +865,7 @@ class NFCGate:
                 # 0→1 edge: arm pending flag and let HH fully settle
                 if prev < 1  and curr >= 1:
                     self._scan_pending = True
+                    self._scan_deferred_notified = False
                     self._scan_idle_ready_time = 0.0
                     if self._debug >= 3:
                         logger.info(
@@ -888,12 +890,13 @@ class NFCGate:
                     self._scan_pending = False
                     self._scan_idle_ready_time = 0.0
                     if NFCGate._active_scan_gate is not None:
-                        if self._debug >= 3:
-                            logger.info(
-                                "nfc_gate: [%s] gate %d — scan trigger "
-                                "deferred: gate %d already scanning",
-                                self._name, self._gate,
-                                NFCGate._active_scan_gate)
+                        if not self._scan_deferred_notified:
+                            msg = ("NFC Gate[%d]: scan-jog waiting — "
+                                   "gate %d is already scanning"
+                                   % (self._gate, NFCGate._active_scan_gate))
+                            logger.info("nfc_gate: [%s] %s", self._name, msg)
+                            self._console("⏳ " + msg)
+                            self._scan_deferred_notified = True
                         self._scan_pending = True  # re-arm; retry after active scan has time to progress
                         self._scan_idle_ready_time = now + 3.0
                         return self._scan_idle_ready_time
@@ -904,7 +907,7 @@ class NFCGate:
                         logger.warning("nfc_gate: [%s] %s", self._name, msg)
                         self._console("⚠️ " + msg)
                         return self.reactor.monotonic() + self._poll_interval
-                    msg = ("NFC Gate[%d]: starting scan-jog "
+                    msg = ("🔍 NFC Gate[%d]: starting scan-jog "
                            "(max=%.0fmm  poll=%.2fs)"
                            % (self._gate, max_mm, self._scan_poll_interval))
                     if self._debug >= 3:
@@ -1145,7 +1148,8 @@ class NFCGate:
 
         for lane, gate_state in enumerate(status.gate_statuses):
             safe = gate_state in (hh_status.GATE_EMPTY,
-                                  hh_status.GATE_AVAILABLE)
+                                  hh_status.GATE_AVAILABLE,
+                                  hh_status.GATE_INBUFFER)
             if self._debug >= 3:
                 logger.info(
                     "nfc_gate: [%s] scan preflight — lane %d gate_status=%d %s",

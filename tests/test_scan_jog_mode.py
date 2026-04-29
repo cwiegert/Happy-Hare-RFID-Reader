@@ -326,7 +326,8 @@ def test_load_transition_waits_for_idle_settle_before_scan():
     result = g._poll_timer_event(100.1)
     assert g._scan_mode
     assert NFCGate._active_scan_gate == 0
-    assert 'starting scan-jog' in g.printer._gcode.responses[-1]
+    assert g.printer._gcode.responses[-1].startswith(
+        '🔍 NFC Gate[0]: starting scan-jog (max=')
     assert result == g.reactor.NEVER
 
 def test_no_trigger_while_printing():
@@ -369,7 +370,8 @@ def test_scan_lock_defers_pending_trigger_for_three_seconds():
     result = g._poll_timer_event(result)
 
     assert g._scan_mode
-    assert 'starting scan-jog' in g.printer._gcode.responses[-1]
+    assert g.printer._gcode.responses[-1].startswith(
+        '🔍 NFC Gate[2]: starting scan-jog (max=')
     assert result == g.reactor.NEVER
 
 def test_scan_disabled_skips_all_detection():
@@ -528,7 +530,7 @@ def test_scan_chunk_interval_uses_speed():
 
 def test_all_lanes_guard_blocks_buffer_loaded_lane():
     g = _make_gate()
-    g.printer.set_mmu(MockMMU(gate_status=[1, 2], filament_pos=0))
+    g.printer.set_mmu(MockMMU(gate_status=[1, 3], filament_pos=0))
     ok, reason = g._all_lanes_parked_or_empty()
     assert not ok
     assert 'lane 1' in reason
@@ -561,7 +563,7 @@ def test_lane_scan_max_gate_index_out_of_range_blocks():
 def test_manual_jog_blocked_by_unsafe_lane():
     g = _make_gate()
     g.printer.set_print_state('standby')
-    g.printer.set_mmu(MockMMU(gate_status=[1, 2], action='idle'))
+    g.printer.set_mmu(MockMMU(gate_status=[1, 3], action='idle'))
     gcmd = MockGCmd()
 
     g._manual_jog_scan(gcmd)
@@ -580,10 +582,22 @@ def test_manual_jog_blocked_by_missing_bowden_length():
     assert not g._scan_mode
     assert 'missing Bowden calibration length' in gcmd.responses[-1]
 
+def test_manual_jog_success_message_has_readable_spacing():
+    g = _make_gate(gate=3)
+    g.printer.set_print_state('standby')
+    g.printer.set_mmu(MockMMU(gate_status=[0, 0, 0, 1], action='idle'))
+    gcmd = MockGCmd()
+
+    g._manual_jog_scan(gcmd)
+
+    assert g._scan_mode
+    assert gcmd.responses[-1].startswith(
+        '🔍 NFC_GATE[test]: scan-jog started for gate 3 (max=')
+
 def test_automatic_jog_blocked_by_unsafe_lane():
     g = _make_gate()
     g.printer.set_print_state('standby')
-    g.printer.set_mmu(MockMMU(gate_status=[1, 2], action='idle'))
+    g.printer.set_mmu(MockMMU(gate_status=[1, 3], action='idle'))
     g._prev_gate_status = 0
 
     first = g._poll_timer_event(100.0)

@@ -67,6 +67,11 @@ echo "Linking nfc_gates/ package..."
 ln -sfn "${REPO_DIR}/klippy/extras/nfc_gates" "${KLIPPER_EXTRAS}/nfc_gates"
 
 # ── Create NFC config directory if it does not exist ─────────────────────────
+if [ -e "${NFC_CONFIG_DIR}" ] && [ ! -d "${NFC_CONFIG_DIR}" ]; then
+    echo "ERROR: ${NFC_CONFIG_DIR} exists but is not a directory."
+    echo "       Remove or rename it, then re-run install.sh."
+    exit 1
+fi
 mkdir -p "${NFC_CONFIG_DIR}"
 
 # ── Merge helper — copy file or append missing sections ──────────────────────

@@ -2,6 +2,10 @@
 #
 # Small adapter around Happy Hare's mmu.get_status() dict.
 
+GATE_EMPTY = 0
+GATE_AVAILABLE = 1
+FILAMENT_POS_UNLOADED = 0
+
 
 class HHGateStatus:
     def __init__(self, present=False, gate=-1, spool=-1, status=0,
@@ -22,6 +26,22 @@ class HHGateStatus:
     @property
     def available(self):
         return self.status >= 1
+
+    @property
+    def idle(self):
+        return self.action == 'idle'
+
+
+class HHFullStatus:
+    def __init__(self, present=False, action='', active_gate=-1,
+                 filament_pos=FILAMENT_POS_UNLOADED, gate_statuses=None,
+                 gate_spool_ids=None):
+        self.present = present
+        self.action = action
+        self.active_gate = active_gate
+        self.filament_pos = filament_pos
+        self.gate_statuses = gate_statuses or []
+        self.gate_spool_ids = gate_spool_ids or []
 
     @property
     def idle(self):
@@ -76,3 +96,46 @@ def read(printer, gate, eventtime=None):
         active_gate=_as_int(status.get('gate', -1)),
         filament_pos=_as_int(status.get('filament_pos', 0), 0),
         gate_count=gate_count)
+
+
+def read_full(printer, eventtime=None):
+    """Return parsed HH status across all gates."""
+    mmu = printer.lookup_object('mmu', None)
+    if mmu is None:
+        return HHFullStatus()
+
+    try:
+        status = mmu.get_status(eventtime if eventtime is not None else 0)
+    except Exception:
+        return HHFullStatus()
+
+    gate_statuses = [_as_int(v, -1) for v in status.get('gate_status', [])]
+    gate_spool_ids = [_as_int(v, -1) for v in status.get('gate_spool_id', [])]
+    return HHFullStatus(
+        present=True,
+        action=str(status.get('action', '')).lower(),
+        active_gate=_as_int(status.get('gate', -1)),
+        filament_pos=_as_int(status.get('filament_pos', 0), 0),
+        gate_statuses=gate_statuses,
+        gate_spool_ids=gate_spool_ids)
+
+
+def all_lanes_parked_or_empty(printer, eventtime=None):
+    """Return (ok, reason) for read-only scan-jog safety preflight."""
+    status = read_full(printer, eventtime)
+    if not status.present:
+        return False, "Happy Hare status unavailable"
+
+    if status.filament_pos != FILAMENT_POS_UNLOADED:
+        return False, "filament is not parked (filament_pos=%d)" % (
+            status.filament_pos,)
+
+    if not status.gate_statuses:
+        return False, "Happy Hare gate status unavailable"
+
+    for lane, gate_state in enumerate(status.gate_statuses):
+        if gate_state not in (GATE_EMPTY, GATE_AVAILABLE):
+            return False, "lane %d is not parked or empty (status=%d)" % (
+                lane, gate_state)
+
+    return True, None

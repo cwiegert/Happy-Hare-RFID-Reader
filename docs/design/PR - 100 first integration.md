@@ -41,9 +41,10 @@ This is a requirements, design, and pseudocode document only. It does not implem
 - `scan_jog_mm`
 - `scan_max_mm`
 - `scan_poll_interval`
-- `scan_settle_time`
+- `scan_poll_interval`
 
-The new design keeps `scan_jog_mm`, `scan_poll_interval`, and `scan_settle_time`, but removes `scan_max_mm`.
+The implemented design keeps `scan_jog_mm` and `scan_poll_interval`, but removes
+`scan_max_mm` and `scan_settle_time`.
 
 ### Current Happy Hare config path discovery
 
@@ -235,7 +236,7 @@ Keep:
 
 - `scan_jog_mm`
 - `scan_poll_interval`
-- `scan_settle_time`
+- `scan_poll_interval`
 - `scan_enabled`
 
 ### Tests

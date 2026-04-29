@@ -60,9 +60,7 @@ This runs the exact same sequence with the same precondition checks (HH idle, no
 |---|---|---|
 | `scan_enabled` | `True` | Master switch — set `False` to disable automatic scan-jog |
 | `scan_jog_mm` | `50.0` | Filament advance per step (mm) |
-| `scan_max_mm` | `600.0` | Maximum total advance before abort and rewind |
 | `scan_poll_interval` | `0.1` | Minimum seconds between NFC reads during scan |
-| `scan_settle_time` | `0.02` | Extra buffer after each jog chunk before reading |
 
 ---
 

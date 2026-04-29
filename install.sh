@@ -192,10 +192,10 @@ with open(path) as f:
 changed = False
 out = []
 removed_scan_interval = False
+removed_scan_max_mm = False
+removed_scan_settle_time = False
 has_scan_poll_interval = any(
     re.match(r'^\s*scan_poll_interval\s*:', line) for line in lines)
-has_scan_settle_time = any(
-    re.match(r'^\s*scan_settle_time\s*:', line) for line in lines)
 
 old_scan_interval_comment = (
     'Seconds between NFC read attempts during scan mode',
@@ -215,6 +215,23 @@ for line in lines:
         removed_scan_interval = True
         changed = True
         continue
+    if re.match(r'^\s*scan_max_mm\s*:', line):
+        while out and out[-1].lstrip().startswith('#') and (
+                'Maximum total advance' in out[-1]
+                or 'one full spool rotation' in out[-1]):
+            out.pop()
+        removed_scan_max_mm = True
+        changed = True
+        continue
+    if re.match(r'^\s*scan_settle_time\s*:', line):
+        while out and out[-1].lstrip().startswith('#') and (
+                'Extra seconds to wait' in out[-1]
+                or 'Lower values reduce time between jogs' in out[-1]
+                or 'MCU needs more time to settle' in out[-1]):
+            out.pop()
+        removed_scan_settle_time = True
+        changed = True
+        continue
     out.append(line)
 
 if not has_scan_poll_interval:
@@ -222,31 +239,12 @@ if not has_scan_poll_interval:
         '\n',
         '# Seconds between NFC read attempts while scan-jog is active.  Jog chunk cadence\n',
         '# is calculated automatically from scan_jog_mm / Happy Hare gear_short_move_speed\n',
-        '# plus scan_settle_time, so there is no manual move interval to tune.\n',
+        '# so there is no manual move interval to tune.\n',
         'scan_poll_interval:  0.1\n',
     ]
     inserted = False
     for i, line in enumerate(out):
-        if re.match(r'^\s*scan_max_mm\s*:', line):
-            out[i + 1:i + 1] = insert
-            inserted = True
-            changed = True
-            break
-    if not inserted:
-        out.extend(insert)
-        changed = True
-
-if not has_scan_settle_time:
-    insert = [
-        '\n',
-        '# Extra seconds to wait after each scan jog chunk before reading NFC and issuing\n',
-        '# the next chunk.  Lower values reduce time between jogs; raise only if the lane\n',
-        '# MCU needs more time to settle after motion.\n',
-        'scan_settle_time:    0.02\n',
-    ]
-    inserted = False
-    for i, line in enumerate(out):
-        if re.match(r'^\s*scan_poll_interval\s*:', line):
+        if re.match(r'^\s*scan_jog_mm\s*:', line):
             out[i + 1:i + 1] = insert
             inserted = True
             changed = True
@@ -260,10 +258,12 @@ if changed:
         f.writelines(out)
     if removed_scan_interval:
         print('    [migrate] removed deprecated scan_interval from {}'.format(path))
+    if removed_scan_max_mm:
+        print('    [migrate] removed scan_max_mm from {}'.format(path))
+    if removed_scan_settle_time:
+        print('    [migrate] removed scan_settle_time from {}'.format(path))
     if not has_scan_poll_interval:
         print('    [migrate] added scan_poll_interval to {}'.format(path))
-    if not has_scan_settle_time:
-        print('    [migrate] added scan_settle_time to {}'.format(path))
 PYEOF
 }
 

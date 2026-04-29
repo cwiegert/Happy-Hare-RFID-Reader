@@ -39,9 +39,16 @@ def manual_jog_scan(gate, gcmd):
         logger.warning(msg)
         gcmd.respond_info(msg)
         return
+    ok, reason, max_mm = gate._prepare_scan_jog()
+    if not ok:
+        msg = "⛔ NFC_GATE[%s]: scan-jog not available while %s" % (
+            gate._name, reason)
+        logger.warning(msg)
+        gcmd.respond_info(msg)
+        return
 
     gate.reactor.update_timer(gate._poll_timer, gate.reactor.NEVER)
-    start(gate)
+    start(gate, max_mm=max_mm)
     gcmd.respond_info(
         "NFC_GATE[%s]: scan-jog started for gate %d "
         "(max=%.0fmm  poll=%.2fs)"
@@ -73,7 +80,7 @@ def get_speed(gate):
 
 def chunk_interval(gate, mm):
     """Return the time to wait before issuing the next scan chunk."""
-    return (abs(mm) / get_speed(gate)) + gate._scan_settle_time
+    return abs(mm) / get_speed(gate)
 
 
 def next_event_time(gate, mm):
@@ -93,7 +100,9 @@ def resume_poll_after_rewind(gate):
         gate.reactor.monotonic() + delay)
 
 
-def start(gate):
+def start(gate, max_mm=None):
+    if max_mm is not None:
+        gate._scan_max_mm = float(max_mm)
     gate.__class__._active_scan_gate = gate._gate
     gate._scan_mode = True
     gate._scan_mm_total = 0.0
@@ -109,12 +118,11 @@ def start(gate):
     if gate._debug >= 3:
         logger.info(
             "nfc_gate: [%s] gate %d scan mode started — "
-            "chunk=%.1fmm max=%.1fmm speed=%.1fmm/s chunk_interval=%.2fs settle=%.2fs poll=%.2fs",
+            "chunk=%.1fmm max=%.1fmm speed=%.1fmm/s chunk_interval=%.2fs poll=%.2fs",
             gate._name, gate._gate,
             gate._scan_jog_mm, gate._scan_max_mm,
             get_speed(gate),
             chunk_interval(gate, gate._scan_jog_mm),
-            gate._scan_settle_time,
             gate._scan_poll_interval)
 
 
@@ -176,7 +184,6 @@ def step_event(gate, eventtime):
 
 def finish(gate):
     gate._scan_mode = False
-    gate.__class__._active_scan_gate = None
     gate._state.miss_count = 0
     found_msg = "😊 NFC Gate[%d]: tag found" % gate._gate
     info_both(found_msg)
@@ -185,6 +192,7 @@ def finish(gate):
     logger.info(msg)
     gate._console(msg)
     gate._run_rewind()
+    gate.__class__._active_scan_gate = None
     # Filament is back at the gate — dispatch the event that was suppressed during the jog.
     if gate._scan_found_event is not None:
         event_type, g, uid, spool = gate._scan_found_event
@@ -203,13 +211,13 @@ def finish(gate):
 
 def rewind_and_exit(gate):
     gate._scan_mode = False
-    gate.__class__._active_scan_gate = None
     gate._state.miss_count = 0
     msg = "⚠️ NFC Gate[%d]: no tag found — ⏪ rewinding %.1fmm" % (
         gate._gate, gate._scan_mm_total)
     logger.warning(msg)
     gate._console(msg)
     gate._run_rewind()
+    gate.__class__._active_scan_gate = None
     gate._resume_poll_after_rewind()
 
 
@@ -240,4 +248,4 @@ def run_rewind(gate):
     gcode = gate.printer.lookup_object('gcode')
     gcode.run_script("MMU_TEST_MOVE MOVE=%.2f QUIET=1\nM400"
                      % (-gate._scan_mm_total - 10))
-    gcode.run_script ("mmu_check_gate")
+    gcode.run_script("mmu_check_gate")

@@ -47,6 +47,7 @@ _null = _NullLogger()
 _stub('nfc_gates.log',
       logger=_null, configure=lambda *a, **k: None,
       info=lambda *a, **k: None,
+      info_both=lambda *a, **k: None,
       warning=lambda *a, **k: None,
       error=lambda *a, **k: None)
 _stub('nfc_gates.pn532_driver',

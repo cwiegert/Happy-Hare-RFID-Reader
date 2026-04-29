@@ -44,6 +44,7 @@ class _MockSpoolmanClient:
 _stub('nfc_gates.log',
       logger=_null, configure=lambda *a, **k: None,
       info=lambda *a, **k: None,
+      info_both=lambda *a, **k: None,
       warning=lambda *a, **k: None,
       error=lambda *a, **k: None)
 _stub('nfc_gates.pn532_driver',
@@ -221,23 +222,17 @@ def test_defaults_absent_threshold_zero_raises():
 def test_scan_defaults():
     d = NFCGateDefaults(MockConfig())
     assert d.scan_jog_mm   == 50.0
-    assert d.scan_max_mm   == 600.0
     assert d.scan_poll_interval == 0.1
-    assert d.scan_settle_time == 0.02
     assert d.scan_enabled  == True
 
 def test_scan_keys_overridden():
     d = NFCGateDefaults(MockConfig({
         'scan_jog_mm':        25.0,
-        'scan_max_mm':        300.0,
         'scan_poll_interval': 0.2,
-        'scan_settle_time':   0.0,
         'scan_enabled':       False,
     }))
     assert d.scan_jog_mm   == 25.0
-    assert d.scan_max_mm   == 300.0
     assert d.scan_poll_interval == 0.2
-    assert d.scan_settle_time == 0.0
     assert d.scan_enabled  == False
 
 def test_scan_jog_mm_below_min_raises():
@@ -246,21 +241,6 @@ def test_scan_jog_mm_below_min_raises():
         assert False, "Expected error for scan_jog_mm below minval"
     except (ValueError, Exception):
         pass
-
-def test_scan_max_mm_below_min_raises():
-    try:
-        NFCGateDefaults(MockConfig({'scan_max_mm': 5.0}))
-        assert False, "Expected error for scan_max_mm below minval"
-    except (ValueError, Exception):
-        pass
-
-def test_scan_settle_time_below_min_raises():
-    try:
-        NFCGateDefaults(MockConfig({'scan_settle_time': -0.1}))
-        assert False, "Expected error for scan_settle_time below minval"
-    except (ValueError, Exception):
-        pass
-
 
 if __name__ == '__main__':
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]

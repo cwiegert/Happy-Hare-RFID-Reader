@@ -144,9 +144,10 @@ Both integer and string spellings are accepted for `console_log_level` (e.g. `co
 |---|---|---|---|---|
 | `scan_enabled` | `True` | `True` | bool | — |
 | `scan_jog_mm` | `50.0` | `25.0` | float | 1.0–500.0 |
-| `scan_max_mm` | `600.0` | `600` | float | 10.0–5000.0 |
 | `scan_poll_interval` | `0.1` | `0.1` | float | 0.1–5.0 |
-| `scan_settle_time` | `0.02` | `0.02` | float | 0.0–1.0 |
+
+The scan max distance is derived at scan start from Happy Hare's saved
+`mmu_calibration_bowden_lengths` value in `mmu_vars.cfg`, indexed by MMU gate.
 
 ---
 

@@ -32,6 +32,7 @@ _nfc_pkg.__package__ = 'nfc_gates'
 _stub('nfc_gates.log',
       logger=_NullLogger(), configure=lambda *a, **k: None,
       info=lambda *a, **k: None,
+      info_both=lambda *a, **k: None,
       warning=lambda *a, **k: None,
       error=lambda *a, **k: None)
 

@@ -167,7 +167,7 @@ Starts the scan-and-jog sequence on demand, identical to the automatic pre-load 
 NFC_GATE GATE=0 JOG_SCAN=1
 ```
 
-**What it does:** Selects the gate, then jogs the filament forward in `scan_jog_mm` increments, reading the NFC tag after each step. When the tag is found it rewinds to the parked position via `MMU_UNLOAD restore=0`. If `scan_max_mm` is reached without a read it rewinds and exits scan mode.
+**What it does:** Selects the gate, then jogs the filament forward in `scan_jog_mm` increments, reading the NFC tag after each step. When the tag is found it rewinds to the parked position. If the lane's Happy Hare Bowden calibration length is reached without a read, it rewinds and exits scan mode.
 
 **Preconditions** (same as the automatic path — the command checks all of these and reports a plain-language error if any fail):
 

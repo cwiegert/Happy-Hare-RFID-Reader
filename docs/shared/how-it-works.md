@@ -96,9 +96,9 @@ _scan_step_event  (after each jog chunk completes)
             └─ dispatch spool to Happy Hare (already done inside _poll)
             └─ MMU_SELECT_GATE GATE=N + MMU_UNLOAD restore=0  (rewind to parked)
             └─ resume poll timer
-  └─ scan_mm_total >= scan_max_mm?  →  rewind and exit (no tag found)
+  └─ scan_mm_total >= lane Bowden length?  →  rewind and exit (no tag found)
   └─ MMU_SELECT_GATE GATE=N + MMU_TEST_MOVE MOVE=scan_jog_mm  (advance one step)
-  └─ reschedule after scan_jog_mm / gear_short_move_speed + scan_settle_time
+  └─ reschedule after scan_jog_mm / gear_short_move_speed
 ```
 
 `_poll()` during a scan step is identical to a normal poll — I2C read, Spoolman lookup, `GateState.process_read`, macro dispatch. The only difference is that `GateState.miss_count` does not increment on a no-read during scan (a blank read while the spool rotates is not an absence event).

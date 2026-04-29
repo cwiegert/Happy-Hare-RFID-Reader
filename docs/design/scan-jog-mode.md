@@ -63,7 +63,7 @@ _poll_timer_event (every poll_interval)
   │     first fire:  _scan_idle_ready_time = now + 2.0  → return that time
   │     settled:     _scan_pending = False
   │                  if NFCGate._active_scan_gate is not None:
-  │                      re-arm _scan_pending, retry in 1.0 s
+  │                      re-arm _scan_pending, retry in 3.0 s
   │                  else:
   │                      _start_scan_mode() → park poll timer, return NEVER
   │
@@ -73,7 +73,7 @@ _poll_timer_event (every poll_interval)
 **Key details:**
 - `_prev_gate_status` initializes to `-1` on startup. The `-1 → 1` transition at cold start is ignored; only `0 → 1` triggers scan mode. This prevents a false trigger when HH already has `gate_status = 1` from a previous session.
 - A 2-second idle-settle delay (`_scan_idle_ready_time`) is inserted after HH reports idle. This prevents premature scan entry while HH is still completing its park move.
-- If another gate holds the scan lock, `_scan_pending` is re-armed and a 1-second retry is scheduled rather than silently dropping the trigger.
+- If another gate holds the scan lock, `_scan_pending` is re-armed and a 3-second retry is scheduled rather than silently dropping the trigger or spamming logs.
 
 **Manual trigger:** `NFC_GATE GATE=N JOG_SCAN=1` calls `scan_jog.manual_jog_scan(gate, gcmd)` directly. It runs the same precondition checks (not printing, HH idle, no other gate scanning, reader healthy) and calls `start(gate)`. No edge detection is involved.
 
@@ -90,7 +90,7 @@ NFCGate._active_scan_gate = None   # gate number that currently holds the lock, 
 
 Rules:
 - **Entry**: `scan_jog.start()` sets `NFCGate._active_scan_gate = gate._gate`.
-- **Hold**: while scan is running, `_active_scan_gate` is non-None. Other gates re-arm `_scan_pending` and retry in 1 second.
+- **Hold**: while scan is running, `_active_scan_gate` is non-None. Other gates re-arm `_scan_pending` and retry in 3 seconds.
 - **Release**: both `finish()` and `rewind_and_exit()` set `NFCGate._active_scan_gate = None`.
 - `_handle_disconnect` also clears the lock if this gate owns it.
 
@@ -143,11 +143,12 @@ All added to `[nfc_gate]` (overridable per `[nfc_gate laneN]`):
 |---|---|---|---|
 | `scan_enabled` | `True` | `True` | Master switch — `False` disables scan mode entirely |
 | `scan_jog_mm` | `50.0` | `25.0` | Filament advance per jog step (mm) |
-| `scan_max_mm` | `600.0` | `600` | Maximum total advance before abort and rewind |
 | `scan_poll_interval` | `0.1` | `0.1` | Minimum seconds between NFC reads during scan |
-| `scan_settle_time` | `0.02` | `0.02` | Extra seconds after each jog chunk before reading |
 
 `scan_jog_mm` of 25 mm gives a ~5 cm read window (25 mm on each side of center plus the antenna width) for finding tags that are slightly off-axis.
+The maximum scan distance is read at scan start from Happy Hare's
+`mmu_calibration_bowden_lengths` in `mmu_vars.cfg`; the current gate indexes
+that list.
 
 ---
 
@@ -208,7 +209,7 @@ def step_event(gate, eventtime):
     return now + gate._scan_poll_interval
 ```
 
-The timer always returns `now + scan_poll_interval` so NFC is polled continuously throughout the scan. Jog chunks are gated by `_scan_next_chunk_time`, which advances by `chunk_interval = (abs(mm) / gear_short_move_speed) + scan_settle_time` after each issue. This decouples read frequency from motor timing — the tag can be detected anywhere in the move, not only after the chunk completes.
+The timer always returns `now + scan_poll_interval` so NFC is polled continuously throughout the scan. Jog chunks are gated by `_scan_next_chunk_time`, which advances by `chunk_interval = abs(mm) / gear_short_move_speed` after each issue. This decouples read frequency from motor timing — the tag can be detected anywhere in the move, not only after the chunk completes.
 
 ### `finish(gate)` — tag found
 
@@ -299,8 +300,11 @@ Scan-jog messages follow the standard debug level conventions:
 |---|---|---|---|
 | `scan mode started — chunk=Xmm max=Xmm speed=Xmm/s` | `debug >= 3` | ✅ | ❌ |
 | `gate loaded; waiting for HH idle before scan` | `debug >= 3` | ✅ | ❌ |
-| `HH idle; waiting 2.0s before scan-jog` | `debug >= 3` | ✅ | ❌ |
+| `HH idle; waiting 0.1s before scan-jog` | `debug >= 3` | ✅ | ❌ |
+| `scan preflight — lane N gate_status=X safe/not safe` | `debug >= 3` | ✅ | ❌ |
 | `scan trigger deferred: gate N already scanning` | `debug >= 3` | ✅ | ❌ |
+| `starting scan-jog (max=Xmm poll=Ys)` | `debug >= 3`; console always | ✅ | ❌ |
+| `scan-jog not available while reason` | warning (always) | ✅ | ✅ |
 | `tag identified — rewinding Xmm` | `info` (always) | ✅ | ❌ |
 | `no tag — jogged Xmm / Xmm` | `info` (always at each step) | ✅ | ❌ |
 | `print started — aborting` | warning (always) | ✅ | ✅ |

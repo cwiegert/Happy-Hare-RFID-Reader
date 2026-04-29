@@ -46,8 +46,13 @@
 #   Removed:    _NFC_SPOOL_REMOVED GATE=<gate>
 #   Same tag:   no command
 
+import ast
+import os
 import re
-from .. import bus as bus_module
+try:
+    from .. import bus as bus_module
+except ImportError:
+    import bus as bus_module
 
 from . import hh_status, pn532_driver, scan_jog
 from .log            import configure, logger
@@ -256,12 +261,8 @@ class NFCGateDefaults:
                                                  minval=0, maxval=127)
         self.scan_jog_mm        = config.getfloat('scan_jog_mm', 50.0,
                                                    minval=1.0, maxval=500.0)
-        self.scan_max_mm        = config.getfloat('scan_max_mm', 600.0,
-                                                   minval=10.0, maxval=5000.0)
         self.scan_poll_interval = config.getfloat('scan_poll_interval', 0.1,
                                                    minval=0.1, maxval=5.0)
-        self.scan_settle_time   = config.getfloat('scan_settle_time', 0.02,
-                                                   minval=0., maxval=1.0)
         self.scan_enabled       = config.getboolean('scan_enabled', True)
 
         self._printer = config.get_printer()
@@ -399,15 +400,12 @@ class NFCGate:
         self._scan_jog_mm   = config.getfloat('scan_jog_mm',
                                                d.scan_jog_mm if d else 50.0,
                                                minval=1.0, maxval=500.0)
-        self._scan_max_mm   = config.getfloat('scan_max_mm',
-                                               d.scan_max_mm if d else 600.0,
-                                               minval=10.0, maxval=5000.0)
+        self._scan_max_mm   = None
+        self._mmu_vars_path = None
+        self._bowden_lengths = None
         self._scan_poll_interval = config.getfloat('scan_poll_interval',
                                                     d.scan_poll_interval if d else 0.1,
                                                     minval=0.1, maxval=5.0)
-        self._scan_settle_time = config.getfloat('scan_settle_time',
-                                                  d.scan_settle_time if d else 0.02,
-                                                  minval=0., maxval=1.0)
         self._scan_enabled  = config.getboolean('scan_enabled',
                                                  d.scan_enabled if d else True)
         self._scan_timer           = None
@@ -880,10 +878,23 @@ class NFCGate:
                                 "deferred: gate %d already scanning",
                                 self._name, self._gate,
                                 NFCGate._active_scan_gate)
-                        self._scan_pending = True  # re-arm; retry next tick
-                        self._scan_idle_ready_time = now + 0.25
+                        self._scan_pending = True  # re-arm; retry after active scan has time to progress
+                        self._scan_idle_ready_time = now + 3.0
                         return self._scan_idle_ready_time
-                    self._start_scan_mode()
+                    ok, reason, max_mm = self._prepare_scan_jog(eventtime)
+                    if not ok:
+                        msg = "NFC Gate[%d]: scan-jog not available while %s" % (
+                            self._gate, reason)
+                        logger.warning("nfc_gate: [%s] %s", self._name, msg)
+                        self._console("⚠️ " + msg)
+                        return self.reactor.monotonic() + self._poll_interval
+                    msg = ("NFC Gate[%d]: starting scan-jog "
+                           "(max=%.0fmm  poll=%.2fs)"
+                           % (self._gate, max_mm, self._scan_poll_interval))
+                    if self._debug >= 3:
+                        logger.info("nfc_gate: [%s] %s", self._name, msg)
+                    self._console(msg)
+                    self._start_scan_mode(max_mm=max_mm)
                     return self.reactor.NEVER
                 if getattr(self, '_scan_pending', False):
                     return self.reactor.monotonic() + .25
@@ -1099,6 +1110,119 @@ class NFCGate:
     def _manual_jog_scan(self, gcmd):
         return scan_jog.manual_jog_scan(self, gcmd)
 
+    def _all_lanes_parked_or_empty(self, eventtime=None):
+        status = hh_status.read_full(
+            self.printer,
+            eventtime if eventtime is not None else self.reactor.monotonic())
+        if not status.present:
+            return False, "Happy Hare status unavailable"
+
+        if status.filament_pos != hh_status.FILAMENT_POS_UNLOADED:
+            if status.active_gate >= 0 and status.action:
+                return False, "lane %d is %s; filament is not parked (filament_pos=%d)" % (
+                    status.active_gate, status.action, status.filament_pos)
+            return False, "filament is not parked (filament_pos=%d)" % (
+                status.filament_pos,)
+
+        if not status.gate_statuses:
+            return False, "Happy Hare gate status unavailable"
+
+        for lane, gate_state in enumerate(status.gate_statuses):
+            safe = gate_state in (hh_status.GATE_EMPTY,
+                                  hh_status.GATE_AVAILABLE)
+            if self._debug >= 3:
+                logger.info(
+                    "nfc_gate: [%s] scan preflight — lane %d gate_status=%d %s",
+                    self._name, lane, gate_state,
+                    "safe" if safe else "not safe")
+            if not safe:
+                return False, "lane %d is not parked or empty (status=%d)" % (
+                    lane, gate_state)
+
+        return True, None
+
+    def _expand_mmu_vars_path(self, path):
+        path = os.path.expanduser(str(path).strip())
+        if os.path.isabs(path):
+            return path
+        return os.path.abspath(os.path.join(
+            os.path.expanduser('~/printer_data/config'), path))
+
+    def _resolve_mmu_vars_path(self):
+        cached = getattr(self, '_mmu_vars_path', None)
+        if cached:
+            return cached
+
+        configfile = self.printer.lookup_object('configfile', None)
+        if configfile is not None and hasattr(configfile, 'get_status'):
+            try:
+                raw_config = configfile.get_status(0).get('config', {})
+                save_vars = raw_config.get('save_variables', {})
+                filename = save_vars.get('filename', None)
+                if filename:
+                    self._mmu_vars_path = self._expand_mmu_vars_path(filename)
+                    return self._mmu_vars_path
+            except Exception:
+                logger.exception(
+                    "nfc_gate: [%s] could not read [save_variables] filename",
+                    self._name)
+
+        fallback = '~/printer_data/config/mmu/mmu_vars.cfg'
+        self._mmu_vars_path = self._expand_mmu_vars_path(fallback)
+        return self._mmu_vars_path
+
+    def _load_bowden_lengths(self):
+        path = self._resolve_mmu_vars_path()
+        if not path or not os.path.exists(path):
+            return None
+
+        try:
+            with open(path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if not line.startswith('mmu_calibration_bowden_lengths'):
+                        continue
+                    parts = line.split('=', 1)
+                    if len(parts) != 2:
+                        return None
+                    values = ast.literal_eval(parts[1].strip())
+                    if not isinstance(values, (list, tuple)):
+                        return None
+                    lengths = []
+                    for value in values:
+                        length = float(value)
+                        if length <= 0.0:
+                            return None
+                        lengths.append(length)
+                    self._bowden_lengths = lengths
+                    return lengths
+        except Exception:
+            logger.exception(
+                "nfc_gate: [%s] could not read Bowden lengths from %s",
+                self._name, path)
+            return None
+
+        return None
+
+    def _get_lane_scan_max_mm(self):
+        lengths = self._load_bowden_lengths()
+        if lengths is None:
+            return None
+        if self._gate < 0 or self._gate >= len(lengths):
+            return None
+        return float(lengths[self._gate])
+
+    def _prepare_scan_jog(self, eventtime=None):
+        ok, reason = self._all_lanes_parked_or_empty(eventtime)
+        if not ok:
+            return False, reason, None
+        max_mm = self._get_lane_scan_max_mm()
+        if max_mm is None:
+            return False, "missing Bowden calibration length for gate %d" % self._gate, None
+        return True, None, max_mm
+
     def _is_printing(self):
         return scan_jog.is_printing(self)
 
@@ -1114,8 +1238,8 @@ class NFCGate:
     def _resume_poll_after_rewind(self):
         return scan_jog.resume_poll_after_rewind(self)
 
-    def _start_scan_mode(self):
-        return scan_jog.start(self)
+    def _start_scan_mode(self, max_mm=None):
+        return scan_jog.start(self, max_mm)
 
     def _scan_step_event(self, eventtime):
         return scan_jog.step_event(self, eventtime)

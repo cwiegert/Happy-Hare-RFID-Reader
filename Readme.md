@@ -77,7 +77,7 @@ SSH to the Pi and clone the repo:
 cd ~
 git clone --filter=blob:none --sparse git@github.com:<your-github-username>/NFC-Reader.git emu-nfc-reader
 cd ~/emu-nfc-reader
-git sparse-checkout set klippy config docs tools
+git sparse-checkout set klippy config
 bash install.sh
 ```
 

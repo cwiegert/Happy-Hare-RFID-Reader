@@ -182,9 +182,9 @@ The uninstaller:
 
 Remove these three lines from `printer.cfg`:
 ```ini
-[include NFC/nfc_reader.cfg]
-[include NFC/nfc_macros.cfg]
-[include NFC/nfc_reader_hw.cfg]
+[include nfc/nfc_reader.cfg]
+[include nfc/nfc_macros.cfg]
+[include nfc/nfc_reader_hw.cfg]
 ```
 
 Remove the update manager block from `moonraker.conf`, then restart Moonraker:

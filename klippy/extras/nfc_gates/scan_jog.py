@@ -197,11 +197,20 @@ def finish(gate):
     gate.__class__._active_scan_gate = None
     # Filament is back at the gate — dispatch the event that was suppressed during the jog.
     if gate._scan_found_event is not None:
-        event_type, g, uid, spool = gate._scan_found_event
+        event = gate._scan_found_event
+        if len(event) == 5:
+            event_type, g, uid, spool, meta = event
+        else:
+            event_type, g, uid, spool = event
+            meta = None
         gate._scan_found_event = None
-        gate._klipper.dispatch(event_type, g, uid, spool)
+        gate._klipper.dispatch(event_type, g, uid, spool, meta=meta)
         if event_type == 'changed' and spool is not None:
             msg = "✅ NFC[%d]: spool %s assigned" % (g, spool)
+            info_both(msg)
+            gate._console(msg)
+        elif event_type == 'changed' and meta is not None:
+            msg = "✅ NFC[%d]: tag metadata assigned" % g
             info_both(msg)
             gate._console(msg)
         elif event_type == 'uid_only':

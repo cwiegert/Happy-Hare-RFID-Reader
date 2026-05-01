@@ -1,0 +1,106 @@
+name: Sync lameandboard/rfid vendored files
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 9am UTC
+  workflow_dispatch:      # Allow manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Fetch upstream files
+        id: fetch
+        run: |
+          curl -sf "https://raw.githubusercontent.com/lameandboard/rfid/main/extras/rfid_tag_parser.py" \
+            -o /tmp/rfid_tag_parser_upstream.py
+          curl -sf "https://raw.githubusercontent.com/lameandboard/rfid/main/extras/spoolman_client.py" \
+            -o /tmp/spoolman_client_upstream.py
+          UPSTREAM_SHA=$(curl -sf \
+            "https://api.github.com/repos/lameandboard/rfid/commits/main" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['sha'])")
+          UPSTREAM_DATE=$(date -u +%Y-%m-%d)
+          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+          echo "upstream_date=$UPSTREAM_DATE" >> "$GITHUB_OUTPUT"
+
+      - name: Check for differences
+        id: diff
+        run: |
+          CHANGED=false
+          if ! diff -q /tmp/rfid_tag_parser_upstream.py \
+              klippy/extras/nfc_gates/vendor/rfid_tag_parser.py > /dev/null 2>&1; then
+            CHANGED=true
+            echo "rfid_tag_parser changed"
+          fi
+          if ! diff -q /tmp/spoolman_client_upstream.py \
+              klippy/extras/nfc_gates/vendor/lameandboard_spoolman.py > /dev/null 2>&1; then
+            CHANGED=true
+            echo "lameandboard_spoolman changed"
+          fi
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
+
+      - name: Stage upstream files for testing
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          cp /tmp/rfid_tag_parser_upstream.py klippy/extras/nfc_gates/vendor/rfid_tag_parser.py
+          cp /tmp/spoolman_client_upstream.py klippy/extras/nfc_gates/vendor/lameandboard_spoolman.py
+
+      - name: Run contract regression tests
+        if: steps.diff.outputs.changed == 'true'
+        id: tests
+        run: |
+          pip install pytest --quiet
+          if pytest tests/test_vendor_contract.py -v 2>&1 | tee /tmp/test_output.txt; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate PR body
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          SHORT_SHA: ${{ steps.fetch.outputs.upstream_sha }}
+          TESTS_PASSED: ${{ steps.tests.outputs.passed }}
+          NEEDS_REVIEW: >-
+            ${{ steps.tests.outputs.passed == 'true'
+              && 'no adapter changes required based on contract tests'
+              || 'ADAPTER CHANGES LIKELY REQUIRED — do not merge until tests pass' }}
+        run: |
+          export TEST_OUTPUT="$(tail -30 /tmp/test_output.txt)"
+          python3 .github/scripts/generate_pr_body.py
+
+      - name: Create PR
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_SHA: ${{ steps.fetch.outputs.upstream_sha }}
+          UPSTREAM_DATE: ${{ steps.fetch.outputs.upstream_date }}
+        run: |
+          SHORT_SHA="${UPSTREAM_SHA:0:12}"
+          BRANCH="vendor/lameandboard-sync-$(date +%Y%m%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          sed -i "s/upstream_commit: .*/upstream_commit: ${UPSTREAM_SHA}/" VENDORED.md
+          sed -i "s/synced_date:     .*/synced_date:     ${UPSTREAM_DATE}/" VENDORED.md
+          git add klippy/extras/nfc_gates/vendor/rfid_tag_parser.py \
+                  klippy/extras/nfc_gates/vendor/lameandboard_spoolman.py \
+                  VENDORED.md
+          git commit -m "vendor: sync lameandboard/rfid upstream (${SHORT_SHA})"
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "vendor: lameandboard/rfid upstream sync (${SHORT_SHA})" \
+            --body-file /tmp/pr_body.md \
+            --base main

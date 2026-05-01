@@ -273,6 +273,9 @@ class SpoolmanClient:
                 return spool
         return None
 
+    def lookup_spool_by_id(self, spool_id):
+        return self._fetch_spool_detail(spool_id)
+
     def _fetch_spool_detail(self, spool_id):
         """Return the full single-spool record, or None on request failure."""
         base_url = self._resolve_base_url()

@@ -61,9 +61,9 @@ The installer prints what it creates. If it cannot find the Klipper extras direc
 Open `~/printer_data/config/printer.cfg` and add these three lines **in this exact order**:
 
 ```ini
-[include NFC/nfc_reader.cfg]
-[include NFC/nfc_macros.cfg]
-[include NFC/nfc_reader_hw.cfg]
+[include nfc/nfc_reader.cfg]
+[include nfc/nfc_macros.cfg]
+[include nfc/nfc_reader_hw.cfg]
 ```
 
 Order is required. `nfc_reader.cfg` defines the base `[nfc_gate]` section that each lane section inherits from. Including the lane file first causes a Klipper startup error.
@@ -98,6 +98,9 @@ i2c_bus:    i2c3_PB3_PB4
 ```
 
 `i2c_mcu` must exactly match the MCU name in your Happy Hare config (from `mmu_hardware.cfg`), typically `lane0`, `lane1`, etc.
+
+> [!IMPORTANT]
+> **Temperature sensor I2C bus must match.** If your lane MCU also has a thermistor or temperature sensor connected over I2C (e.g. an SHT3x), it must be configured on the **same hardware I2C bus** as the PN532. Set `i2c_bus` in your temperature sensor section to the same value as the `i2c_bus` in the matching `[nfc_gate laneN]` section (or the base `[nfc_gate]` if all lanes share one bus). Using a different bus, or using the Klipper software-emulated I2C bus (`i2c_software_*`), will cause collisions or read failures on both devices. Hardware I2C is required.
 
 See [Configuration Reference](configuration.md) for all available settings.
 
@@ -175,16 +178,16 @@ The uninstaller:
 1. Removes the `nfc_gate.py` symlink from Klipper extras
 2. Removes the `nfc_gates/` symlink from Klipper extras
 3. Removes legacy `~/pn532_scan.py` if an older installer placed it there
-4. Moves `~/printer_data/config/nfc/` to `NFC_removed_<timestamp>/` (your config is preserved, not deleted)
+4. Moves `~/printer_data/config/nfc/` to `nfc_removed_<timestamp>/` (your config is preserved, not deleted)
 5. Restarts Klipper
 
 **Manual steps after uninstalling** — the uninstaller cannot edit your config files:
 
 Remove these three lines from `printer.cfg`:
 ```ini
-[include NFC/nfc_reader.cfg]
-[include NFC/nfc_macros.cfg]
-[include NFC/nfc_reader_hw.cfg]
+[include nfc/nfc_reader.cfg]
+[include nfc/nfc_macros.cfg]
+[include nfc/nfc_reader_hw.cfg]
 ```
 
 Remove the update manager block from `moonraker.conf`, then restart Moonraker:

@@ -82,9 +82,9 @@ bash install.sh
 Add to `printer.cfg` — **order matters**:
 
 ```ini
-[include NFC/nfc_reader.cfg]
-[include NFC/nfc_macros.cfg]
-[include NFC/nfc_reader_hw.cfg]
+[include nfc/nfc_reader.cfg]
+[include nfc/nfc_macros.cfg]
+[include nfc/nfc_reader_hw.cfg]
 ```
 
 Set your Spoolman URL in `~/printer_data/config/nfc/nfc_reader.cfg`:

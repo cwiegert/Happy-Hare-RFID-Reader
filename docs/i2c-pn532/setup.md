@@ -16,9 +16,9 @@ If you skipped any of those, do them first.
 Add these three lines in this exact order:
 
 ```ini
-[include NFC/nfc_reader.cfg]
-[include NFC/nfc_macros.cfg]
-[include NFC/nfc_reader_hw.cfg]
+[include nfc/nfc_reader.cfg]
+[include nfc/nfc_macros.cfg]
+[include nfc/nfc_reader_hw.cfg]
 ```
 
 `nfc_reader.cfg` must come first — it defines the base `[nfc_gate]` section that each `[nfc_gate laneN]` in `nfc_reader_hw.cfg` inherits from. Reversing the order causes a Klipper config error on startup.
@@ -69,6 +69,9 @@ i2c_bus:    i2c3_PB3_PB4
 
 > [!NOTE]
 > `i2c_mcu` must exactly match the MCU name Klipper uses. These names come from Happy Hare's `mmu_hardware.cfg`, typically `lane0`, `lane1`, etc. A mismatch causes a Klipper startup error.
+
+> [!IMPORTANT]
+> **Temperature sensor I2C bus must match.** If your lane MCU has a thermistor or temperature sensor on I2C (e.g. an SHT3x), configure it on the **same hardware I2C bus** as the PN532 — the same `i2c_bus` value used in `[nfc_gate laneN]` or the base `[nfc_gate]`. Klipper's software-emulated I2C (`i2c_software_*`) is not compatible with the PN532 driver; hardware I2C is required for both devices.
 
 All polling, timing, and logging settings are inherited from the base `[nfc_gate]` in `nfc_reader.cfg`. Override per-lane only if you need different behavior on a specific lane:
 

@@ -9,9 +9,9 @@
 Three config files, included in this order from `printer.cfg`:
 
 ```
-[include NFC/nfc_reader.cfg]    → NFCGateDefaults  — base [nfc_gate] section
-[include NFC/nfc_macros.cfg]  → GCode macros only (no Python objects)
-[include NFC/nfc_reader_hw.cfg]   → NFCGate × N     — one [nfc_gate laneN] per lane
+[include nfc/nfc_reader.cfg]    → NFCGateDefaults  — base [nfc_gate] section
+[include nfc/nfc_macros.cfg]  → GCode macros only (no Python objects)
+[include nfc/nfc_reader_hw.cfg]   → NFCGate × N     — one [nfc_gate laneN] per lane
 ```
 
 Klipper processes `[include]` directives in order. By the time `nfc_reader_hw.cfg` is parsed, the `NFCGateDefaults` object for `[nfc_gate]` already exists and is retrievable via `printer.lookup_object('nfc_gate')`.

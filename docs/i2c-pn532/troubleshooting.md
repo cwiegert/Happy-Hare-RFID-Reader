@@ -38,9 +38,9 @@ cd ~/emu-nfc-reader && bash install.sh
 The includes in `printer.cfg` are in the wrong order. It must be:
 
 ```ini
-[include NFC/nfc_reader.cfg]     ← first
-[include NFC/nfc_macros.cfg]
-[include NFC/nfc_reader_hw.cfg]    ← last
+[include nfc/nfc_reader.cfg]     ← first
+[include nfc/nfc_macros.cfg]
+[include nfc/nfc_reader_hw.cfg]    ← last
 ```
 
 ---

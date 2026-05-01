@@ -7,11 +7,11 @@
 #   2. Removes ~/klipper/klippy/extras/nfc_gates    (symlink to package dir)
 #   3. Removes ~/klipper/klippy/extras/nfc_gates.py (flat file, if present
 #      from a previous install)
-#   4. Backs up ~/printer_data/config/nfc/ to NFC_removed_<timestamp>/
+#   4. Backs up ~/printer_data/config/nfc/ to nfc_removed_<timestamp>/
 #   5. Restarts Klipper
 #
 # What you must do manually afterward:
-#   - Remove the [include NFC/...] lines from printer.cfg
+#   - Remove the [include nfc/...] lines from printer.cfg
 #   - Remove the [update_manager emu_nfc_reader] block from moonraker.conf
 #     and restart Moonraker: sudo systemctl restart moonraker
 #   - Optionally delete the repo: rm -rf ~/emu-nfc-reader
@@ -74,8 +74,8 @@ fi
 # ── Back up and remove NFC config directory ───────────────────────────────────
 echo ""
 if [ -d "${NFC_CONFIG_DIR}" ]; then
-    BACKUP_DIR="${PRINTER_CONFIG}/NFC_removed_${TIMESTAMP}"
-    echo "Backing up NFC config to $(basename "${BACKUP_DIR}")..."
+    BACKUP_DIR="${PRINTER_CONFIG}/nfc_removed_${TIMESTAMP}"
+    echo "Backing up nfc config to $(basename "${BACKUP_DIR}")..."
     mv "${NFC_CONFIG_DIR}" "${BACKUP_DIR}"
     echo "  Saved: ${BACKUP_DIR}"
     echo "  Delete the backup when you no longer need it:"
@@ -101,10 +101,10 @@ fi
 echo ""
 echo "Done. Two manual steps remain:"
 echo ""
-echo "  1. Remove the NFC include lines from printer.cfg:"
-echo "       [include NFC/nfc_reader.cfg]"
-echo "       [include NFC/nfc_macros.cfg]"
-echo "       [include NFC/nfc_reader_hw.cfg]"
+echo "  1. Remove the nfc include lines from printer.cfg:"
+echo "       [include nfc/nfc_reader.cfg]"
+echo "       [include nfc/nfc_macros.cfg]"
+echo "       [include nfc/nfc_reader_hw.cfg]"
 echo "     If you have older experimental SPI/Pico include lines, remove those too."
 echo ""
 echo "  2. Remove the update manager block from moonraker.conf:"

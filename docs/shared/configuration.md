@@ -67,7 +67,7 @@ spoolman_auto_create: False
 
 ```ini
 [nfc_gate]
-startup_polling:    -1
+startup_polling:    1
 startup_poll_delay: 0.0
 poll_interval:      10
 absent_threshold:   3
@@ -97,6 +97,7 @@ poll_interval × absent_threshold = seconds before removal fires
 [nfc_gate]
 i2c_address: 36
 i2c_bus:     i2c3_PB3_PB4
+startup_poll_delay: 0.5
 ```
 
 These keys in the base `[nfc_gate]` section are inherited by every `[nfc_gate laneN]`. Set them once here; lane sections only need to specify them if a particular reader differs from the rest.

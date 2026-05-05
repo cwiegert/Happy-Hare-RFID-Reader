@@ -31,6 +31,32 @@ NFC_CONFIG_DIR="${PRINTER_CONFIG}/nfc"
 NFC_READER_CFG="${NFC_CONFIG_DIR}/nfc_reader.cfg"
 NFC_READER_HW_CFG="${NFC_CONFIG_DIR}/nfc_reader_hw.cfg"
 
+if [ -t 1 ]; then
+    BOLD="$(printf '\033[1m')"
+    GREEN="$(printf '\033[32m')"
+    CYAN="$(printf '\033[1;96m')"
+    RESET="$(printf '\033[0m')"
+else
+    BOLD=""
+    GREEN=""
+    CYAN=""
+    RESET=""
+fi
+
+choice_style() {
+    case "$1" in
+        auto|spoolman)
+            printf '%s%s%s%s' "${CYAN}" "${BOLD}" "$1" "${RESET}"
+            ;;
+        direct|rich)
+            printf '%s' "$1"
+            ;;
+        *)
+            printf '%s%s%s' "${BOLD}" "$1" "${RESET}"
+            ;;
+    esac
+}
+
 print_banner() {
     cat <<'EOF'
 ███╗   ██╗███████╗ ██████╗
@@ -55,7 +81,7 @@ prompt_with_default() {
     local prompt_text="$2"
     local default_value="$3"
     local reply
-    read -r -p "${prompt_text} [${default_value}]: " reply
+    read -r -p "${prompt_text} [${BOLD}${default_value}${RESET}]: " reply
     if [ -z "${reply}" ]; then
         reply="${default_value}"
     fi
@@ -70,7 +96,9 @@ prompt_yes_no() {
     local reply
 
     if [ "${default_value}" = "yes" ]; then
-        default_hint="Y/n"
+        default_hint="${CYAN}${BOLD}Y${RESET}/n"
+    else
+        default_hint="y/${CYAN}${BOLD}N${RESET}"
     fi
 
     while true; do
@@ -98,10 +126,26 @@ prompt_choice() {
     local default_value="$3"
     shift 3
     local choices="$*"
+    local choices_label=""
+    local choice_label
+    local choice
     local reply
 
+    for choice in "$@"; do
+        choice_label="${choice}"
+        if [ "${choice}" = "${default_value}" ] ||
+           [ "${choice}" = "direct" ] || [ "${choice}" = "rich" ]; then
+            choice_label="$(choice_style "${choice}")"
+        fi
+        if [ -z "${choices_label}" ]; then
+            choices_label="${choice_label}"
+        else
+            choices_label="${choices_label}/${choice_label}"
+        fi
+    done
+
     while true; do
-        read -r -p "${prompt_text} [${default_value}]: " reply
+        read -r -p "${prompt_text} [${choices_label}]: " reply
         if [ -z "${reply}" ]; then
             reply="${default_value}"
         fi
@@ -112,7 +156,7 @@ prompt_choice() {
                 return
             fi
         done
-        echo "Please choose one of: ${choices}"
+        echo "Please choose one of: ${choices}."
     done
 }
 
@@ -397,8 +441,11 @@ while ! printf '%s' "${LANE_COUNT}" | grep -Eq '^[1-9][0-9]*$'; do
         "${DEFAULT_LANE_COUNT}"
 done
 
+echo "2. Spoolman connection"
+echo "   $(choice_style auto)   = read the URL from Moonraker's [spoolman] section (recommended)"
+echo "   $(choice_style direct) = enter a fixed URL such as http://127.0.0.1:7912"
 prompt_choice SPOOLMAN_MODE \
-    "2. Spoolman resolution mode: auto or direct" \
+    "   Select Spoolman connection mode" \
     "auto" \
     "auto" "direct"
 SPOOLMAN_URL="auto"
@@ -416,8 +463,11 @@ prompt_yes_no SCAN_ENABLED \
     "4. Enable scan-jog when a loaded tag is out of read range?" \
     "yes"
 
+echo "5. Tag read mode"
+echo "   $(choice_style spoolman) = UID-only lookup in Spoolman's extra field (default)"
+echo "   $(choice_style rich)     = read tag metadata, then resolve/create Spoolman records"
 prompt_choice TAG_MODE \
-    "5. Tag read mode: Spoolman UID lookup or rich tag read" \
+    "   Select tag read mode" \
     "spoolman" \
     "spoolman" "rich"
 
@@ -426,6 +476,7 @@ SPOOLMAN_AUTO_CREATE="no"
 if [ "${TAG_MODE}" = "rich" ]; then
     echo ""
     echo "   Rich read supports NTAG/Type-2 metadata tags."
+    echo "   Use rich when you want OpenSpool/OpenPrintTag/Bambu metadata reads."
     echo "   Factory-tagged Bambu spools are MIFARE Classic and require"
     echo "   authenticated reads plus the pycryptodome HKDF dependency."
     prompt_yes_no BAMBU_READS \
@@ -433,7 +484,7 @@ if [ "${TAG_MODE}" = "rich" ]; then
         "no"
     prompt_yes_no SPOOLMAN_AUTO_CREATE \
         "7. Auto-create missing Spoolman spools from rich tag metadata?" \
-        "no"
+        "yes"
 fi
 
 # ── Symlink Python extras into Klipper ───────────────────────────────────────
@@ -590,10 +641,14 @@ set_config_value "${NFC_READER_CFG}" "nfc_gate" "spoolman_auto_create" \
 
 write_lane_config "${NFC_READER_HW_CFG}" "${LANE_COUNT}"
 
+CBOR_STATUS="not needed in UID-only mode"
 if [ "${TAG_MODE}" = "rich" ]; then
+    CBOR_STATUS="not installed; built-in minimal fallback active"
     echo ""
     echo "Checking OpenPrintTag CBOR dependency..."
-    if ! ensure_python_module "cbor2" "cbor2"; then
+    if ensure_python_module "cbor2" "cbor2"; then
+        CBOR_STATUS="installed (OpenPrintTag CBOR support)"
+    else
         echo ""
         echo "WARNING: cbor2 not installed — complex OpenPrintTag CBOR payloads will fall back"
         echo "         to the built-in minimal decoder. Most tags work fine without it."
@@ -656,14 +711,12 @@ else
 fi
 if [ "${TAG_MODE}" != "rich" ]; then
     echo "    bambu_mifare:       not active in UID-only mode"
-    echo "    cbor2:              not needed in UID-only mode"
 elif [ "${BAMBU_READS}" = "yes" ]; then
     echo "    bambu_mifare:       enabled (authenticated rich read)"
-    echo "    cbor2:              installed (OpenPrintTag support; minimal fallback if install failed)"
 else
     echo "    bambu_mifare:       installer did not add crypto; UID fallback if absent"
-    echo "    cbor2:              installed (OpenPrintTag support; minimal fallback if install failed)"
 fi
+echo "    cbor2:              ${CBOR_STATUS}"
 echo "    bambu_dependency:   ${BAMBU_READS}"
 echo "    spool_auto_create:  ${SPOOLMAN_AUTO_CREATE}"
 echo ""

@@ -83,10 +83,16 @@ def chunk_interval(gate, mm):
     return abs(mm) / get_speed(gate)
 
 
+def chunk_dwell(gate):
+    """Return the stationary read window after each scan chunk."""
+    """want to make sure to give the reader 3 full pulls to read the tag"""
+    return 3.0 * gate._scan_poll_interval
+
+
 def next_event_time(gate, mm):
     """Return when it is safe to read after a queued scan chunk."""
     return gate.reactor.monotonic() + max(
-        chunk_interval(gate, mm),
+        chunk_interval(gate, mm) + chunk_dwell(gate),
         gate._scan_poll_interval)
 
 
@@ -143,11 +149,13 @@ def start(gate, max_mm=None):
     if gate._debug >= 3:
         logger.info(
             "nfc_gate: [%s] gate %d scan mode started — "
-            "chunk=%.1fmm max=%.1fmm speed=%.1fmm/s chunk_interval=%.2fs poll=%.2fs",
+            "chunk=%.1fmm max=%.1fmm speed=%.1fmm/s "
+            "chunk_interval=%.2fs dwell=%.2fs poll=%.2fs",
             gate._name, gate._gate,
             gate._scan_jog_mm, gate._scan_max_mm,
             get_speed(gate),
             chunk_interval(gate, gate._scan_jog_mm),
+            chunk_dwell(gate),
             gate._scan_poll_interval)
 
 
@@ -184,8 +192,9 @@ def step_event(gate, eventtime):
         gate._rewind_and_exit_scan()
         return gate.reactor.NEVER
 
-    # Only queue the next jog when the previous move is estimated complete.
-    # Poll continues at scan_poll_interval regardless.
+    # Only queue the next jog when the previous move is estimated complete
+    # and the stationary dwell has elapsed. Poll continues at
+    # scan_poll_interval during both motion and dwell.
     if now >= gate._scan_next_chunk_time:
         remaining = gate._scan_max_mm - gate._scan_mm_total
         chunk = min(gate._scan_jog_mm, remaining)
@@ -199,7 +208,8 @@ def step_event(gate, eventtime):
                          gate._gate, chunk)
         gate._run_jog(chunk)
         gate._scan_mm_total += chunk
-        gate._scan_next_chunk_time = now + chunk_interval(gate, chunk)
+        gate._scan_next_chunk_time = (
+            now + chunk_interval(gate, chunk) + chunk_dwell(gate))
         logger.info(
             "NFC[%d]: move queued %.1fmm  scan position %.1f / %.1fmm",
             gate._gate, chunk, gate._scan_mm_total, gate._scan_max_mm)

@@ -575,7 +575,7 @@ def test_scan_starts_without_immediate_jog():
     g = _make_gate(gate=1, scan_max_mm=200.0)
     g._start_scan_mode()
     scripts = g.printer.gcode_scripts
-    assert len(scripts) == 0
+    assert not any('MMU_TEST_MOVE' in script for script in scripts)
     assert g._scan_mm_total == 0.0
     assert g._scan_next_chunk_time == pytest_approx(100.0)
 
@@ -596,8 +596,27 @@ def test_scan_step_issues_one_chunk_when_due():
     assert 'MMU_SELECT GATE=1' in scripts[0]
     assert 'MMU_TEST_MOVE MOVE=50.00' in scripts[0]
     assert g._scan_mm_total == 50.0
-    assert g._scan_next_chunk_time == pytest_approx(100.625)
+    assert g._scan_next_chunk_time == pytest_approx(102.125)
     assert result == pytest_approx(100.5)
+
+
+def test_scan_step_dwell_after_completed_chunk_before_next_jog():
+    """A completed jog gets three poll intervals of stationary read time."""
+    g = _make_gate(gate=1, scan_jog_mm=50.0, scan_max_mm=200.0,
+                   scan_poll_interval=0.5)
+    g._scan_mode = True
+    g._scan_mm_total = 50.0
+    g._scan_next_chunk_time = 102.125
+    g.reactor._time = 101.0
+    g.printer.set_print_state('standby')
+    g.printer.set_mmu(MockMMU(gear_short_move_speed=80.0))
+    g._poll = lambda: False
+
+    result = g._scan_step_event(101.0)
+
+    assert len(g.printer.gcode_scripts) == 0
+    assert g._scan_mm_total == 50.0
+    assert result == pytest_approx(101.5)
 
 def test_derived_lane_max_controls_final_chunk_size():
     """A lane Bowden length limits the last chunk instead of overshooting."""
@@ -614,7 +633,8 @@ def test_derived_lane_max_controls_final_chunk_size():
 
     assert g._scan_max_mm == 175.0
     assert g._scan_mm_total == 175.0
-    assert 'MMU_TEST_MOVE MOVE=25.00' in g.printer.gcode_scripts[0]
+    assert any('MMU_TEST_MOVE MOVE=25.00' in script
+               for script in g.printer.gcode_scripts)
 
 def test_scan_step_does_not_stack_chunks_before_interval():
     """Chunks are not queued until the calculated move interval has elapsed."""

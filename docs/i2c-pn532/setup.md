@@ -187,7 +187,7 @@ NFC GATE=0 READ=1
 To start all lanes, run `READ=1` for each. Polling runs at the `poll_interval` (default: 30 seconds).
 
 **Optional: automatic polling on startup.**
-By default, polling is manual-start only. To have lanes start polling automatically after Klipper boots, set `startup_polling: 1` in `nfc_reader_hw.cfg`. Stagger the startup delays so all readers don't poll simultaneously:
+To have lanes start polling automatically after Klipper boots, set `startup_polling: 1`. The shipped `nfc_reader_hw.cfg` staggers the per-lane startup delays by 0.5 seconds so all readers don't poll simultaneously:
 
 ```ini
 [nfc_gate lane0]

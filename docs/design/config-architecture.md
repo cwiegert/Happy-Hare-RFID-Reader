@@ -104,13 +104,13 @@ If `spoolman_url` is left empty, `self._spoolman = None`. Tags are still read; e
 | Parameter | Python fallback | Shipped `nfc_reader.cfg` | Type | Bounds |
 |---|---|---|---|---|
 | `startup_polling` | `-1` | `1` | int | -1, 0, 1 |
-| `startup_poll_delay` | `0.0` | `0.0` | float | 0–3600 |
+| `startup_poll_delay` | `0.0` | `0.0` base, overridden per lane in `nfc_reader_hw.cfg` | float | 0–3600 |
 | `poll_interval` | `30.0` | `10` | float | 1–3600 |
 | `absent_threshold` | `3` | `3` | int | 1–255 |
 
 `startup_polling = -1`: polling only starts when `NFC GATE=n READ=1` is issued manually.
 `startup_polling = 1`: `_delayed_init` arms the poll timer after PN532 init succeeds, delayed by `startup_poll_delay`.
-`startup_poll_delay`: stagger per-lane startup. With 4 lanes and delays of 0.0, 0.5, 1.0, 1.5 seconds, first polls spread across the lanes instead of firing simultaneously.
+`startup_poll_delay`: stagger per-lane startup. The shipped hardware config uses 0.5-second lane spacing: lane0 = 0.0, lane1 = 0.5, lane2 = 1.0, lane3 = 1.5, lane4 = 2.0.
 
 `absent_threshold` × `poll_interval` = seconds before `EVENT_REMOVED` fires. Default: 3 × 10 = 30 seconds.
 
@@ -161,7 +161,7 @@ mmu_gate:           2
 i2c_mcu:            lane2
 i2c_bus:            i2c3_PB3_PB4
 debug:              3             ; verbose logging on this lane only
-startup_poll_delay: 1.0           ; 1 s after lane0's 0 s, lane1's 0.5 s
+startup_poll_delay: 1.0           ; 0.5 s after lane1, 1.0 s after lane0
 poll_interval:      10            ; faster for bench testing
 ```
 

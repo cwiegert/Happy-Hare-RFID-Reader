@@ -303,7 +303,7 @@ NFC GATE=2 READ=1
 NFC GATE=3 READ=1
 ```
 
-**Automatically on boot** (for set-and-forget operation): Add `startup_polling: 1` to each lane in `nfc_reader_hw.cfg`. Stagger the startup delays so all readers don't poll at the same moment:
+**Automatically on boot** (for set-and-forget operation): Add `startup_polling: 1` to each lane in `nfc_reader_hw.cfg`. The shipped hardware config staggers startup delays by 0.5 seconds so all readers don't poll at the same moment:
 
 ```ini
 [nfc_gate lane0]

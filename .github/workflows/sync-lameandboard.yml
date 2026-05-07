@@ -14,6 +14,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: lameandboard---integration
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -131,5 +133,5 @@ jobs:
             gh pr create \
               --title "vendor: lameandboard/rfid upstream sync (${SHORT_SHA})" \
               --body-file /tmp/pr_body.md \
-              --base main
+              --base lameandboard---integration
           fi

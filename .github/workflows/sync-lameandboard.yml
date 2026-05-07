@@ -99,7 +99,7 @@ jobs:
                   klippy/extras/nfc_gates/vendor/lameandboard_spoolman.py \
                   VENDORED.md
           git commit -m "vendor: sync lameandboard/rfid upstream (${SHORT_SHA})"
-          git push --force-with-lease origin "$BRANCH"
+          git push --force origin "$BRANCH"
           if gh pr view "$BRANCH" --json number --jq .number >/dev/null 2>&1; then
             gh pr edit "$BRANCH" \
               --title "vendor: lameandboard/rfid upstream sync (${SHORT_SHA})" \

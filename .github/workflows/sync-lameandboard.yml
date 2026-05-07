@@ -89,7 +89,7 @@ jobs:
           UPSTREAM_DATE: ${{ steps.fetch.outputs.upstream_date }}
         run: |
           SHORT_SHA="${UPSTREAM_SHA:0:12}"
-          BRANCH="vendor/lameandboard-sync-$(date +%Y%m%d)"
+          BRANCH="vendor/lameandboard-sync-${SHORT_SHA}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
@@ -99,8 +99,14 @@ jobs:
                   klippy/extras/nfc_gates/vendor/lameandboard_spoolman.py \
                   VENDORED.md
           git commit -m "vendor: sync lameandboard/rfid upstream (${SHORT_SHA})"
-          git push origin "$BRANCH"
-          gh pr create \
-            --title "vendor: lameandboard/rfid upstream sync (${SHORT_SHA})" \
-            --body-file /tmp/pr_body.md \
-            --base main
+          git push --force-with-lease origin "$BRANCH"
+          if gh pr view "$BRANCH" --json number --jq .number >/dev/null 2>&1; then
+            gh pr edit "$BRANCH" \
+              --title "vendor: lameandboard/rfid upstream sync (${SHORT_SHA})" \
+              --body-file /tmp/pr_body.md
+          else
+            gh pr create \
+              --title "vendor: lameandboard/rfid upstream sync (${SHORT_SHA})" \
+              --body-file /tmp/pr_body.md \
+              --base main
+          fi

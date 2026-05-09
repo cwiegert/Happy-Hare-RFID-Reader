@@ -183,17 +183,6 @@ def start(gate, max_mm=None, sync_hh=True):
 
 **`GateState.reset()`** clears `_current_uid`, `_current_spool`, `current_tag`, and `miss_count` atomically (bypassing property setters). This forces `process_read` to fire a `changed` event on the first NFC read during scan, regardless of what was previously cached. The previous uid/spool are saved to `_scan_previous_uid`/`_scan_previous_spool` before the reset for reference during the abort path.
 
-Prototype:
-
-```python
-class GateState:
-    def reset(self):
-        self._current_uid = None
-        self._current_spool = None
-        self.current_tag = None
-        self.miss_count = 0
-```
-
 **Pre-scan clearing sequence:**
 
 Both `clear_hh_gate_cache` and `sync_spoolman_before_scan` are guarded by `sync_hh`. When `sync_hh=False` (called from inside a Happy Hare post-preload hook), both are skipped entirely. Both use `gcode.run_script()` which acquires Klipper's GCode lock — calling either from inside an HH hook deadlocks because HH already holds that lock.
@@ -286,20 +275,6 @@ def rewind_and_exit(gate):
 
 `gate._state.reset()` clears NFC uid, spool, current_tag, and miss_count. The previous spool is **not** restored. Since HH's gate map was just cleared, restoring the old NFC spool would create a mismatch (`_check_hh_cleared` would see NFC=54, HH=Unknown and immediately re-clear NFC, creating a re-dispatch loop on the next poll).
 
-Prototype:
-
-```python
-def rewind_and_exit(gate):
-    try:
-        gate._run_rewind()
-    finally:
-        restore_active_gate(gate)
-
-    clear_hh_gate_cache(gate)
-    gate._state.reset()
-    gate._hh_load_paused = False
-```
-
 After the rewind, `_hh_load_paused = False` and both states are blank. When the next normal poll fires and the tag is under the reader, NFC re-reads it, re-looks up the spool in Spoolman, and re-dispatches to HH in one clean cycle.
 
 `resume_poll_after_rewind` restarts the poll timer with an extra delay equal to the rewind move duration (`scan_mm_total / speed`) so the first scheduled poll fires after the rewind is complete.
@@ -353,17 +328,6 @@ if uid_hex is not None and uid_hex == self._state.current_uid:
 ```
 
 This means Spoolman is only called when the UID changes (new tag, or after `GateState.reset()` cleared `current_uid`). Repeated reads of the same tag — the common case during scan-jog dwell periods and normal polling — cost only an I2C read with no network round trip. `reset()` sets `current_uid = None`, so the first read after any scan entry or abort always goes to Spoolman once to re-establish the spool mapping.
-
-Prototype:
-
-```python
-uid_hex = self._read_current_tag()
-if uid_hex is not None and uid_hex == self._state.current_uid:
-    self._state.miss_count = 0
-    return True
-
-spool_id = self._resolve_spool(uid_hex)
-```
 
 **Event dispatch is deferred during scan.** If a spool-changed event fires while `_scan_mode` is True (filament is still moving), `nfc_manager` caches it in `_scan_found_event` instead of dispatching immediately. `finish()` dispatches the cached event after `run_rewind()` returns, so HH and Spoolman receive the notification only after the filament is back at the parked position.
 

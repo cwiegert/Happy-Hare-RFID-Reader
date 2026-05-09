@@ -319,7 +319,9 @@ def test_rewind_and_exit_releases_lock():
     g._rewind_and_exit_scan()
     assert NFCGate._active_scan_gate is None
 
-def test_no_tag_scan_restores_previous_nfc_spool():
+def test_no_tag_scan_clears_nfc_state():
+    """After a failed scan, NFC state is fully cleared — no restore of previous spool.
+    HH cache was also cleared so restoring the old spool would create a mismatch."""
     g = _make_gate()
     g.printer.set_mmu(MockMMU(gate_status=[1], gate_spool_id=[55]))
     g._state.current_uid = '04C19F92D32A81'
@@ -329,9 +331,9 @@ def test_no_tag_scan_restores_previous_nfc_spool():
 
     g._rewind_and_exit_scan()
 
-    assert g._state.current_uid == '04C19F92D32A81'
-    assert g._state.current_spool == 55
-    assert g._hh_load_paused
+    assert g._state.current_uid is None
+    assert g._state.current_spool is None
+    assert not g._hh_load_paused
 
 def test_finish_holds_lock_until_rewind_check_gate_runs():
     g = _make_gate(gate=2)
@@ -370,7 +372,7 @@ def test_no_tag_scan_restores_previous_hh_selected_gate():
 
     g._rewind_and_exit_scan()
 
-    assert g.printer.gcode_scripts[-1] == 'MMU_SELECT GATE=1'
+    assert any(s == 'MMU_SELECT GATE=1' for s in g.printer.gcode_scripts)
 
 def test_finish_scan_restores_previous_hh_selected_gate_after_rewind_error():
     g = _make_gate(gate=3)
@@ -497,8 +499,8 @@ def test_hh_found_without_spool_does_not_clear_nfc_cache():
     assert g._state.current_spool == 55
     assert g._hh_load_paused
     line = _strip_html(g.status_line())
-    assert 'HH: found/no spool' in line
     assert '[NFC has spool 55; HH found/no spool]' in line
+    assert line.count('found/no spool') == 1, "HH state must not appear twice"
 
 def test_hh_found_with_nfc_spool_does_not_start_scan_jog():
     g = _make_gate()
@@ -1094,6 +1096,51 @@ def test_finish_scan_uid_only_event_dispatches_without_meta():
 
     assert g._klipper.calls == [('uid_only', 0, '04AABB', None, None)]
     assert g._hh_load_paused
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GateState.reset() and scan_jog start/rewind integration
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_gate_state_reset_clears_all_fields():
+    """reset() zeros uid, spool, current_tag, and miss_count."""
+    from nfc_gates.gate_state import GateState
+    s = GateState(gate=0, absent_threshold=3)
+    s.current_uid   = 'AABBCC'
+    s.current_spool = 7
+    s.miss_count    = 2
+    s.reset()
+    assert s.current_uid   is None
+    assert s.current_spool is None
+    assert s.current_tag   is None
+    assert s.miss_count    == 0
+
+def test_start_scan_resets_gate_state():
+    """scan start calls state.reset(), clearing miss_count in addition to uid/spool."""
+    g = _make_gate()
+    g._state.current_uid   = 'AABBCC'
+    g._state.current_spool = 7
+    g._state.miss_count    = 2
+    g._start_scan_mode()
+    assert g._state.current_uid   is None
+    assert g._state.current_spool is None
+    assert g._state.miss_count    == 0
+
+def test_rewind_and_exit_clears_hh_cache_and_resets_state():
+    """After a no-tag scan, rewind_and_exit calls _NFC_GATE_CLEAR_CACHE and resets state."""
+    g = _make_gate(gate=1)
+    g._start_scan_mode()
+    g._scan_mm_total = 50.0
+    scripts_before = len(g.printer.gcode_scripts)
+
+    g._rewind_and_exit_scan()
+
+    new_scripts = g.printer.gcode_scripts[scripts_before:]
+    assert any('_NFC_GATE_CLEAR_CACHE GATE=1' in s for s in new_scripts), \
+        "_NFC_GATE_CLEAR_CACHE not issued after no-tag rewind"
+    assert g._state.current_uid   is None
+    assert g._state.current_spool is None
+    assert g._state.miss_count    == 0
 
 
 # ── Approx helper (avoids pytest dependency for float comparison) ─────────────

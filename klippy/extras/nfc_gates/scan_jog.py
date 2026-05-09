@@ -182,8 +182,13 @@ def start(gate, max_mm=None, sync_hh=True):
     gate._scan_previous_uid = gate._state.current_uid
     gate._scan_previous_spool = gate._state.current_spool
     gate._scan_previous_active_gate = get_active_gate(gate)
-    gate._state.current_uid   = None  # force changed event on first read
-    gate._state.current_spool = None
+    gate._state.reset()
+    if gate._debug >= 3:
+        logger.info(
+            "nfc_gate: [%s] gate %d scan mode — gate state reset "
+            "(uid=%s spool=%s -> None/None)",
+            gate._name, gate._gate,
+            gate._scan_previous_uid, gate._scan_previous_spool)
     gate._hh_load_paused = False
     gate._scan_gate_selected = False  # deferred to first jog (must run from timer, not GCode handler)
 
@@ -325,18 +330,16 @@ def rewind_and_exit(gate):
     finally:
         restore_active_gate(gate)
     gate.__class__._active_scan_gate = None
-    previous_uid = getattr(gate, '_scan_previous_uid', None)
-    previous_spool = getattr(gate, '_scan_previous_spool', None)
-    if previous_spool is not None:
-        gate._state.current_uid = previous_uid
-        gate._state.current_spool = previous_spool
-        hh = gate._read_hh_status()
-        gate._hh_load_paused = bool(
-            hh.present and hh.available and hh.spool == previous_spool)
-    else:
-        gate._hh_load_paused = False
+    clear_hh_gate_cache(gate)
+    gate._state.reset()
+    gate._hh_load_paused = False
     gate._scan_previous_uid = None
     gate._scan_previous_spool = None
+    if gate._debug >= 3:
+        logger.info(
+            "nfc_gate: [%s] gate %d scan mode — no tag found, "
+            "NFC state and HH gate cache cleared after rewind",
+            gate._name, gate._gate)
     gate._resume_poll_after_rewind()
 
 

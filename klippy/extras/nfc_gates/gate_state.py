@@ -54,6 +54,12 @@ class GateState:
         self._current_spool = spool_id
         self._sync_current_tag()
 
+    def reset(self):
+        self._current_uid   = None
+        self._current_spool = None
+        self.current_tag    = None
+        self.miss_count     = 0
+
     def _sync_current_tag(self):
         if self._current_uid is None:
             self.current_tag = None

@@ -315,4 +315,4 @@ def run_rewind(gate):
     if fast_rewind > 0.0:
         gcode.run_script("MMU_TEST_MOVE MOVE=%.2f QUIET=1\nM400"
                          % (-fast_rewind))
-    gcode.run_script("MMU_STEP_UNLOAD_GATE")
+    gcode.run_script("_MMU_STEP_UNLOAD_GATE")

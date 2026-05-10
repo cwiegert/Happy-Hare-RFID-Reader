@@ -131,7 +131,7 @@ Config validation requirement:
 if bypass == true:
     only one configured nfc_gate may have bypass == true
     mmu_gate must be 255
-    bypass_read_timeout must default to 120.0 seconds
+    bypass_read_timeout is optional; 120.0 seconds if not set
     bypass_pending_timeout must be defined
     bypass_tag_read_effect must be defined
 ```
@@ -165,6 +165,7 @@ self._bypass_pending_spool = None
 self._bypass_pending_deadline = 0.0
 self._bypass_pending_auto_created = False
 self._bypass_last_error = None
+self._bypass_read_deadline = 0.0   # set when READ=1 starts; enforces bypass_read_timeout
 ```
 
 State meanings:
@@ -210,11 +211,26 @@ gcode:
     NFC GATE=255 READ=1
 ```
 
-Then configure the Happy Hare extension variable:
+Then configure the Happy Hare extension variables:
 
 ```ini
+; start bypass polling after a gate is ejected/unloaded
 variable_user_post_unload_extension: 'NFC_BYPASS_GATE_EJECTED'
+
+; stage NEXT_SPOOLID before a pregate-triggered automatic preload
+variable_user_pre_load_extension: 'NFC_BYPASS PRELOAD_CHECK'
 ```
+
+`variable_user_post_unload_extension` fires after both `MMU_UNLOAD` and
+`MMU_EJECT`. Happy Hare's `mmu_macro_vars.cfg` groups these under the "unload"
+operation (comment at the `variable_user_post_unload_extension` line: "unload —
+individual MMU_UNLOAD/MMU_EJECT operation"). This hook is confirmed correct for
+starting bypass polling.
+
+`variable_user_pre_load_extension` fires before a pregate-triggered automatic
+preload starts. This is the preload hook that calls `NFC_BYPASS PRELOAD_CHECK`
+to stage `NEXT_SPOOLID` if a valid pending spool exists. This resolves Open
+Question #2.
 
 This macro is the bridge from the Happy Hare macro layer into NFC Python. Happy
 Hare does not call an NFC Python method directly. It runs a user GCode macro,
@@ -224,23 +240,14 @@ operation. For `READ=1`, that means `_set_reading(..., True)` starts the
 existing poll timer. `POLL=1` remains useful for debugging or a forced immediate
 single read.
 
-Preferred Happy Hare hook visible in `mmu_macro_vars.cfg`:
-
-- `variable_user_post_unload_extension` — sequence hook after the unload/eject
-  sequence completes. Happy Hare documents `_MMU_POST_UNLOAD` as running after
-  unload completes, and the local `mmu_macro_vars.cfg` comments group
-  `MMU_UNLOAD` / `MMU_EJECT` under the `unload` operation.
-
-The implementation should still validate on hardware that this hook fires after
-the relevant gate is empty/available for the next spool, because "post unload"
-means "after Happy Hare post-unload logic" rather than a direct NFC sensor
-event.
-
 ### Scan Requirements
 
 Bypass RFID reads must use the same safety posture as the main NFC path:
 
-1. Do not read while `print_stats.state == 'printing'`.
+1. Do not read while `print_stats.state == 'printing'`. For normal lanes this
+   check lives in the scan-jog block, which bypass never enters. For bypass,
+   `_is_printing()` must be checked at the top of the bypass `_poll()` branch
+   before any I2C read is attempted.
 2. Do not start scan-jog; `scan_enabled: false` is required.
 3. Do not use HH gate ownership, spool assignment, or lane cache state to decide
    what the bypass reader means.
@@ -254,6 +261,11 @@ Bypass RFID reads must use the same safety posture as the main NFC path:
    not bypass print/action checks or read RFID during unsafe states.
 8. If `READ=1` is active for `bypass_read_timeout` seconds without resolving a
    valid tag, stop polling using the same internal path as `NFC GATE=255 READ=0`.
+9. If a preload hook fires while bypass polling is still active (tag seen but
+   Spoolman resolution not yet complete), `PRELOAD_CHECK` will find no pending
+   spool and will do nothing — the preload proceeds without bypass staging. The
+   user can re-scan after the load. This window is bounded by `poll_interval`
+   plus Spoolman response time and is not treated as an error.
 
 `NFC_BYPASS PRELOAD_CHECK` uses the existing mainline safety precheck style, but
 it must not read RFID. It checks only whether printing or active MMU
@@ -493,8 +505,32 @@ define_on: gates,exit
 layers: strobe 1 0 top (1.0, 0.75, 0.0)
 ```
 
-When a tag resolves and becomes the pending bypass spool, NFC asks Happy Hare's
-LED system to play the configured effect.
+When a tag resolves and becomes the pending bypass spool, NFC issues:
+
+```gcode
+MMU_SET_LED EXIT_EFFECT=<bypass_tag_read_effect> DURATION=3
+```
+
+`MMU_SET_LED` is the public HH LED command (`mmu_led_manager.py`). Passing
+`EXIT_EFFECT=<name>` with a base effect name causes HH to internally invoke
+`_MMU_SET_LED_EFFECT EFFECT=unit0_<name>_exit`, which plays the
+`[mmu_led_effect]` defined effect on all exit LEDs. `DURATION` limits how long
+the effect runs before HH returns exit LEDs to their default state.
+
+The effect name in config (`bypass_tag_read_effect`) is the bare `[mmu_led_effect]`
+section name without the `unit0_` prefix and segment suffix that HH appends
+internally. NFC passes the name exactly as configured; HH handles the rest.
+
+Example full invocation from `_bypass_handle_event`:
+```python
+gcode.run_script(
+    "MMU_SET_LED EXIT_EFFECT=%s DURATION=3" % self._bypass_tag_read_effect)
+```
+
+If `MMU_SET_LED` is not available (no `[mmu_leds]` configured), the
+`run_script` call will fail silently with a GCode error logged to the console.
+NFC should not treat LED failure as a fatal error — the bypass spool is already
+staged at this point and the preload will proceed regardless.
 
 ---
 
@@ -520,6 +556,15 @@ Meanings:
 Because v1 permits only one bypass reader, the command does not need a reader
 parameter.
 
+`CLEAR` clears both the bypass pending state (`_bypass_pending_*` fields) and
+the `GateState` tag cache, then returns LEDs to idle. It is the correct command
+to fully reset bypass state.
+
+`NFC GATE=255 CLEAR_CACHE=1` clears only the `GateState` tag cache (UID and
+spool). It does **not** clear `_bypass_pending_*` fields. Use it when you want
+to force a fresh hardware read on the next poll without discarding a pending
+spool assignment.
+
 `PRELOAD_CHECK` should be intentionally small. It should only answer:
 
 - is a valid pending spool available?
@@ -540,8 +585,13 @@ bypass: expired spool 42 uid=ABCDEF
 bypass: error <last_error>
 ```
 
-`NFC_STATUS` should include the bypass reader in a separate bypass section, not
-as one of the numbered EMU lanes.
+`NFC_STATUS` should include the bypass reader after the numbered EMU lanes.
+`_lane_status_lines()` currently iterates `_lane_instances` matched against
+`lane<N>` MCU names. A bypass reader (`_name == 'bypass'`) will never match a
+lane MCU and would be silently omitted from the primary path. The fix: after
+the lane MCU loop, scan `_lane_instances` for any gate where `_bypass is True`
+and append its status line. No separate section header is needed — one
+appended line using the same `NFC_BYPASS STATUS` output format is sufficient.
 
 General reader activation and debug should use the existing `NFC` command on
 the configured bypass gate:
@@ -592,12 +642,19 @@ New code should be mostly:
 
 ## Open Questions
 
-1. Confirm on hardware that `variable_user_post_unload_extension` fires after
-   `MMU_EJECT` when the gate is ready for the next spool.
-2. What exact Happy Hare hook will run before pregate-triggered automatic
-   preload?
+1. ~~Confirm on hardware that `variable_user_post_unload_extension` fires after
+   `MMU_EJECT`.~~ **Resolved.** HH `mmu_macro_vars.cfg` explicitly groups
+   `MMU_UNLOAD`/`MMU_EJECT` under the same "unload" operation; this hook covers
+   both. Confirm timing on hardware (gate empty before first poll tick) during
+   integration testing.
+2. ~~What exact Happy Hare hook fires before pregate-triggered automatic
+   preload?~~ **Resolved.** `variable_user_pre_load_extension` fires before a
+   pregate-triggered preload. Set it to `'NFC_BYPASS PRELOAD_CHECK'`.
 3. Does `MMU_GATE_MAP NEXT_SPOOLID=<id>` accept a newly auto-created spool ID
    without `MMU_SPOOLMAN REFRESH=1`, or is a refresh required at preload-check
    time?
-4. What is the exact HH LED command that plays a named `mmu_led_effect` on this
-   configuration?
+4. ~~What is the exact HH LED command that plays a named `mmu_led_effect`?~~
+   **Resolved.** `MMU_SET_LED EXIT_EFFECT=<name> DURATION=<seconds>`. HH's
+   `mmu_led_manager.py` maps the base effect name to the internal
+   `unit0_<name>_exit` effect and invokes `_MMU_SET_LED_EFFECT`. See LED
+   Feedback section for the full invocation.

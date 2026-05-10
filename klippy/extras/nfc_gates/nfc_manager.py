@@ -204,8 +204,8 @@ class NFCGateDefaults:
         self.scan_decode_retry_mm = config.getfloat(
             'scan_decode_retry_mm', 5.0,
             minval=0.0, maxval=50.0)
-        self.scan_decode_retries = config.getint(
-            'scan_decode_retries', 3,
+        self.scan_decode_retry_rounds = config.getint(
+            'scan_decode_retry_rounds', 3,
             minval=0, maxval=10)
         self.scan_poll_interval = config.getfloat('scan_poll_interval', 0.1,
                                                    minval=0.1, maxval=5.0)
@@ -368,9 +368,9 @@ class NFCGate:
             'scan_decode_retry_mm',
             d.scan_decode_retry_mm if d else 5.0,
             minval=0.0, maxval=50.0)
-        self._scan_decode_retries = config.getint(
-            'scan_decode_retries',
-            d.scan_decode_retries if d else 3,
+        self._scan_decode_retry_rounds = config.getint(
+            'scan_decode_retry_rounds',
+            d.scan_decode_retry_rounds if d else 3,
             minval=0, maxval=10)
         self._scan_max_mm   = None
         self._mmu_vars_path = None
@@ -400,6 +400,7 @@ class NFCGate:
         self._scan_next_chunk_time = 0.0
         self._scan_decode_retry_attempts = 0
         self._scan_decode_retry_uid      = None
+        self._scan_decode_retry_offset   = 0.0
         self._scan_idle_ready_time = 0.0
         self._scan_found_event     = None  # cached event suppressed during jog; dispatched after rewind
         self._prev_gate_status     = -1   # -1 = unknown; prevents false trigger on cold start

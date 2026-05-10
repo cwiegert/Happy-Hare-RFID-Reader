@@ -143,8 +143,8 @@ All added to `[nfc_gate]` (overridable per `[nfc_gate laneN]`):
 |---|---|---|---|
 | `scan_enabled` | `True` | `True` | Master switch — `False` disables scan mode entirely |
 | `scan_jog_mm` | `50.0` | `25.0` | Filament advance per jog step (mm) |
-| `scan_decode_retry_mm` | `5.0` | `5.0` | Extra jog after an incomplete rich tag read |
-| `scan_decode_retries` | `3` | `3` | Maximum retry jogs before accepting the current result |
+| `scan_decode_retry_mm` | `5.0` | `5.0` | Distance between nearby retry positions |
+| `scan_decode_retry_rounds` | `3` | `3` | Nearby retry rounds before accepting the current result |
 | `scan_poll_interval` | `0.1` | `0.1` | Minimum seconds between NFC reads during scan |
 
 `scan_jog_mm` of 25 mm gives a ~5 cm read window (25 mm on each side of center plus the antenna width) for finding tags that are slightly off-axis.
@@ -240,7 +240,7 @@ The timer always returns `now + scan_poll_interval` so NFC is polled continuousl
 
 ### `finish(gate)` — tag found
 
-When a UID is detected but the rich payload read is marked incomplete, scan-jog queues a small retry jog before accepting the current UID/metadata result. The retry decision is format-neutral: reader/parser code sets `CurrentTag.read_incomplete` and `read_retry_reason`; scan-jog only applies the configured `scan_decode_retry_mm` / `scan_decode_retries` policy. The first implementation marks incomplete MIFARE reads when sector authentication or block reads fail, which covers spool-mounted Bambu tags at the edge of the reader field.
+When a UID is detected but the rich payload read is marked incomplete, scan-jog queues nearby retry jogs before accepting the current UID/metadata result. The retry decision is format-neutral: reader/parser code sets `CurrentTag.read_incomplete` and `read_retry_reason`; scan-jog only applies the configured `scan_decode_retry_mm` / `scan_decode_retry_rounds` policy. Each retry round probes both sides of the first UID hit position. The first implementation marks incomplete MIFARE reads when sector authentication or block reads fail, which covers spool-mounted Bambu tags at the edge of the reader field.
 
 ```python
 def finish(gate):

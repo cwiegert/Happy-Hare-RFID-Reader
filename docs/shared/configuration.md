@@ -98,8 +98,8 @@ poll_interval × absent_threshold = seconds before removal fires
 scan_enabled:          True
 scan_jog_mm:           75.0
 scan_rewind_buffer_mm: 30.0
-scan_decode_retry_mm:  5.0
-scan_decode_retries:   3
+scan_decode_retry_mm:     5.0
+scan_decode_retry_rounds: 3
 scan_poll_interval:    0.10
 ```
 
@@ -108,8 +108,8 @@ scan_poll_interval:    0.10
 | `scan_enabled` | `True` | Master switch. `False` disables automatic scan-jog entirely — the 0→1 edge is ignored and `NFC JOG_SCAN=1` is blocked. |
 | `scan_jog_mm` | `75.0` | Filament advance per jog step (mm). Each step spins the spool hub by this distance, giving the antenna a fresh read window. |
 | `scan_rewind_buffer_mm` | `30.0` | Distance reserved for Happy Hare's final gate-parking step (`_MMU_STEP_UNLOAD_GATE`). After a tag is found, NFC fast-rewinds to within this buffer and then hands off to HH for sensor/encoder-based final parking. If the scan moved less than this value, the fast rewind is skipped. |
-| `scan_decode_retry_mm` | `5.0` | Extra jog distance after a UID is found but the rich tag payload is marked incomplete. |
-| `scan_decode_retries` | `3` | Maximum incomplete-read retry jogs before accepting the current UID/metadata result. |
+| `scan_decode_retry_mm` | `5.0` | Distance between nearby retry positions after a UID is found but the rich tag payload is marked incomplete. |
+| `scan_decode_retry_rounds` | `3` | Nearby retry rounds before accepting the current UID/metadata result. Each round probes both sides of the first UID hit. |
 | `scan_poll_interval` | `0.10` | Minimum seconds between NFC read attempts during scan-jog. The jog chunk cadence is derived automatically from `scan_jog_mm ÷ gear_short_move_speed`; this setting controls read frequency independently of motor timing. |
 
 **Happy Hare post-preload hook (alternative to automatic polling):**

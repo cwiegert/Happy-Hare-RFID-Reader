@@ -178,6 +178,7 @@ def start(gate, max_mm=None, sync_hh=True):
     gate._scan_next_chunk_time = gate.reactor.monotonic()
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
+    gate._scan_decode_retry_offset = 0.0
     gate._hh_seed_spool_id = None
     gate._hh_seed_available = False
     gate._scan_found_event = None
@@ -300,24 +301,22 @@ def retry_incomplete_decode(gate, now):
 
     tag = gate._state.current_tag
     uid = tag.uid
-    max_retries = max(0, int(getattr(gate, '_scan_decode_retries', 3)))
+    max_rounds = max(0, int(getattr(gate, '_scan_decode_retry_rounds', 3)))
+    max_attempts = max_rounds * 2
     retry_mm = max(0.0, float(getattr(gate, '_scan_decode_retry_mm', 5.0)))
-    if max_retries <= 0 or retry_mm <= 0.0:
+    if max_attempts <= 0 or retry_mm <= 0.0:
         return False
 
     if gate._scan_decode_retry_uid != uid:
         gate._scan_decode_retry_uid = uid
         gate._scan_decode_retry_attempts = 0
+        gate._scan_decode_retry_offset = 0.0
 
-    if gate._scan_decode_retry_attempts >= max_retries:
+    if gate._scan_decode_retry_attempts >= max_attempts:
         msg = ("NFC[%d]: tag decode still incomplete after %d retries; "
-               "using current result" % (gate._gate, max_retries))
+               "using current result" % (gate._gate, max_attempts))
         logger.warning(msg)
         gate._console("⚠️ " + msg)
-        return False
-
-    remaining = gate._scan_max_mm - gate._scan_mm_total
-    if remaining <= 0.0:
         return False
 
     reason = getattr(tag, 'read_retry_reason', None)
@@ -330,21 +329,42 @@ def retry_incomplete_decode(gate, now):
         else:
             reason = "incomplete rich tag read"
 
-    step = min(retry_mm, remaining)
-    gate._scan_decode_retry_attempts += 1
+    move = 0.0
+    while gate._scan_decode_retry_attempts < max_attempts:
+        attempt_index = gate._scan_decode_retry_attempts
+        round_index = attempt_index // 2
+        side = 1.0 if attempt_index % 2 == 0 else -1.0
+        target_offset = side * retry_mm * (round_index + 1)
+        current_offset = getattr(gate, '_scan_decode_retry_offset', 0.0)
+        move = target_offset - current_offset
+        next_total = gate._scan_mm_total + move
+        if next_total < 0.0:
+            move = -gate._scan_mm_total
+        elif next_total > gate._scan_max_mm:
+            move = gate._scan_max_mm - gate._scan_mm_total
+        gate._scan_decode_retry_attempts += 1
+        if abs(move) > 0.001:
+            break
+        gate._scan_decode_retry_offset += move
+        move = 0.0
+
+    if abs(move) <= 0.001:
+        return False
+
     attempt = gate._scan_decode_retry_attempts
     msg = ("NFC[%d]: tag decode incomplete; retry %d/%d after %.1fmm jog"
-           % (gate._gate, attempt, max_retries, step))
+           % (gate._gate, attempt, max_attempts, move))
     logger.warning("%s (uid=%s reason=%s)", msg, uid, reason)
     gate._console("⚠️ " + msg)
     reset_uid_only_read(gate, uid)
-    gate._run_jog(step)
-    gate._scan_mm_total += step
+    gate._run_jog(move)
+    gate._scan_mm_total += move
+    gate._scan_decode_retry_offset += move
     gate._scan_next_chunk_time = (
-        now + chunk_interval(gate, step) + chunk_dwell(gate))
+        now + chunk_interval(gate, move) + chunk_dwell(gate))
     logger.info(
         "NFC[%d]: decode retry move queued %.1fmm  scan position %.1f / %.1fmm",
-        gate._gate, step, gate._scan_mm_total, gate._scan_max_mm)
+        gate._gate, move, gate._scan_mm_total, gate._scan_max_mm)
     return True
 
 
@@ -395,6 +415,7 @@ def finish(gate):
     gate._scan_previous_spool = None
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
+    gate._scan_decode_retry_offset = 0.0
     gate._resume_poll_after_rewind()
 
 
@@ -422,6 +443,7 @@ def rewind_and_exit(gate):
             gate._name, gate._gate)
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
+    gate._scan_decode_retry_offset = 0.0
     gate._resume_poll_after_rewind()
 
 

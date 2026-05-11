@@ -371,7 +371,11 @@ force_spool_id:         false
 
 `mmu_gate` and `scan_enabled` are not user-configurable — both are set internally by `shared: true`. Only one shared reader may be configured. The reader inherits `spoolman_url`, `spoolman_rfid_key`, `tag_parsing`, `spoolman_auto_create`, and all logging settings from the base `[nfc_gate]` section.
 
-**Rich tags** work with the shared reader when `spoolman_auto_create: true` is set in `[nfc_gate]` — the spool is created in Spoolman automatically and the resulting ID is staged. Rich tags without `spoolman_auto_create`, and `spoolman_url: rich` mode, are not compatible — `MMU_GATE_MAP NEXT_SPOOLID` requires an integer spool ID. See [Shared Reader — Rich tag compatibility](shared-reader.md#rich-tag-compatibility).
+**Rich tags** work with the shared reader only when they resolve to a real
+Spoolman spool ID. That can happen through an existing UID lookup, an embedded
+`spoolman_id`, or `spoolman_auto_create: true`. Metadata-only rich tags are not
+enough for shared preload staging because `MMU_GATE_MAP NEXT_SPOOLID` requires
+an integer spool ID. See [Shared Reader — Rich tag compatibility](shared-reader.md#rich-tag-compatibility).
 
 ### Happy Hare hook wiring
 

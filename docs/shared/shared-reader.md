@@ -10,18 +10,25 @@ For the full console/log message reference, see [Message Definitions](message_de
 
 ## Rich tag compatibility
 
-The shared reader works with rich (embedded-metadata) NFC tags when `spoolman_auto_create: true` is enabled. In that case the resolver creates a Spoolman spool from the tag metadata and returns a real spool ID — the shared reader stages it with `MMU_GATE_MAP NEXT_SPOOLID=<id>` exactly as it would for a plain Spoolman-registered tag.
+The shared reader can only stage a **Spoolman spool ID**. Happy Hare's
+`MMU_GATE_MAP NEXT_SPOOLID=<id>` requires an integer spool ID; it cannot accept
+raw filament metadata from a rich tag.
 
-**Rich tags require a Spoolman spool ID.** `MMU_GATE_MAP NEXT_SPOOLID=<id>` requires an integer — it cannot accept raw filament metadata. The two supported configurations are:
+That means rich tags work only when NFC can turn the tag into a real Spoolman
+spool first:
 
-| Tag type | `spoolman_url` | `spoolman_auto_create` | Works with shared reader? |
+| Tag / resolution path | `spoolman_url` | `spoolman_auto_create` | Works with shared reader? |
 |---|---|---|---|
-| Spoolman-registered (UID lookup) | `auto` / URL | either | ✅ |
-| Rich tag (embedded metadata) | `auto` / URL | `true` | ✅ — spool auto-created then staged |
-| Rich tag (embedded metadata) | `auto` / URL | `false` | ❌ — no spool ID to stage |
-| Metadata-only (`rich` mode) | `rich` | N/A | ❌ — no Spoolman connection |
+| UID is already registered in Spoolman | `auto` / URL | either | ✅ — existing spool ID is staged |
+| Rich tag contains an embedded `spoolman_id` that exists in Spoolman | `auto` / URL | either | ✅ — embedded spool ID is staged |
+| Rich tag has metadata but no existing Spoolman spool | `auto` / URL | `true` | ✅ — spool is auto-created, then staged |
+| Rich tag has metadata but no existing Spoolman spool | `auto` / URL | `false` | ⚠️ — tag can be read, but no spool ID exists to stage |
+| Spoolman is disabled, unavailable, or cannot be discovered | empty / disabled / undiscovered `auto` | either | ⚠️ — metadata-only dispatch is not usable for shared preload staging |
 
-When a rich tag arrives with no spool ID the shared reader treats it as unresolved, increments the miss counter, and after `shared_missed_limit` attempts emits a console message advising `MMU_PRELOAD` or enabling `spoolman_auto_create`.
+When a rich tag is readable but does not resolve to a Spoolman spool ID, the
+shared reader treats it as unresolved, increments the miss counter, and after
+`shared_missed_limit` attempts emits a console message advising `MMU_PRELOAD` or
+enabling `spoolman_auto_create`.
 
 ---
 

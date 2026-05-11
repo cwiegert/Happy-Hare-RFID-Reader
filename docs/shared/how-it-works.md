@@ -131,7 +131,7 @@ NFC_Manager fires exactly one of these on a state change. They live in `nfc_macr
 
 | Macro | When | Parameters |
 |---|---|---|
-| `_NFC_SPOOL_CHANGED` | Tag resolved to a spool (Spoolman or metadata-direct) | `GATE`, `UID`; plus `SPOOL_ID` (Spoolman path) or `MATERIAL`/`COLOR`/`TEMP` (metadata path, each optional); `AUTO_CREATED=1` when spool was just created |
+| `_NFC_SPOOL_CHANGED` | Tag resolved to a spool (Spoolman or metadata-direct) | `GATE`, `UID`; plus `SPOOL_ID` (Spoolman path) or `NAME`/`MATERIAL`/`COLOR`/`TEMP` (metadata path, each optional); `AUTO_CREATED=1` when spool was just created |
 | `_NFC_SPOOL_REMOVED` | Tag absent for `absent_threshold` consecutive polls | `GATE` |
 | `_NFC_TAG_NO_SPOOL` | Tag read but UID not registered in Spoolman | `GATE`, `UID` |
 
@@ -143,7 +143,7 @@ The default macro body for `_NFC_SPOOL_CHANGED` handles both paths:
     {% endif %}
     MMU_GATE_MAP GATE={gate} SPOOLID={spool_id} AVAILABLE=1 SYNC=1 QUIET=1
 {% else %}
-    MMU_GATE_MAP GATE={gate} [MATERIAL=..] [COLOR=..] [TEMP=..] AVAILABLE=1 QUIET=1
+    MMU_GATE_MAP GATE={gate} [NAME=..] [MATERIAL=..] [COLOR=..] [TEMP=..] AVAILABLE=1 QUIET=1
 {% endif %}
 MMU_GATE_MAP GATE={gate} APPLY=1
 ```

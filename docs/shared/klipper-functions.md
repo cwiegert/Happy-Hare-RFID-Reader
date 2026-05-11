@@ -371,7 +371,7 @@ _NFC_SPOOL_CHANGED GATE=<gate> SPOOL_ID=<id> UID=<uid> [AUTO_CREATED=1]
 
 **Metadata path** — tag carries embedded filament data (Spoolman disabled or no match):
 ```gcode
-_NFC_SPOOL_CHANGED GATE=<gate> UID=<uid> [MATERIAL=<str>] [COLOR=<hex>] [TEMP=<int>]
+_NFC_SPOOL_CHANGED GATE=<gate> UID=<uid> [NAME=<str>] [MATERIAL=<str>] [COLOR=<hex>] [TEMP=<int>]
 ```
 
 Parameters:
@@ -379,6 +379,7 @@ Parameters:
 - `SPOOL_ID` — Spoolman spool ID (integer); present on Spoolman path only
 - `UID` — NFC tag UID (hex string); always present
 - `AUTO_CREATED` — `1` when `spoolman_auto_create` just created the spool record; absent otherwise
+- `NAME` — display name from `material_detail` or `material`, prefixed with brand/vendor/tag format when present; metadata path only
 - `MATERIAL` — filament material string from tag metadata (e.g. `PLA`, `ABS`); metadata path only
 - `COLOR` — color hex string from tag metadata (e.g. `FF0000`); metadata path only
 - `TEMP` — recommended extruder temperature (integer °C) from tag `min_temp` field; metadata path only
@@ -391,7 +392,7 @@ Default behavior:
     {% endif %}
     MMU_GATE_MAP GATE={gate} SPOOLID={spool_id} AVAILABLE=1 SYNC=1 QUIET=1
 {% else %}
-    MMU_GATE_MAP GATE={gate} [MATERIAL=..] [COLOR=..] [TEMP=..] AVAILABLE=1 QUIET=1
+    MMU_GATE_MAP GATE={gate} [NAME=..] [MATERIAL=..] [COLOR=..] [TEMP=..] AVAILABLE=1 QUIET=1
 {% endif %}
 MMU_GATE_MAP GATE={gate} APPLY=1
 ```
@@ -479,7 +480,7 @@ The event macros are in `~/printer_data/config/nfc/nfc_macros.cfg`. Edit them to
 | `MMU_GATE_MAP GATE=<n> SPOOLID=<id> AVAILABLE=1 SYNC=1 QUIET=1` | Assign a spool to a gate, mark it available, and sync to Spoolman |
 | `MMU_GATE_MAP GATE=<n> APPLY=1` | Apply the current gate map immediately |
 | `MMU_GATE_MAP GATE=<n> SPOOLID=-1 AVAILABLE=0 SYNC=1 QUIET=1` | Clear a gate, mark it empty, and sync to Spoolman |
-| `MMU_GATE_MAP GATE=<n> [MATERIAL=..] [COLOR=..] [TEMP=..] AVAILABLE=1 QUIET=1` | Assign metadata (no Spoolman spool ID) — metadata path only |
+| `MMU_GATE_MAP GATE=<n> [NAME=..] [MATERIAL=..] [COLOR=..] [TEMP=..] AVAILABLE=1 QUIET=1` | Assign metadata (no Spoolman spool ID) — metadata path only |
 | `MMU_SPOOLMAN REFRESH=1 QUIET=1` | Force Happy Hare to re-sync its Spoolman cache — called before gate assignment when a new spool was auto-created |
 
 The default macros are designed for Happy Hare with `spoolman_support: push`. `SYNC=1` tells Happy Hare to push the local gate map change to Spoolman. If your Happy Hare version uses different command names or parameters, update the macro body.

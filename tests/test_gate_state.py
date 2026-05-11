@@ -845,11 +845,13 @@ def test_klipper_interface_changed_with_spool_id():
 def test_klipper_interface_changed_metadata_only_full_meta():
     ki, gcode = _make_ki()
     ki.dispatch(EVENT_CHANGED, gate=1, uid_hex='04AABB', spool_id=None,
-                meta={'material': 'PLA', 'color_hex': 'FF5500', 'brand': 'eSUN'})
+                meta={'material': 'PLA', 'material_detail': 'PLA Basic',
+                      'color_hex': 'FF5500', 'brand': 'Bambu Lab'})
     assert len(gcode.scripts) == 1
     s = gcode.scripts[0]
     assert s.startswith('_NFC_SPOOL_CHANGED ')
     assert 'GATE=1' in s
+    assert 'NAME=Bambu_PLA_Basic' in s
     assert 'MATERIAL=PLA' in s
     assert 'COLOR=FF5500' in s
     assert 'VENDOR' not in s   # VENDOR dropped — MMU_GATE_MAP has no such param
@@ -861,6 +863,7 @@ def test_klipper_interface_changed_metadata_only_partial_meta():
     ki.dispatch(EVENT_CHANGED, gate=0, uid_hex='04CCDD', spool_id=None,
                 meta={'material': 'PETG'})
     s = gcode.scripts[0]
+    assert 'NAME=PETG' in s
     assert 'MATERIAL=PETG' in s
     assert 'COLOR' not in s    # empty color omitted entirely
     assert 'VENDOR' not in s

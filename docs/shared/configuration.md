@@ -278,7 +278,7 @@ GATE  SPOOL_ID  UID  [AUTO_CREATED=1]
 
 **Metadata path** — tag carries embedded filament data, Spoolman disabled or no match:
 ```
-GATE  UID  [MATERIAL=...]  [COLOR=...]  [TEMP=...]
+GATE  UID  [NAME=...]  [MATERIAL=...]  [COLOR=...]  [TEMP=...]
 ```
 
 Default:
@@ -289,7 +289,7 @@ Default:
     {% endif %}
     MMU_GATE_MAP GATE={gate} SPOOLID={spool_id} AVAILABLE=1 SYNC=1 QUIET=1
 {% else %}
-    MMU_GATE_MAP GATE={gate} [MATERIAL=..] [COLOR=..] [TEMP=..] AVAILABLE=1 QUIET=1
+    MMU_GATE_MAP GATE={gate} [NAME=..] [MATERIAL=..] [COLOR=..] [TEMP=..] AVAILABLE=1 QUIET=1
 {% endif %}
 MMU_GATE_MAP GATE={gate} APPLY=1
 ```

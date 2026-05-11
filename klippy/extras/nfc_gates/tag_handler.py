@@ -239,6 +239,52 @@ def release_reader_target(gate, reason):
 
 # ── Metadata capture ─────────────────────────────────────────────────────────
 
+def resolve_spool_by_uid_before_metadata(gate, tag):
+    if gate._spoolman is None:
+        return None
+    uid_hex = tag.uid
+    if gate._debug >= 3:
+        logger.info(
+            "nfc_gate: [%s] gate %d — uid=%s  early UID lookup: checking "
+            "Spoolman extra field %s before structured tag read",
+            gate._name, gate._gate, uid_hex, gate._spoolman._rfid_key)
+    try:
+        spool_id = gate._spoolman.lookup_spool_by_uid(uid_hex)
+    except Exception as e:
+        tag.resolution = {'path': 'early_uid_lookup_failed',
+                          'error': str(e)}
+        logger.warning(
+            "nfc_gate: [%s] gate %d — uid=%s  early UID lookup failed: %s; "
+            "continuing structured tag read",
+            gate._name, gate._gate, uid_hex, e)
+        return None
+    if spool_id is None:
+        tag.resolution = {'path': 'early_uid_lookup_miss'}
+        if gate._debug >= 3:
+            logger.info(
+                "nfc_gate: [%s] gate %d — uid=%s  early UID lookup found no "
+                "Spoolman spool; continuing structured tag read",
+                gate._name, gate._gate, uid_hex)
+        return None
+    try:
+        spool_id = int(spool_id)
+    except (TypeError, ValueError):
+        logger.warning(
+            "nfc_gate: [%s] gate %d — uid=%s  early UID lookup returned "
+            "invalid spool_id=%r; continuing structured tag read",
+            gate._name, gate._gate, uid_hex, spool_id)
+        return None
+    tag.spool_id = spool_id
+    tag.resolution = {'path': 'early_uid_lookup', 'spool_id': spool_id}
+    release_reader_target(gate, "early_uid_lookup")
+    if gate._debug >= 3:
+        logger.info(
+            "nfc_gate: [%s] gate %d — uid=%s  early UID lookup resolved "
+            "Spoolman spool_id=%s; skipping structured tag read",
+            gate._name, gate._gate, uid_hex, spool_id)
+    return spool_id
+
+
 def parse_current_tag(gate, tag):
     uid_hex = tag.uid
     if not tag.raw_tag_data:
@@ -429,6 +475,9 @@ def read_current_tag(gate):
     tag.meta = {'uid': uid_hex}
     gate._state.current_tag = tag
 
+    if resolve_spool_by_uid_before_metadata(gate, tag) is not None:
+        return uid_hex
+
     strategy = classify_tag_target(gate, target_info)
     if gate._debug >= 3:
         logger.info(
@@ -512,6 +561,17 @@ def resolve_spool(gate, uid_hex):
             logger.info("nfc_gate: [%s] gate %d — uid=%s  no Spoolman configured",
                         gate._name, gate._gate, uid_hex)
         return None
+
+    if tag is not None and isinstance(tag.resolution, dict):
+        if tag.resolution.get('path') == 'early_uid_lookup':
+            spool_id = tag.resolution.get('spool_id')
+            if spool_id is not None:
+                if gate._debug >= 3:
+                    logger.info(
+                        "nfc_gate: [%s] gate %d — uid=%s  "
+                        "Spoolman→spool_id=%s (early UID lookup)",
+                        gate._name, gate._gate, uid_hex, spool_id)
+                return spool_id
 
     spoolman_id = meta.get('spoolman_id')
     if spoolman_id not in (None, ''):

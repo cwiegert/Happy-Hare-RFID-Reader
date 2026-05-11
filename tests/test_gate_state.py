@@ -73,6 +73,7 @@ from nfc_gates.gate_state import (
     EVENT_CHANGED, EVENT_UID_ONLY, EVENT_REMOVED)
 from nfc_gates.klipper_interface import KlipperInterface
 from nfc_gates.nfc_manager import NFCGate
+import nfc_gates.tag_handler as tag_handler
 
 
 def assert_event(event, expected_type, gate=0, uid=None, spool=None):
@@ -477,6 +478,7 @@ def _read_gate(reader, tag_parsing=True):
     gate = NFCGate.__new__(NFCGate)
     gate._reader = reader
     gate._state = GateState(0)
+    gate._spoolman = None
     gate._tag_parsing = tag_parsing
     gate._bambu_reads = False
     gate._tag_max_pages = 8
@@ -518,6 +520,47 @@ def test_read_current_tag_deep_mode_reads_ntag_memory():
     assert gate._state.current_tag.uid == '04AABB'
     assert gate._state.current_tag.target_info['sak'] == 0x00
     assert gate._state.current_tag.raw_tag_data == reader.raw
+
+
+def test_read_current_tag_spoolman_uid_hit_skips_structured_read():
+    reader = _ReaderForCurrentTag(target_info=_target(sak=0x08))
+    gate = _read_gate(reader, tag_parsing=True)
+    gate._bambu_reads = True
+    gate._spoolman = _ResolverSpoolman(by_uid={'04AABB': 42})
+
+    assert gate._read_current_tag() == '04AABB'
+    assert gate._resolve_spool('04AABB') == 42
+    assert reader.calls == [
+        'read_target',
+        ('release', 'early_uid_lookup'),
+    ]
+    assert gate._spoolman.calls == [('uid', '04AABB')]
+    assert gate._state.current_tag.meta == {'uid': '04AABB'}
+    assert gate._state.current_tag.resolution == {
+        'path': 'early_uid_lookup',
+        'spool_id': 42,
+    }
+
+
+def test_read_current_tag_spoolman_uid_miss_continues_structured_read(monkeypatch):
+    import sys
+    monkeypatch.setattr(tag_handler, 'resolve_auth_keys',
+                        lambda gate, tag: ({0: b'key'}, None))
+    sys.modules['nfc_gates.vendor.rfid_tag_parser'].parse_tag = (
+        lambda raw, uid_hex=None: {'uid': uid_hex, 'material': 'PLA'})
+    reader = _ReaderForCurrentTag(
+        target_info=_target(uid='04AABBCC', sak=0x08),
+        raw={'blocks': {0: bytes(16)}, 'auth_failed_sectors': []})
+    gate = _read_gate(reader, tag_parsing=True)
+    gate._bambu_reads = True
+    gate._spoolman = _ResolverSpoolman()
+
+    assert gate._read_current_tag() == '04AABBCC'
+    assert gate._spoolman.calls == [('uid', '04AABBCC')]
+    assert any(isinstance(call, tuple)
+               and call[0] == 'mifare_read_authenticated_blocks'
+               for call in reader.calls)
+    assert gate._state.current_tag.meta.get('material') == 'PLA'
 
 
 def test_read_current_tag_mifare_respects_bambu_reads_disabled():

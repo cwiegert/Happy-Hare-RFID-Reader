@@ -120,7 +120,8 @@ def _single_line_preview(text, limit=300):
 _META_SUMMARY_KEYS = (
     'tag_format', 'brand', 'vendor', 'material', 'material_detail',
     'material_id', 'material_variant_id', 'sku', 'color_hex',
-    'diameter_mm', 'weight_g', 'spool_weight_g', 'tray_uid',
+    'diameter_mm', 'weight_g', 'spool_weight_g', 'min_temp', 'max_temp',
+    'bed_temp', 'drying_temp', 'drying_time_h', 'tray_uid',
     'spoolman_id', 'parse_warning', 'parse_error', 'error',
 )
 
@@ -238,6 +239,52 @@ def release_reader_target(gate, reason):
 
 # ── Metadata capture ─────────────────────────────────────────────────────────
 
+def resolve_spool_by_uid_before_metadata(gate, tag):
+    if gate._spoolman is None:
+        return None
+    uid_hex = tag.uid
+    if gate._debug >= 3:
+        logger.info(
+            "nfc_gate: [%s] gate %d — uid=%s  early UID lookup: checking "
+            "Spoolman extra field %s before structured tag read",
+            gate._name, gate._gate, uid_hex, gate._spoolman._rfid_key)
+    try:
+        spool_id = gate._spoolman.lookup_spool_by_uid(uid_hex)
+    except Exception as e:
+        tag.resolution = {'path': 'early_uid_lookup_failed',
+                          'error': str(e)}
+        logger.warning(
+            "nfc_gate: [%s] gate %d — uid=%s  early UID lookup failed: %s; "
+            "continuing structured tag read",
+            gate._name, gate._gate, uid_hex, e)
+        return None
+    if spool_id is None:
+        tag.resolution = {'path': 'early_uid_lookup_miss'}
+        if gate._debug >= 3:
+            logger.info(
+                "nfc_gate: [%s] gate %d — uid=%s  early UID lookup found no "
+                "Spoolman spool; continuing structured tag read",
+                gate._name, gate._gate, uid_hex)
+        return None
+    try:
+        spool_id = int(spool_id)
+    except (TypeError, ValueError):
+        logger.warning(
+            "nfc_gate: [%s] gate %d — uid=%s  early UID lookup returned "
+            "invalid spool_id=%r; continuing structured tag read",
+            gate._name, gate._gate, uid_hex, spool_id)
+        return None
+    tag.spool_id = spool_id
+    tag.resolution = {'path': 'early_uid_lookup', 'spool_id': spool_id}
+    release_reader_target(gate, "early_uid_lookup")
+    if gate._debug >= 3:
+        logger.info(
+            "nfc_gate: [%s] gate %d — uid=%s  early UID lookup resolved "
+            "Spoolman spool_id=%s; skipping structured tag read",
+            gate._name, gate._gate, uid_hex, spool_id)
+    return spool_id
+
+
 def parse_current_tag(gate, tag):
     uid_hex = tag.uid
     if not tag.raw_tag_data:
@@ -327,12 +374,16 @@ def capture_ntag_metadata(gate, tag):
     except Exception as e:
         tag.parse_error = 'ntag read failed: {}'.format(e)
         tag.meta = {'uid': uid_hex}
+        tag.read_incomplete = True
+        tag.read_retry_reason = tag.parse_error
         logger.warning("nfc_gate: [%s] gate %d — uid=%s  NTAG read failed: %s",
                        gate._name, gate._gate, uid_hex, e)
         return
     if not raw:
         tag.parse_error = 'empty ntag read'
         tag.meta = {'uid': uid_hex}
+        tag.read_incomplete = True
+        tag.read_retry_reason = tag.parse_error
         logger.warning("nfc_gate: [%s] gate %d — uid=%s  NTAG read returned no data",
                        gate._name, gate._gate, uid_hex)
         return
@@ -358,22 +409,49 @@ def resolve_auth_keys(gate, tag):
         return None, 'key derivation failed: %s' % e
 
 
+def resolve_default_mifare_keys():
+     """Return standard MIFARE Classic factory Key-A for all 16 sectors."""
+     return [b'\xff\xff\xff\xff\xff\xff'] * 16
+
+
 def capture_mifare_metadata(gate, tag, sector_keys):
     uid_hex   = tag.uid
     uid_bytes = bytes((tag.target_info or {}).get('uid_bytes') or [])
+    tag.mifare_auth_failed_sectors = []
+    tag.mifare_read_failed_blocks = []
     try:
         block_dict = gate._reader.mifare_read_authenticated_blocks(
             sector_keys, sectors=[0, 1, 2, 3, 4], uid_bytes=uid_bytes)
     except Exception as e:
         tag.parse_error = 'mifare read failed: %s' % e
         tag.meta = {'uid': uid_hex}
+        tag.read_incomplete = True
+        tag.read_retry_reason = tag.parse_error
         logger.warning(
             "nfc_gate: [%s] gate %d — uid=%s  MIFARE read failed: %s",
             gate._name, gate._gate, uid_hex, e)
         return
+    if isinstance(block_dict, dict):
+        tag.mifare_auth_failed_sectors = list(
+            block_dict.get('auth_failed_sectors') or [])
+        tag.mifare_read_failed_blocks = list(
+            block_dict.get('read_failed_blocks') or [])
+        if tag.mifare_auth_failed_sectors:
+            tag.read_incomplete = True
+            tag.read_retry_reason = (
+                "auth failed sectors %s" %
+                tag.mifare_auth_failed_sectors)
+        elif tag.mifare_read_failed_blocks:
+            tag.read_incomplete = True
+            tag.read_retry_reason = (
+                "read failed blocks %s" %
+                tag.mifare_read_failed_blocks)
     if not block_dict or not block_dict.get('blocks'):
         tag.parse_error = 'mifare read returned no blocks'
         tag.meta = {'uid': uid_hex}
+        tag.read_incomplete = True
+        if not tag.read_retry_reason:
+            tag.read_retry_reason = tag.parse_error
         logger.warning(
             "nfc_gate: [%s] gate %d — uid=%s  MIFARE read returned no "
             "blocks (auth failed on all sectors?)",
@@ -405,6 +483,9 @@ def read_current_tag(gate):
     tag = CurrentTag(uid=uid_hex, target_info=dict(target_info))
     tag.meta = {'uid': uid_hex}
     gate._state.current_tag = tag
+
+    if resolve_spool_by_uid_before_metadata(gate, tag) is not None:
+        return uid_hex
 
     strategy = classify_tag_target(gate, target_info)
     if gate._debug >= 3:
@@ -443,6 +524,16 @@ def read_current_tag(gate):
                     "Bambu keys derived; reading sectors 0-4",
                     gate._name, gate._gate, uid_hex)
             capture_mifare_metadata(gate, tag, keys)
+            # --- Creality/QIDI default-key fallback (commented out, needs hardware test) ---
+            # if len(getattr(tag, 'mifare_auth_failed_sectors', [])) == 5:
+            #     tag.read_incomplete = False
+            #     tag.read_retry_reason = None
+            #     tag.raw_tag_data = None
+            #     tag.parse_error = None
+            #     new_target = gate._reader.read_target()
+            #     if new_target is not None and new_target.get('uid') == uid_hex:
+            #         capture_mifare_metadata(gate, tag, resolve_default_mifare_keys())
+            # ---------------------------------------------------------------------------------
     else:
         tag.parse_error = 'unsupported target; uid-only fallback'
         release_reader_target(gate, "unsupported_uid_only_fallback")
@@ -489,6 +580,17 @@ def resolve_spool(gate, uid_hex):
             logger.info("nfc_gate: [%s] gate %d — uid=%s  no Spoolman configured",
                         gate._name, gate._gate, uid_hex)
         return None
+
+    if tag is not None and isinstance(tag.resolution, dict):
+        if tag.resolution.get('path') == 'early_uid_lookup':
+            spool_id = tag.resolution.get('spool_id')
+            if spool_id is not None:
+                if gate._debug >= 3:
+                    logger.info(
+                        "nfc_gate: [%s] gate %d — uid=%s  "
+                        "Spoolman→spool_id=%s (early UID lookup)",
+                        gate._name, gate._gate, uid_hex, spool_id)
+                return spool_id
 
     spoolman_id = meta.get('spoolman_id')
     if spoolman_id not in (None, ''):
@@ -547,6 +649,20 @@ def resolve_spool(gate, uid_hex):
             "checking whether metadata can create or directly represent a spool "
             "(material=%r color=%r)",
             gate._name, gate._gate, uid_hex, material, color)
+
+    if tag is not None and getattr(tag, 'read_incomplete', False):
+        if tag.resolution is None or not isinstance(tag.resolution, dict):
+            tag.resolution = {'path': 'structured_read_incomplete'}
+        else:
+            tag.resolution = dict(tag.resolution)
+            tag.resolution['path'] = 'structured_read_incomplete'
+        if gate._debug >= 3:
+            logger.info(
+                "nfc_gate: [%s] gate %d — uid=%s  structured tag read "
+                "is incomplete; deferring auto-create/metadata assignment "
+                "until scan-jog finds a complete read window",
+                gate._name, gate._gate, uid_hex)
+        return None
 
     try:
         base_url = gate._spoolman._resolve_base_url()

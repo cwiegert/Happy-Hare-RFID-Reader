@@ -134,7 +134,7 @@ Step 3 — Auto-create (spoolman_auto_create: True only)
 Step 4 — Spoolman disabled, metadata available  (DIRECT_METADATA_SPOOL sentinel)
   spoolman_url empty/disabled AND meta has material or color
   → return DIRECT_METADATA_SPOOL sentinel
-  → KlipperInterface dispatches MATERIAL/COLOR/TEMP directly to macro
+  → KlipperInterface dispatches NAME/MATERIAL/COLOR/TEMP directly to macro
   → no spool_id assigned
 
 Step 5 — UID-only fallback
@@ -174,10 +174,11 @@ _NFC_SPOOL_CHANGED GATE=0 SPOOL_ID=26 UID=04AABBCC
 **Metadata-direct path** (`spool_id is None`, meta dict present):
 
 ```
-_NFC_SPOOL_CHANGED GATE=0 MATERIAL=PLA COLOR=#FF5500 TEMP=220 UID=04AABBCC
+_NFC_SPOOL_CHANGED GATE=0 NAME=eSUN_PLA MATERIAL=PLA COLOR=#FF5500 TEMP=220 UID=04AABBCC
 ```
 
 Rules applied to the metadata path:
+- `NAME` uses `material_detail` or `material`, prefixed with brand/vendor/tag format when present
 - `MATERIAL` and `COLOR` are only included when non-empty (omitting an empty param avoids broken GCode)
 - `TEMP` uses `meta['min_temp']` (lower bound of the print window = recommended extruder temp), only included when present
 - `VENDOR` is not passed — HH has no `VENDOR` param; vendor/brand display comes from HH's own Spoolman enrichment when a spool ID is set
@@ -194,6 +195,7 @@ Rules applied to the metadata path:
     MMU_GATE_MAP GATE={gate} SPOOLID={spool_id} AVAILABLE=1 SYNC=1 QUIET=1
 {% else %}
     MMU_GATE_MAP GATE={gate}
+      {% if name     %} NAME={name}{% endif %}
       {% if material %} MATERIAL={material}{% endif %}
       {% if color    %} COLOR={color}{% endif %}
       {% if temp     %} TEMP={temp | int}{% endif %}
@@ -204,7 +206,7 @@ MMU_GATE_MAP GATE={gate} APPLY=1
 
 - `SYNC=1` on the Spoolman path pushes the spool assignment back to Spoolman so the spool's location field stays current
 - `APPLY=1` on a second call activates the gate (HH loads the filament profile)
-- MATERIAL/COLOR/TEMP are each omitted from the MMU_GATE_MAP call when not present in params
+- NAME/MATERIAL/COLOR/TEMP are each omitted from the MMU_GATE_MAP call when not present in params
 
 ---
 

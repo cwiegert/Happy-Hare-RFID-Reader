@@ -1321,7 +1321,7 @@ class SpoolmanClient:
 
             # Temperature settings: use tag data when present, otherwise fall
             # back to SpoolmanDB values (Bambu only).  SpoolmanDB carries both
-            # min ("extruder_temp") and max ("extruder_temp_max") temps.
+            # lower ("extruder_temp") and upper ("extruder_temp_max") temps.
             min_temp = filament_info.get("min_temp")
             max_temp = filament_info.get("max_temp")
             bed_temp = filament_info.get("bed_temp")
@@ -1333,17 +1333,14 @@ class SpoolmanClient:
                 if bed_temp is None:
                     bed_temp = bambu_match.get("bed_temp")
 
-            # settings_extruder_temp: use min_temp (lower hotend bound) as the
-            # recommended extruder temperature; settings_extruder_temp_max for
-            # the upper bound when available.
-            _ext_min = _to_int_safe(min_temp)
+            # settings_extruder_temp is a default/recommended value in
+            # Spoolman, not a lower bound.  Use the upper hotend temperature
+            # for Bambu/high-speed purge behavior, and keep min_temp only as
+            # parsed metadata.
             _ext_max = _to_int_safe(max_temp)
             _bed = _to_int_safe(bed_temp)
-            if _ext_min is not None:
-                filament_body["settings_extruder_temp"] = _ext_min
-            elif _ext_max is not None:
+            if _ext_max is not None:
                 filament_body["settings_extruder_temp"] = _ext_max
-            if _ext_min is not None and _ext_max is not None:
                 filament_body["settings_extruder_temp_max"] = _ext_max
             if _bed is not None:
                 filament_body["settings_bed_temp"] = _bed

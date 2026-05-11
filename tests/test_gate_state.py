@@ -73,6 +73,7 @@ from nfc_gates.gate_state import (
     EVENT_CHANGED, EVENT_UID_ONLY, EVENT_REMOVED)
 from nfc_gates.klipper_interface import KlipperInterface
 from nfc_gates.nfc_manager import NFCGate
+import nfc_gates.tag_handler as tag_handler
 
 
 def assert_event(event, expected_type, gate=0, uid=None, spool=None):
@@ -362,6 +363,29 @@ def test_resolve_auto_create_uses_vendor_top_level_then_patches_rfid_key(monkeyp
     }
 
 
+def test_resolve_incomplete_structured_read_defers_auto_create(monkeypatch):
+    fake_cls = _install_fake_lb_client(monkeypatch)
+    spoolman = _ResolverSpoolman()
+    gate = _resolver_gate(
+        '04AABB',
+        {
+            'material': 'PLA',
+            'brand': 'Bambu Lab',
+            'color_hex': 'FF5500',
+        },
+        spoolman)
+    gate._spoolman_auto_create = True
+    gate._state.current_tag.read_incomplete = True
+    gate._state.current_tag.read_retry_reason = 'auth failed sectors [2, 3]'
+
+    assert gate._resolve_spool('04AABB') is None
+    assert spoolman.calls == [('uid', '04AABB')]
+    assert fake_cls.instances == []
+    assert gate._state.current_tag.resolution == {
+        'path': 'structured_read_incomplete',
+    }
+
+
 def test_resolve_auto_create_failure_falls_back_unresolved(monkeypatch):
     class _FailingLBSpoolmanClient(_FakeLBSpoolmanClient):
         def __init__(self, base_url, timeout=5.0):
@@ -477,6 +501,7 @@ def _read_gate(reader, tag_parsing=True):
     gate = NFCGate.__new__(NFCGate)
     gate._reader = reader
     gate._state = GateState(0)
+    gate._spoolman = None
     gate._tag_parsing = tag_parsing
     gate._bambu_reads = False
     gate._tag_max_pages = 8
@@ -518,6 +543,47 @@ def test_read_current_tag_deep_mode_reads_ntag_memory():
     assert gate._state.current_tag.uid == '04AABB'
     assert gate._state.current_tag.target_info['sak'] == 0x00
     assert gate._state.current_tag.raw_tag_data == reader.raw
+
+
+def test_read_current_tag_spoolman_uid_hit_skips_structured_read():
+    reader = _ReaderForCurrentTag(target_info=_target(sak=0x08))
+    gate = _read_gate(reader, tag_parsing=True)
+    gate._bambu_reads = True
+    gate._spoolman = _ResolverSpoolman(by_uid={'04AABB': 42})
+
+    assert gate._read_current_tag() == '04AABB'
+    assert gate._resolve_spool('04AABB') == 42
+    assert reader.calls == [
+        'read_target',
+        ('release', 'early_uid_lookup'),
+    ]
+    assert gate._spoolman.calls == [('uid', '04AABB')]
+    assert gate._state.current_tag.meta == {'uid': '04AABB'}
+    assert gate._state.current_tag.resolution == {
+        'path': 'early_uid_lookup',
+        'spool_id': 42,
+    }
+
+
+def test_read_current_tag_spoolman_uid_miss_continues_structured_read(monkeypatch):
+    import sys
+    monkeypatch.setattr(tag_handler, 'resolve_auth_keys',
+                        lambda gate, tag: ({0: b'key'}, None))
+    sys.modules['nfc_gates.vendor.rfid_tag_parser'].parse_tag = (
+        lambda raw, uid_hex=None: {'uid': uid_hex, 'material': 'PLA'})
+    reader = _ReaderForCurrentTag(
+        target_info=_target(uid='04AABBCC', sak=0x08),
+        raw={'blocks': {0: bytes(16)}, 'auth_failed_sectors': []})
+    gate = _read_gate(reader, tag_parsing=True)
+    gate._bambu_reads = True
+    gate._spoolman = _ResolverSpoolman()
+
+    assert gate._read_current_tag() == '04AABBCC'
+    assert gate._spoolman.calls == [('uid', '04AABBCC')]
+    assert any(isinstance(call, tuple)
+               and call[0] == 'mifare_read_authenticated_blocks'
+               for call in reader.calls)
+    assert gate._state.current_tag.meta.get('material') == 'PLA'
 
 
 def test_read_current_tag_mifare_respects_bambu_reads_disabled():
@@ -667,7 +733,7 @@ class _RaisingNtagReader(_ReaderForCurrentTag):
 
 
 def test_ntag_read_exception_returns_uid_with_parse_error():
-    """I2C error during NTAG read records parse_error but still returns the UID."""
+    """I2C error during NTAG read sets parse_error, read_incomplete, and read_retry_reason."""
     reader = _RaisingNtagReader(target_info=_target(sak=0x00))
     gate = _read_gate(reader, tag_parsing=True)
     assert gate._read_current_tag() == '04AABB'
@@ -676,16 +742,20 @@ def test_ntag_read_exception_returns_uid_with_parse_error():
     assert tag.parse_error.startswith('ntag read failed:')
     assert tag.meta == {'uid': '04AABB'}
     assert tag.raw_tag_data is None
+    assert tag.read_incomplete is True
+    assert tag.read_retry_reason == tag.parse_error
 
 
 def test_ntag_read_empty_bytes_returns_uid_with_parse_error():
-    """NTAG read returning an empty bytearray records 'empty ntag read'."""
+    """Empty NTAG read sets parse_error, read_incomplete, and read_retry_reason."""
     reader = _ReaderForCurrentTag(target_info=_target(sak=0x00), raw=bytearray())
     gate = _read_gate(reader, tag_parsing=True)
     assert gate._read_current_tag() == '04AABB'
     tag = gate._state.current_tag
     assert tag.parse_error == 'empty ntag read'
     assert tag.meta == {'uid': '04AABB'}
+    assert tag.read_incomplete is True
+    assert tag.read_retry_reason == 'empty ntag read'
 
 
 class _NoneNtagReader(_ReaderForCurrentTag):
@@ -695,13 +765,15 @@ class _NoneNtagReader(_ReaderForCurrentTag):
 
 
 def test_ntag_read_none_returns_uid_with_parse_error():
-    """NTAG read returning None is treated the same as empty bytes."""
+    """NTAG read returning None sets parse_error, read_incomplete, and read_retry_reason."""
     reader = _NoneNtagReader(target_info=_target(sak=0x00))
     gate = _read_gate(reader, tag_parsing=True)
     assert gate._read_current_tag() == '04AABB'
     tag = gate._state.current_tag
     assert tag.parse_error == 'empty ntag read'
     assert tag.meta == {'uid': '04AABB'}
+    assert tag.read_incomplete is True
+    assert tag.read_retry_reason == 'empty ntag read'
 
 
 # ── _parse_current_tag: parse_tag failure cases ───────────────────────────────
@@ -845,22 +917,35 @@ def test_klipper_interface_changed_with_spool_id():
 def test_klipper_interface_changed_metadata_only_full_meta():
     ki, gcode = _make_ki()
     ki.dispatch(EVENT_CHANGED, gate=1, uid_hex='04AABB', spool_id=None,
-                meta={'material': 'PLA', 'color_hex': 'FF5500', 'brand': 'eSUN'})
+                meta={'material': 'PLA', 'material_detail': 'PLA Basic',
+                      'color_hex': 'FF5500', 'brand': 'Bambu Lab',
+                      'min_temp': 190, 'max_temp': 230})
     assert len(gcode.scripts) == 1
     s = gcode.scripts[0]
     assert s.startswith('_NFC_SPOOL_CHANGED ')
     assert 'GATE=1' in s
+    assert 'NAME=Bambu_PLA_Basic' in s
     assert 'MATERIAL=PLA' in s
     assert 'COLOR=FF5500' in s
     assert 'VENDOR' not in s   # VENDOR dropped — MMU_GATE_MAP has no such param
+    assert 'TEMP=230' in s
+    assert 'TEMP=190' not in s
     assert 'UID=04AABB' in s
     assert 'SPOOL_ID' not in s
+
+def test_klipper_interface_changed_metadata_only_omits_min_temp():
+    ki, gcode = _make_ki()
+    ki.dispatch(EVENT_CHANGED, gate=1, uid_hex='04AABB', spool_id=None,
+                meta={'material': 'PLA', 'min_temp': 190})
+    s = gcode.scripts[0]
+    assert 'TEMP=' not in s
 
 def test_klipper_interface_changed_metadata_only_partial_meta():
     ki, gcode = _make_ki()
     ki.dispatch(EVENT_CHANGED, gate=0, uid_hex='04CCDD', spool_id=None,
                 meta={'material': 'PETG'})
     s = gcode.scripts[0]
+    assert 'NAME=PETG' in s
     assert 'MATERIAL=PETG' in s
     assert 'COLOR' not in s    # empty color omitted entirely
     assert 'VENDOR' not in s

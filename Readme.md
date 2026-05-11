@@ -52,7 +52,25 @@ NFC tags sit on the spool hub. When Happy Hare parks filament at the gate the hu
 ```gcode
 NFC GATE=0 JOG_SCAN=1
 ```
-This runs the exact same sequence with the same precondition checks (HH idle, not printing, no other gate scanning)
+This runs the exact same sequence with the same precondition checks (HH idle, not printing, no other gate scanning).
+
+**Happy Hare post-preload hook (alternative to automatic polling):** The [jacksky6 JK-dev branch](https://github.com/jacksky6/Happy-Hare/tree/JK-dev) of Happy Hare adds a `variable_user_post_preload_extension` hook. Configure it to trigger NFC scan-jog automatically after each `MMU_PRELOAD`:
+
+```ini
+[gcode_macro _MMU_SEQUENCE_VARS]
+variable_user_post_preload_extension: 'NFC JOG_SCAN=1'
+```
+
+Happy Hare appends `GATE=<n>` automatically, giving `NFC JOG_SCAN=1 GATE=<n>`. Use this recommended config with the hook:
+
+```ini
+startup_polling: 0
+scan_enabled:    False
+```
+
+This disables gate-status polling entirely — Happy Hare calls NFC only after the relevant gate completes preload. See [Configuration Reference](docs/shared/configuration.md) for full details.
+
+**Tag-not-in-Spoolman behavior:** If the tag UID is detected but not registered in Spoolman, the gate is kept `AVAILABLE=1` with `SPOOLID=-1` so Happy Hare still treats the lane as loaded. The console prompts the user to add the UID to Spoolman.
 
 **Configurable per lane** — see [Configuration Reference](docs/shared/configuration.md):
 
@@ -60,6 +78,9 @@ This runs the exact same sequence with the same precondition checks (HH idle, no
 |---|---|---|
 | `scan_enabled` | `True` | Master switch — set `False` to disable automatic scan-jog |
 | `scan_jog_mm` | `75.0` | Filament advance per step (mm) |
+| `scan_rewind_buffer_mm` | `30.0` | Distance left for Happy Hare's final gate parking step |
+| `scan_decode_retry_mm` | `2.0` | Distance between nearby retry positions after an incomplete rich tag read |
+| `scan_decode_retry_rounds` | `5` | Nearby retry rounds; each round probes both sides of the first UID hit |
 | `scan_poll_interval` | `0.1` | Minimum seconds between NFC reads during scan |
 
 ---

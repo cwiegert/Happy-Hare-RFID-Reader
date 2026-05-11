@@ -84,7 +84,7 @@ _stub('nfc_gates.spoolman_client', SpoolmanClient=_MockSpoolmanClient)
 sys.modules.pop('nfc_gates.nfc_manager', None)
 
 from nfc_gates.nfc_manager import (
-    GateState, NFCGate, _lane_instances, _lane_status_lines)
+    CurrentTag, GateState, NFCGate, _lane_instances, _lane_status_lines)
 
 
 # ── Test doubles ──────────────────────────────────────────────────────────────
@@ -194,7 +194,10 @@ class MockPrinter:
 
 def _make_gate(gate=0, scan_jog_mm=50.0, scan_max_mm=200.0,
                scan_poll_interval=0.5,
-               scan_enabled=True):
+               scan_enabled=True,
+               scan_rewind_buffer_mm=30.0,
+               scan_decode_retry_mm=2.0,
+               scan_decode_retry_rounds=5):
     """Build a minimal NFCGate with scan-jog state, bypassing __init__.
 
     Uses object.__new__ to skip Klipper config/I2C setup, then manually
@@ -208,6 +211,9 @@ def _make_gate(gate=0, scan_jog_mm=50.0, scan_max_mm=200.0,
     g._polling            = True
     g._poll_interval      = 30.0
     g._scan_jog_mm        = scan_jog_mm
+    g._scan_rewind_buffer_mm = scan_rewind_buffer_mm
+    g._scan_decode_retry_mm = scan_decode_retry_mm
+    g._scan_decode_retry_rounds = scan_decode_retry_rounds
     g._scan_max_mm        = scan_max_mm
     g._scan_poll_interval = scan_poll_interval
     g._scan_enabled       = scan_enabled
@@ -215,9 +221,14 @@ def _make_gate(gate=0, scan_jog_mm=50.0, scan_max_mm=200.0,
     g._scan_mm_total      = 0.0
     g._scan_start_time    = 0.0
     g._scan_next_chunk_time = 0.0
+    g._scan_decode_retry_attempts = 0
+    g._scan_decode_retry_uid = None
+    g._scan_decode_retry_offset = 0.0
     g._scan_idle_ready_time = 0.0
     g._scan_found_event     = None
     g._scan_gate_selected   = False
+    g._scan_hh_prep_pending = False
+    g._scan_previous_active_gate = -1
     g._scan_timer         = None
     g._prev_gate_status   = -1
     g._scan_pending      = False
@@ -499,7 +510,7 @@ def test_load_transition_waits_for_idle_settle_before_scan():
     assert g._scan_mode
     assert NFCGate._active_scan_gate == 0
     assert g.printer._gcode.responses[-1].startswith(
-        '🔍 NFC[0]: starting scan-jog (max=')
+        '[SCAN] NFC[0]: starting scan-jog (max=')
     assert result == g.reactor.NEVER
 
 def test_no_trigger_while_printing():
@@ -543,7 +554,7 @@ def test_scan_lock_defers_pending_trigger_for_three_seconds():
 
     assert g._scan_mode
     assert g.printer._gcode.responses[-1].startswith(
-        '🔍 NFC[2]: starting scan-jog (max=')
+        '[SCAN] NFC[2]: starting scan-jog (max=')
     assert result == g.reactor.NEVER
 
 def test_scan_disabled_skips_all_detection():
@@ -576,6 +587,257 @@ def test_scan_step_tag_found_exits_loop():
     result = g._scan_step_event(100.0)
     assert finished, "_finish_scan was not called"
     assert result == g.reactor.NEVER
+
+def test_scan_step_retries_incomplete_rich_read():
+    g = _make_gate(scan_max_mm=200.0, scan_decode_retry_mm=5.0,
+                   scan_decode_retry_rounds=3)
+    g._scan_mode = True
+    g._scan_mm_total = 100.0
+    g._scan_found_event = ('uid_only', 0, '04AABB', None, None)
+    g._state.current_uid = '04AABB'
+    g._state.current_spool = None
+    g._state.current_tag = CurrentTag(
+        uid='04AABB',
+        read_incomplete=True,
+        read_retry_reason='auth failed sectors [1]')
+    g.printer.set_print_state('standby')
+    g.printer.set_mmu(MockMMU(gear_short_move_speed=100.0))
+    g._poll = lambda: True
+    finished = []
+    g._finish_scan = lambda: finished.append(True)
+
+    result = g._scan_step_event(100.0)
+
+    assert not finished
+    assert result == pytest_approx(100.5)
+    assert g._scan_mm_total == 105.0
+    assert g._scan_decode_retry_attempts == 1
+    assert g._scan_decode_retry_uid == '04AABB'
+    assert g._scan_decode_retry_offset == 5.0
+    assert g._scan_found_event == ('uid_only', 0, '04AABB', None, None)
+    assert g._state.current_uid is None
+    assert any('MMU_TEST_MOVE MOVE=5.00' in script
+               for script in g.printer.gcode_scripts)
+    assert any('tag decode incomplete; retry 1/6 after 5.0mm jog' in msg
+               for msg in g.printer._gcode.responses)
+
+def test_scan_step_second_decode_retry_checks_other_side():
+    g = _make_gate(scan_max_mm=200.0, scan_decode_retry_mm=5.0,
+                   scan_decode_retry_rounds=3)
+    g._scan_mode = True
+    g._scan_mm_total = 105.0
+    g._scan_decode_retry_uid = '04AABB'
+    g._scan_decode_retry_attempts = 1
+    g._scan_decode_retry_offset = 5.0
+    g._scan_found_event = ('uid_only', 0, '04AABB', None, None)
+    g._state.current_uid = '04AABB'
+    g._state.current_spool = None
+    g._state.current_tag = CurrentTag(
+        uid='04AABB',
+        read_incomplete=True,
+        read_retry_reason='auth failed sectors [1]')
+    g.printer.set_print_state('standby')
+    g.printer.set_mmu(MockMMU(gear_short_move_speed=100.0))
+    g._poll = lambda: True
+    finished = []
+    g._finish_scan = lambda: finished.append(True)
+
+    result = g._scan_step_event(100.0)
+
+    assert not finished
+    assert result == pytest_approx(100.5)
+    assert g._scan_mm_total == 95.0
+    assert g._scan_next_chunk_time == pytest_approx(101.0)
+    assert g._scan_decode_retry_attempts == 2
+    assert g._scan_decode_retry_offset == -5.0
+    assert any('MMU_TEST_MOVE MOVE=-10.00' in script
+               for script in g.printer.gcode_scripts)
+    assert any('tag decode incomplete; retry 2/6 after -10.0mm jog' in msg
+               for msg in g.printer._gcode.responses)
+
+def test_scan_step_continues_decode_retry_without_regular_jog():
+    g = _make_gate(scan_jog_mm=20.0, scan_max_mm=200.0,
+                   scan_decode_retry_mm=5.0,
+                   scan_decode_retry_rounds=3)
+    g._scan_mode = True
+    g._scan_mm_total = 105.0
+    g._scan_next_chunk_time = 100.0
+    g._scan_decode_retry_uid = '04AABB'
+    g._scan_decode_retry_attempts = 1
+    g._scan_decode_retry_offset = 5.0
+    g._scan_found_event = ('uid_only', 0, '04AABB', None, None)
+    g.printer.set_print_state('standby')
+    g.printer.set_mmu(MockMMU(gear_short_move_speed=100.0))
+    g._poll = lambda: False
+
+    result = g._scan_step_event(100.0)
+
+    assert result == pytest_approx(100.5)
+    assert g._scan_mm_total == 95.0
+    assert g._scan_decode_retry_attempts == 2
+    assert g._scan_decode_retry_offset == -5.0
+    assert any('MMU_TEST_MOVE MOVE=-10.00' in script
+               for script in g.printer.gcode_scripts)
+    assert not any('MMU_TEST_MOVE MOVE=20.00' in script
+                   for script in g.printer.gcode_scripts)
+
+
+def test_scan_step_waits_for_decode_retry_settle_before_polling():
+    g = _make_gate(scan_jog_mm=20.0, scan_max_mm=200.0,
+                   scan_decode_retry_mm=5.0,
+                   scan_decode_retry_rounds=3)
+    g._scan_mode = True
+    g._scan_mm_total = 105.0
+    g._scan_next_chunk_time = 101.0
+    g._scan_decode_retry_uid = '04AABB'
+    g._scan_decode_retry_attempts = 1
+    g._scan_decode_retry_offset = 5.0
+    g._scan_found_event = ('uid_only', 0, '04AABB', None, None)
+    g.printer.set_print_state('standby')
+    g.printer.set_mmu(MockMMU(gear_short_move_speed=100.0))
+    polled = []
+    g._poll = lambda: polled.append(True) or False
+
+    result = g._scan_step_event(100.0)
+
+    assert result == pytest_approx(101.0)
+    assert not polled
+    assert g._scan_mm_total == 105.0
+    assert g._scan_decode_retry_attempts == 1
+    assert not any('MMU_TEST_MOVE' in script
+                   for script in g.printer.gcode_scripts)
+
+
+def test_scan_step_logs_decode_retry_poll_without_tag():
+    from nfc_gates import scan_jog
+
+    g = _make_gate(scan_jog_mm=20.0, scan_max_mm=200.0,
+                   scan_decode_retry_mm=5.0,
+                   scan_decode_retry_rounds=3)
+    g._debug = 3
+    g._scan_mode = True
+    g._scan_mm_total = 105.0
+    g._scan_decode_retry_uid = '04AABB'
+    g._scan_decode_retry_attempts = 1
+    g._scan_decode_retry_offset = 5.0
+    g._scan_found_event = ('uid_only', 0, '04AABB', None, None)
+    g.printer.set_print_state('standby')
+    g.printer.set_mmu(MockMMU(gear_short_move_speed=100.0))
+    g._poll = lambda: False
+
+    messages = []
+    old_info = scan_jog.logger.info
+    scan_jog.logger.info = lambda msg, *args: messages.append(
+        msg % args if args else msg)
+    try:
+        g._scan_step_event(100.0)
+    finally:
+        scan_jog.logger.info = old_info
+
+    assert any('decode retry poll 1/6 at scan position 105.0' in msg
+               for msg in messages)
+    assert any('decode retry poll 1/6 found no tag' in msg
+               for msg in messages)
+
+
+def test_scan_step_resumes_regular_scan_after_decode_retry_limit():
+    g = _make_gate(scan_decode_retry_rounds=1)
+    g._scan_mode = True
+    g._scan_mm_total = 100.0
+    g._scan_next_chunk_time = 200.0
+    g._scan_decode_retry_uid = '04AABB'
+    g._scan_decode_retry_attempts = 2
+    g._scan_decode_retry_offset = -5.0
+    g._scan_found_event = ('uid_only', 0, '04AABB', None, None)
+    g._state.current_uid = '04AABB'
+    g._state.current_spool = None
+    g._state.current_tag = CurrentTag(
+        uid='04AABB',
+        read_incomplete=True,
+        read_retry_reason='auth failed sectors [1]')
+    g.printer.set_print_state('standby')
+    g._poll = lambda: True
+    finished = []
+    g._finish_scan = lambda: finished.append(True)
+
+    result = g._scan_step_event(100.0)
+
+    assert not finished
+    assert result == pytest_approx(100.5)
+    assert g._scan_decode_retry_uid is None
+    assert g._scan_decode_retry_attempts == 0
+    assert g._scan_decode_retry_offset == 0.0
+    assert g._scan_next_chunk_time == 100.0
+    assert g._state.current_uid is None
+    assert g._scan_found_event == ('uid_only', 0, '04AABB', None, None)
+    assert not any('MMU_TEST_MOVE' in script for script in g.printer.gcode_scripts)
+    assert any('tag decode still incomplete after 2 retries; continuing scan-jog' in msg
+               for msg in g.printer._gcode.responses)
+
+
+def test_scan_step_uses_incomplete_fallback_at_max_after_decode_retry_limit():
+    g = _make_gate(scan_decode_retry_rounds=1)
+    g._scan_mode = True
+    g._scan_mm_total = 200.0
+    g._scan_max_mm = 200.0
+    g._scan_decode_retry_uid = '04AABB'
+    g._scan_decode_retry_attempts = 2
+    g._scan_found_event = ('uid_only', 0, '04AABB', None, None)
+    g.printer.set_print_state('standby')
+    g._poll = lambda: False
+    finished = []
+    g._finish_scan = lambda: finished.append(True)
+
+    result = g._scan_step_event(100.0)
+
+    assert finished
+    assert result == g.reactor.NEVER
+    assert any('scan reached max distance after decode retries' in msg
+               for msg in g.printer._gcode.responses)
+
+def test_scan_decode_retry_clamps_to_scan_bounds():
+    g = _make_gate(scan_max_mm=200.0, scan_decode_retry_mm=5.0,
+                   scan_decode_retry_rounds=3)
+    g._scan_mode = True
+    g._scan_mm_total = 199.0
+    g._state.current_uid = '04AABB'
+    g._state.current_spool = None
+    g._state.current_tag = CurrentTag(
+        uid='04AABB',
+        read_incomplete=True,
+        read_retry_reason='auth failed sectors [1]')
+    g.printer.set_print_state('standby')
+    g.printer.set_mmu(MockMMU(gear_short_move_speed=100.0))
+    g._poll = lambda: True
+
+    result = g._scan_step_event(100.0)
+
+    assert result == pytest_approx(100.5)
+    assert g._scan_mm_total == 200.0
+    assert g._scan_next_chunk_time == pytest_approx(101.0)
+    assert g._scan_decode_retry_attempts == 1
+    assert g._scan_decode_retry_offset == 1.0
+    assert any('MMU_TEST_MOVE MOVE=1.00' in script
+               for script in g.printer.gcode_scripts)
+
+def test_scan_decode_retry_state_cleared_on_finish_and_no_tag_exit():
+    g = _make_gate()
+    g._start_scan_mode()
+    g._scan_decode_retry_uid = '04AABB'
+    g._scan_decode_retry_attempts = 2
+    g._finish_scan()
+
+    assert g._scan_decode_retry_uid is None
+    assert g._scan_decode_retry_attempts == 0
+
+    g = _make_gate()
+    g._start_scan_mode()
+    g._scan_decode_retry_uid = '04AABB'
+    g._scan_decode_retry_attempts = 2
+    g._rewind_and_exit_scan()
+
+    assert g._scan_decode_retry_uid is None
+    assert g._scan_decode_retry_attempts == 0
 
 def test_scan_step_no_tag_reschedules_at_poll_interval():
     """Poll cadence stays independent while a chunk is still moving."""
@@ -627,12 +889,41 @@ def test_scan_starts_without_immediate_jog():
     assert g._scan_mm_total == 0.0
     assert g._scan_next_chunk_time == pytest_approx(100.0)
 
+def test_start_scan_defers_hh_prep_until_timer_step():
+    """scan start only marks HH prep pending so hooks can return first."""
+    g = _make_gate(gate=2)
+    g._start_scan_mode()
+    scripts = g.printer.gcode_scripts
+    assert not any('_NFC_GATE_CLEAR_CACHE' in s for s in scripts)
+    assert not any('MMU_SPOOLMAN SYNC=1' in s for s in scripts)
+    assert g._scan_hh_prep_pending
+
+def test_scan_step_runs_deferred_hh_prep_before_first_move():
+    """First scan timer step runs clear/sync before the first MMU_TEST_MOVE."""
+    g = _make_gate(gate=2, scan_jog_mm=50.0, scan_max_mm=200.0,
+                   scan_poll_interval=0.5)
+    g._start_scan_mode()
+    g.printer.set_print_state('standby')
+    g.printer.set_mmu(MockMMU(gear_short_move_speed=80.0))
+    g._poll = lambda: False
+
+    g._scan_step_event(100.0)
+
+    scripts = g.printer.gcode_scripts
+    assert len(scripts) == 3
+    assert scripts[0] == '_NFC_GATE_CLEAR_CACHE GATE=2'
+    assert scripts[1] == 'MMU_SPOOLMAN SYNC=1 QUIET=1'
+    assert 'MMU_SELECT GATE=2' in scripts[2]
+    assert 'MMU_TEST_MOVE MOVE=50.00' in scripts[2]
+    assert not g._scan_hh_prep_pending
+
 def test_scan_step_issues_one_chunk_when_due():
     """No tag + due chunk issues scan_jog_mm, not the full scan distance."""
     g = _make_gate(gate=1, scan_jog_mm=50.0, scan_max_mm=200.0,
                    scan_poll_interval=0.5)
     g._scan_mode = True
     g._scan_next_chunk_time = 100.0
+    g._scan_hh_prep_pending = False
     g.printer.set_print_state('standby')
     g.printer.set_mmu(MockMMU(gear_short_move_speed=80.0))
     g._poll = lambda: False
@@ -784,7 +1075,20 @@ def test_manual_jog_success_message_has_readable_spacing():
 
     assert g._scan_mode
     assert gcmd.responses[-1].startswith(
-        '🔍 NFC[test]: scan-jog started for gate 3 (max=')
+        '[SCAN] NFC[test]: scan-jog started for gate 3 (max=')
+
+def test_manual_jog_schedules_required_hh_prep():
+    g = _make_gate(gate=3)
+    g.printer.set_print_state('standby')
+    g.printer.set_mmu(MockMMU(gate_status=[0, 0, 0, 1], action='idle'))
+    gcmd = MockGCmd()
+
+    g._manual_jog_scan(gcmd)
+
+    assert g._scan_mode
+    assert g._scan_hh_prep_pending
+    assert not any('MMU_SPOOLMAN SYNC=1' in script
+                   for script in g.printer.gcode_scripts)
 
 def test_automatic_jog_blocked_by_unsafe_lane():
     g = _make_gate()

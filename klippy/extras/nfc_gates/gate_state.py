@@ -25,6 +25,10 @@ class CurrentTag:
     meta: dict = field(default_factory=dict)
     parse_error: object = None
     resolution: object = None
+    read_incomplete: bool = False
+    read_retry_reason: object = None
+    mifare_auth_failed_sectors: object = field(default_factory=list)
+    mifare_read_failed_blocks: object = field(default_factory=list)
 
 
 class GateState:

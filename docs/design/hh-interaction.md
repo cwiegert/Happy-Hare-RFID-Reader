@@ -82,7 +82,7 @@ EVENT_CHANGED (Spoolman path)
   → "_NFC_SPOOL_CHANGED GATE={gate} SPOOL_ID={spool_id} UID={uid} [AUTO_CREATED=1]"
 
 EVENT_CHANGED (metadata-direct path — Spoolman disabled, tag has filament data)
-  → "_NFC_SPOOL_CHANGED GATE={gate} [MATERIAL={mat}] [COLOR={hex}] [TEMP={°C}] UID={uid}"
+  → "_NFC_SPOOL_CHANGED GATE={gate} [NAME={name}] [MATERIAL={mat}] [COLOR={hex}] [TEMP={°C}] UID={uid}"
 
 EVENT_UID_ONLY  → "_NFC_TAG_NO_SPOOL GATE={gate} UID={uid}"
 EVENT_REMOVED   → "_NFC_SPOOL_REMOVED GATE={gate}"
@@ -105,7 +105,7 @@ MMU_GATE_MAP GATE={gate} APPLY=1
 
 **Metadata-direct path** (`SPOOL_ID` absent — Spoolman disabled, tag carries filament data):
 ```gcode
-MMU_GATE_MAP GATE={gate} [MATERIAL={material}] [COLOR={color}] [TEMP={temp}] AVAILABLE=1 QUIET=1
+MMU_GATE_MAP GATE={gate} [NAME={name}] [MATERIAL={material}] [COLOR={color}] [TEMP={temp}] AVAILABLE=1 QUIET=1
 MMU_GATE_MAP GATE={gate} APPLY=1
 ```
 
@@ -283,7 +283,7 @@ All GCode is dispatched from `nfc_macros.cfg`. The NFC Python layer never calls 
 |---|---|---|---|
 | `MMU_SPOOLMAN` | `REFRESH=1 QUIET=1` | `_NFC_SPOOL_CHANGED` (auto-create only) | Force HH to pull newly created spool from Spoolman before assignment |
 | `MMU_GATE_MAP` | `GATE=N SPOOLID=N AVAILABLE=1 SYNC=1 QUIET=1` | `_NFC_SPOOL_CHANGED` (Spoolman path) | Assign spool to gate and mark available |
-| `MMU_GATE_MAP` | `GATE=N [MATERIAL=X] [COLOR=X] [TEMP=N] AVAILABLE=1 QUIET=1` | `_NFC_SPOOL_CHANGED` (metadata path) | Set gate filament metadata when Spoolman is disabled |
+| `MMU_GATE_MAP` | `GATE=N [NAME=X] [MATERIAL=X] [COLOR=X] [TEMP=N] AVAILABLE=1 QUIET=1` | `_NFC_SPOOL_CHANGED` (metadata path) | Set gate filament metadata when Spoolman is disabled |
 | `MMU_GATE_MAP` | `GATE=N APPLY=1` | `_NFC_SPOOL_CHANGED`, `_NFC_SPOOL_REMOVED` | Push updated map into active print state |
 | `MMU_GATE_MAP` | `GATE=N SPOOLID=-1 AVAILABLE=0 SYNC=1 QUIET=1` | `_NFC_SPOOL_REMOVED` | Clear gate assignment |
 | `MMU_SELECT` | `GATE=N` | scan-jog first jog only | Set active gate for `MMU_TEST_MOVE` |

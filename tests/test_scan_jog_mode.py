@@ -832,11 +832,15 @@ def test_scan_step_logs_decode_retry_poll_without_tag():
                for msg in messages)
 
 
-def test_scan_step_accepts_result_after_decode_retry_limit():
+def test_scan_step_resumes_regular_scan_after_decode_retry_limit():
     g = _make_gate(scan_decode_retry_rounds=1)
     g._scan_mode = True
+    g._scan_mm_total = 100.0
+    g._scan_next_chunk_time = 200.0
     g._scan_decode_retry_uid = '04AABB'
     g._scan_decode_retry_attempts = 2
+    g._scan_decode_retry_offset = -5.0
+    g._scan_found_event = ('uid_only', 0, '04AABB', None, None)
     g._state.current_uid = '04AABB'
     g._state.current_spool = None
     g._state.current_tag = CurrentTag(
@@ -850,10 +854,37 @@ def test_scan_step_accepts_result_after_decode_retry_limit():
 
     result = g._scan_step_event(100.0)
 
+    assert not finished
+    assert result == pytest_approx(100.5)
+    assert g._scan_decode_retry_uid is None
+    assert g._scan_decode_retry_attempts == 0
+    assert g._scan_decode_retry_offset == 0.0
+    assert g._scan_next_chunk_time == 100.0
+    assert g._state.current_uid is None
+    assert g._scan_found_event == ('uid_only', 0, '04AABB', None, None)
+    assert not any('MMU_TEST_MOVE' in script for script in g.printer.gcode_scripts)
+    assert any('tag decode still incomplete after 2 retries; continuing scan-jog' in msg
+               for msg in g.printer._gcode.responses)
+
+
+def test_scan_step_uses_incomplete_fallback_at_max_after_decode_retry_limit():
+    g = _make_gate(scan_decode_retry_rounds=1)
+    g._scan_mode = True
+    g._scan_mm_total = 200.0
+    g._scan_max_mm = 200.0
+    g._scan_decode_retry_uid = '04AABB'
+    g._scan_decode_retry_attempts = 2
+    g._scan_found_event = ('uid_only', 0, '04AABB', None, None)
+    g.printer.set_print_state('standby')
+    g._poll = lambda: False
+    finished = []
+    g._finish_scan = lambda: finished.append(True)
+
+    result = g._scan_step_event(100.0)
+
     assert finished
     assert result == g.reactor.NEVER
-    assert not any('MMU_TEST_MOVE' in script for script in g.printer.gcode_scripts)
-    assert any('tag decode still incomplete after 2 retries' in msg
+    assert any('scan reached max distance after decode retries' in msg
                for msg in g.printer._gcode.responses)
 
 def test_scan_decode_retry_clamps_to_scan_bounds():

@@ -58,10 +58,10 @@ This runs the exact same sequence with the same precondition checks (HH idle, no
 
 ```ini
 [gcode_macro _MMU_SEQUENCE_VARS]
-variable_user_post_preload_extension: 'NFC JOG_SCAN=1 HH_SYNC=0'
+variable_user_post_preload_extension: 'NFC JOG_SCAN=1'
 ```
 
-Happy Hare appends `GATE=<n>` automatically, giving `NFC JOG_SCAN=1 HH_SYNC=0 GATE=<n>`. Use this recommended config with the hook:
+Happy Hare appends `GATE=<n>` automatically, giving `NFC JOG_SCAN=1 GATE=<n>`. Use this recommended config with the hook:
 
 ```ini
 startup_polling: 0
@@ -79,6 +79,8 @@ This disables gate-status polling entirely — Happy Hare calls NFC only after t
 | `scan_enabled` | `True` | Master switch — set `False` to disable automatic scan-jog (use with HH hook) |
 | `scan_jog_mm` | `75.0` | Filament advance per step (mm) |
 | `scan_rewind_buffer_mm` | `30.0` | Distance left for Happy Hare's final gate parking step |
+| `scan_decode_retry_mm` | `2.0` | Distance between nearby retry positions after an incomplete rich tag read |
+| `scan_decode_retry_rounds` | `5` | Nearby retry rounds; each round probes both sides of the first UID hit |
 | `scan_poll_interval` | `0.1` | Minimum seconds between NFC reads during scan |
 
 ---

@@ -201,6 +201,12 @@ class NFCGateDefaults:
         self.scan_rewind_buffer_mm = config.getfloat(
             'scan_rewind_buffer_mm', 30.0,
             minval=0.0, maxval=500.0)
+        self.scan_decode_retry_mm = config.getfloat(
+            'scan_decode_retry_mm', 2.0,
+            minval=0.0, maxval=50.0)
+        self.scan_decode_retry_rounds = config.getint(
+            'scan_decode_retry_rounds', 5,
+            minval=0, maxval=10)
         self.scan_poll_interval = config.getfloat('scan_poll_interval', 0.1,
                                                    minval=0.1, maxval=5.0)
         self.scan_enabled         = config.getboolean('scan_enabled', True)
@@ -358,6 +364,14 @@ class NFCGate:
             'scan_rewind_buffer_mm',
             d.scan_rewind_buffer_mm if d else 30.0,
             minval=0.0, maxval=500.0)
+        self._scan_decode_retry_mm = config.getfloat(
+            'scan_decode_retry_mm',
+            d.scan_decode_retry_mm if d else 2.0,
+            minval=0.0, maxval=50.0)
+        self._scan_decode_retry_rounds = config.getint(
+            'scan_decode_retry_rounds',
+            d.scan_decode_retry_rounds if d else 5,
+            minval=0, maxval=10)
         self._scan_max_mm   = None
         self._mmu_vars_path = None
         self._bowden_lengths = None
@@ -384,6 +398,9 @@ class NFCGate:
         self._scan_mode            = False
         self._scan_mm_total        = 0.0
         self._scan_next_chunk_time = 0.0
+        self._scan_decode_retry_attempts = 0
+        self._scan_decode_retry_uid      = None
+        self._scan_decode_retry_offset   = 0.0
         self._scan_idle_ready_time = 0.0
         self._scan_found_event     = None  # cached event suppressed during jog; dispatched after rewind
         self._prev_gate_status     = -1   # -1 = unknown; prevents false trigger on cold start
@@ -694,7 +711,7 @@ class NFCGate:
 
             self._commands_registered = True
 
-        self._gcode.respond_info(f"📡 NFC Gate [{self._name}] connected")
+        self._gcode.respond_info(f"[CONNECTED] NFC Gate [{self._name}] connected")
 
         # Schedule PN532 init after the rest of Klippy/I2C has settled
         self.reactor.register_timer(
@@ -740,7 +757,7 @@ class NFCGate:
         if self._gcode is not None:
             if self._failed:
                 self._gcode.respond_info(
-                    "❌ NFC[%s]: reader not ready — check wiring. "
+                    "[WARN] NFC[%s]: reader not ready — check wiring. "
                     "Run NFC GATE=%d INIT=1 after fixing."
                     % (self._name, self._gate))
             else:
@@ -748,7 +765,7 @@ class NFCGate:
                              if self._hh_seed_spool_id is not None
                              else "  HH reports gate empty")
                 self._gcode.respond_info(
-                    "✅ NFC[%s]: reader ready.%s  %s"
+                    "[OK] NFC[%s]: reader ready.%s  %s"
                     % (self._name,
                        seed_note,
                        "Startup polling is enabled; first poll in %.1fs."
@@ -888,9 +905,9 @@ class NFCGate:
                         msg = "NFC[%d]: scan-jog not available while %s" % (
                             self._gate, reason)
                         logger.warning("nfc_gate: [%s] %s", self._name, msg)
-                        self._console("⚠️ " + msg)
+                        self._console("[WARN] " + msg)
                         return self.reactor.monotonic() + self._poll_interval
-                    msg = ("🔍 NFC[%d]: starting scan-jog "
+                    msg = ("[SCAN] NFC[%d]: starting scan-jog "
                            "(max=%.0fmm  poll=%.2fs)"
                            % (self._gate, max_mm, self._scan_poll_interval))
                     if self._debug >= 3:
@@ -1258,8 +1275,8 @@ class NFCGate:
     def _resume_poll_after_rewind(self):
         return scan_jog.resume_poll_after_rewind(self)
 
-    def _start_scan_mode(self, max_mm=None, sync_hh=True):
-        return scan_jog.start(self, max_mm, sync_hh=sync_hh)
+    def _start_scan_mode(self, max_mm=None):
+        return scan_jog.start(self, max_mm)
 
     def _scan_step_event(self, eventtime):
         return scan_jog.step_event(self, eventtime)

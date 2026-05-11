@@ -75,7 +75,7 @@ _poll_timer_event (every poll_interval)
 - A 2-second idle-settle delay (`_scan_idle_ready_time`) is inserted after HH reports idle. This prevents premature scan entry while HH is still completing its park move.
 - If another gate holds the scan lock, `_scan_pending` is re-armed and a 3-second retry is scheduled rather than silently dropping the trigger or spamming logs.
 
-**Manual trigger:** `NFC GATE=N JOG_SCAN=1` calls `scan_jog.manual_jog_scan(gate, gcmd)` directly. It runs the same precondition checks (not printing, HH idle, no other gate scanning, reader healthy) and calls `start(gate)`. No edge detection is involved. `HH_SYNC=0` skips **both** the HH gate cache clear and the Spoolman sync — both use `gcode.run_script()` which deadlocks when called from inside an HH post-preload hook (HH already holds the GCode lock at that point).
+**Manual trigger:** `NFC GATE=N JOG_SCAN=1` calls `scan_jog.manual_jog_scan(gate, gcmd)` directly. It runs the same precondition checks (not printing, HH idle, no other gate scanning, reader healthy) and calls `start(gate)`. No edge detection is involved. Happy Hare prep is always required, but `_NFC_GATE_CLEAR_CACHE` and `MMU_SPOOLMAN SYNC=1` are deferred to the scan timer so a Happy Hare post-preload hook can return before NFC calls back into HH.
 
 ---
 
@@ -143,6 +143,8 @@ All added to `[nfc_gate]` (overridable per `[nfc_gate laneN]`):
 |---|---|---|---|
 | `scan_enabled` | `True` | `True` | Master switch — `False` disables scan mode entirely |
 | `scan_jog_mm` | `50.0` | `25.0` | Filament advance per jog step (mm) |
+| `scan_decode_retry_mm` | `2.0` | `2.0` | Distance between nearby retry positions |
+| `scan_decode_retry_rounds` | `5` | `5` | Nearby retry rounds before accepting the current result |
 | `scan_poll_interval` | `0.1` | `0.1` | Minimum seconds between NFC reads during scan |
 
 `scan_jog_mm` of 25 mm gives a ~5 cm read window (25 mm on each side of center plus the antenna width) for finding tags that are slightly off-axis.
@@ -154,10 +156,10 @@ that list.
 
 ## Implementation: `scan_jog.py`
 
-### `start(gate, max_mm, sync_hh)` — enter scan mode
+### `start(gate, max_mm)` — enter scan mode
 
 ```python
-def start(gate, max_mm=None, sync_hh=True):
+def start(gate, max_mm=None):
     gate.__class__._active_scan_gate = gate._gate
     gate._scan_mode = True
     gate._scan_mm_total = 0.0
@@ -172,9 +174,7 @@ def start(gate, max_mm=None, sync_hh=True):
     gate._hh_load_paused = False
     gate._scan_gate_selected = False
 
-    if sync_hh:
-        clear_hh_gate_cache(gate)        # _NFC_GATE_CLEAR_CACHE GATE=N
-        sync_spoolman_before_scan(gate)  # MMU_SPOOLMAN SYNC=1 QUIET=1
+    gate._scan_hh_prep_pending = True
 
     gate._scan_timer = gate.reactor.register_timer(
         gate._scan_step_event,
@@ -185,17 +185,17 @@ def start(gate, max_mm=None, sync_hh=True):
 
 **Pre-scan clearing sequence:**
 
-Both `clear_hh_gate_cache` and `sync_spoolman_before_scan` are guarded by `sync_hh`. When `sync_hh=False` (called from inside a Happy Hare post-preload hook), both are skipped entirely. Both use `gcode.run_script()` which acquires Klipper's GCode lock — calling either from inside an HH hook deadlocks because HH already holds that lock.
+`start()` marks HH prep pending instead of running it synchronously. The first scan timer step consumes `_scan_hh_prep_pending`, then calls `clear_hh_gate_cache` and `sync_spoolman_before_scan` before polling and before the first jog move. This keeps the required HH state updates while avoiding reentrant `gcode.run_script()` calls from inside the Happy Hare hook stack.
 
 `clear_hh_gate_cache` issues `_NFC_GATE_CLEAR_CACHE GATE=N`, which calls `MMU_GATE_MAP GATE=N SPOOLID=-1 NAME=Unknown MATERIAL=Unknown COLOR=FFFFFF55 AVAILABLE=1`. This gives the Mainsail UI an "unknown filament" placeholder while the scan jog runs. `AVAILABLE=1` keeps the gate marked as loaded so HH does not treat it as empty.
 
 `sync_spoolman_before_scan` pushes the cleared HH gate state to Spoolman via `MMU_SPOOLMAN SYNC=1`, vacating the spool's location field before the jog begins.
 
-| Trigger | `sync_hh` | `clear_hh_gate_cache` | `sync_spoolman_before_scan` |
-|---|---|---|---|
-| Automatic `0→1` poll | `True` | ✅ runs | ✅ runs |
-| Manual `NFC JOG_SCAN=1` | `True` | ✅ runs | ✅ runs |
-| HH post-preload hook (`HH_SYNC=0`) | `False` | ❌ skipped | ❌ skipped |
+| Trigger | `clear_hh_gate_cache` | `sync_spoolman_before_scan` |
+|---|---|---|
+| Automatic `0→1` poll | runs from scan timer | runs from scan timer |
+| Manual `NFC JOG_SCAN=1` | runs from scan timer | runs from scan timer |
+| HH post-preload hook | runs from scan timer | runs from scan timer |
 
 When the scan succeeds, `_NFC_SPOOL_CHANGED` issues the next `MMU_SPOOLMAN SYNC=1` with the newly identified spool.
 
@@ -214,6 +214,8 @@ def step_event(gate, eventtime):
     tag_found = gate._poll()
 
     if tag_found:
+        if retry_incomplete_decode(gate, now):
+            return gate.reactor.monotonic() + gate._scan_poll_interval
         gate._finish_scan()
         return gate.reactor.NEVER
 
@@ -235,6 +237,8 @@ def step_event(gate, eventtime):
 The timer always returns `now + scan_poll_interval` so NFC is polled continuously throughout the scan. Jog chunks are gated by `_scan_next_chunk_time`, which advances by `chunk_interval = abs(mm) / gear_short_move_speed` after each issue. This decouples read frequency from motor timing — the tag can be detected anywhere in the move, not only after the chunk completes.
 
 ### `finish(gate)` — tag found
+
+When a UID is detected but the rich payload read is marked incomplete, scan-jog queues nearby retry jogs before accepting the current UID/metadata result. The retry decision is format-neutral: reader/parser code sets `CurrentTag.read_incomplete` and `read_retry_reason`; scan-jog only applies the configured `scan_decode_retry_mm` / `scan_decode_retry_rounds` policy. Each retry round probes both sides of the first UID hit position. The first implementation marks incomplete MIFARE reads when sector authentication or block reads fail, which covers spool-mounted Bambu tags at the edge of the reader field.
 
 ```python
 def finish(gate):

@@ -157,3 +157,54 @@ class TestSpoolmanClientContract:
         # Our adapter calls this with uid_hex=None, then patches its configured
         # single UID field separately instead of using rfid_uid_N slots.
         assert callable(getattr(SpoolmanClient, 'auto_create_spool', None))
+
+    def test_auto_create_spool_uses_max_temp_as_recommended(self, monkeypatch):
+        requests = []
+
+        def fake_fetch_spoolmandb_bambu():
+            return []
+
+        def fake_fetch_spoolmandb_materials():
+            return {}
+
+        monkeypatch.setattr(
+            'nfc_gates.vendor.lameandboard_spoolman._fetch_spoolmandb_bambu',
+            fake_fetch_spoolmandb_bambu)
+        monkeypatch.setattr(
+            'nfc_gates.vendor.lameandboard_spoolman._fetch_spoolmandb_materials',
+            fake_fetch_spoolmandb_materials)
+
+        client = SpoolmanClient('http://spoolman')
+
+        def fake_req(method, path, body=None):
+            requests.append((method, path, body))
+            if method == 'GET' and path.startswith('/api/v1/vendor?'):
+                return [{'id': 3, 'name': 'Bambu Lab'}]
+            if method == 'GET' and path.startswith('/api/v1/filament?'):
+                return []
+            if method == 'POST' and path == '/api/v1/filament':
+                return {'id': 10}
+            if method == 'POST' and path == '/api/v1/spool':
+                return {'id': 14}
+            raise AssertionError((method, path, body))
+
+        client._req = fake_req
+        spool_id = client.auto_create_spool({
+            'tag_format': 'bambu',
+            'brand': 'Bambu Lab',
+            'material': 'PLA',
+            'material_detail': 'PLA Basic',
+            'color_hex': '0086D6',
+            'min_temp': 190,
+            'max_temp': 230,
+            'weight_g': 1000,
+        }, uid_hex=None)
+
+        assert spool_id == 14
+        filament_posts = [
+            body for method, path, body in requests
+            if method == 'POST' and path == '/api/v1/filament'
+        ]
+        assert len(filament_posts) == 1
+        assert filament_posts[0]['settings_extruder_temp'] == 230
+        assert filament_posts[0]['settings_extruder_temp_max'] == 230

@@ -98,6 +98,8 @@ poll_interval × absent_threshold = seconds before removal fires
 scan_enabled:          True
 scan_jog_mm:           75.0
 scan_rewind_buffer_mm: 30.0
+scan_decode_retry_mm:     2.0
+scan_decode_retry_rounds: 5
 scan_poll_interval:    0.10
 ```
 
@@ -106,6 +108,8 @@ scan_poll_interval:    0.10
 | `scan_enabled` | `True` | Master switch. `False` disables automatic scan-jog entirely — the 0→1 edge is ignored and `NFC JOG_SCAN=1` is blocked. |
 | `scan_jog_mm` | `75.0` | Filament advance per jog step (mm). Each step spins the spool hub by this distance, giving the antenna a fresh read window. |
 | `scan_rewind_buffer_mm` | `30.0` | Distance reserved for Happy Hare's final gate-parking step (`_MMU_STEP_UNLOAD_GATE`). After a tag is found, NFC fast-rewinds to within this buffer and then hands off to HH for sensor/encoder-based final parking. If the scan moved less than this value, the fast rewind is skipped. |
+| `scan_decode_retry_mm` | `2.0` | Distance between nearby retry positions after a UID is found but the rich tag payload is marked incomplete. |
+| `scan_decode_retry_rounds` | `5` | Nearby retry rounds before accepting the current UID/metadata result. Each round probes both sides of the first UID hit. |
 | `scan_poll_interval` | `0.10` | Minimum seconds between NFC read attempts during scan-jog. The jog chunk cadence is derived automatically from `scan_jog_mm ÷ gear_short_move_speed`; this setting controls read frequency independently of motor timing. |
 
 **Happy Hare post-preload hook (alternative to automatic polling):**
@@ -116,10 +120,10 @@ The [jacksky6 JK-dev branch](https://github.com/jacksky6/Happy-Hare/tree/JK-dev)
 [gcode_macro _MMU_SEQUENCE_VARS]
 description: Happy Hare sequence macro configuration variables
 gcode: # Leave empty
-variable_user_post_preload_extension: 'NFC JOG_SCAN=1 HH_SYNC=0'
+variable_user_post_preload_extension: 'NFC JOG_SCAN=1'
 ```
 
-Happy Hare appends `GATE=<n>` automatically, so the final command is `NFC JOG_SCAN=1 HH_SYNC=0 GATE=<n>`. `HH_SYNC=0` skips the pre-scan `MMU_SPOOLMAN SYNC=1` call because the hook is already running inside the Happy Hare preload flow.
+Happy Hare appends `GATE=<n>` automatically, so the final command is `NFC JOG_SCAN=1 GATE=<n>`. NFC always clears the Happy Hare gate cache and runs the pre-scan `MMU_SPOOLMAN SYNC=1`; when launched from this hook, those calls are deferred to the scan timer so the hook can return first.
 
 Recommended NFC config when using the hook:
 
@@ -274,7 +278,7 @@ GATE  SPOOL_ID  UID  [AUTO_CREATED=1]
 
 **Metadata path** — tag carries embedded filament data, Spoolman disabled or no match:
 ```
-GATE  UID  [MATERIAL=...]  [COLOR=...]  [TEMP=...]
+GATE  UID  [NAME=...]  [MATERIAL=...]  [COLOR=...]  [TEMP=...]
 ```
 
 Default:
@@ -285,7 +289,7 @@ Default:
     {% endif %}
     MMU_GATE_MAP GATE={gate} SPOOLID={spool_id} AVAILABLE=1 SYNC=1 QUIET=1
 {% else %}
-    MMU_GATE_MAP GATE={gate} [MATERIAL=..] [COLOR=..] [TEMP=..] AVAILABLE=1 QUIET=1
+    MMU_GATE_MAP GATE={gate} [NAME=..] [MATERIAL=..] [COLOR=..] [TEMP=..] AVAILABLE=1 QUIET=1
 {% endif %}
 MMU_GATE_MAP GATE={gate} APPLY=1
 ```

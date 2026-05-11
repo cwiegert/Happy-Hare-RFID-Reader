@@ -645,11 +645,14 @@ class _PN532Base:
         Returns {"uid_bytes": bytes, "blocks": {abs_block_index: bytes}} where
         abs_block_index is the absolute block number (0-63 for MIFARE Classic 1K).
         Sector trailer blocks (4*s+3) are never included.  Failed sectors are
-        skipped.  Returns None when no blocks could be read at all.
+        reported as auth_failed_sectors/read_failed_blocks so callers can
+        distinguish a clean partial decode from an incomplete rich read.
 
         Releases the target in a finally block (same pattern as ntag_read_user_memory).
         """
         blocks = {}
+        auth_failed_sectors = []
+        read_failed_blocks = []
         try:
             for sector in sectors:
                 trailer = sector * 4 + 3
@@ -657,6 +660,7 @@ class _PN532Base:
                 if key is None:
                     continue
                 if not self.mifare_authenticate(trailer, key):
+                    auth_failed_sectors.append(sector)
                     if self._debug >= 3:
                         logger.info(
                             "mifare_read_authenticated_blocks: gate %d (%s) "
@@ -668,14 +672,19 @@ class _PN532Base:
                     data = self.mifare_read_block(block_addr)
                     if data is not None:
                         blocks[block_addr] = data
-                    elif self._debug >= 3:
-                        logger.info(
-                            "mifare_read_authenticated_blocks: gate %d (%s) "
-                            "block %d read failed",
-                            self._gate, self._transport_name, block_addr)
-            if not blocks:
-                return None
-            return {"uid_bytes": bytes(uid_bytes or []), "blocks": blocks}
+                    else:
+                        read_failed_blocks.append(block_addr)
+                        if self._debug >= 3:
+                            logger.info(
+                                "mifare_read_authenticated_blocks: gate %d (%s) "
+                                "block %d read failed",
+                                self._gate, self._transport_name, block_addr)
+            result = {"uid_bytes": bytes(uid_bytes or []), "blocks": blocks}
+            if auth_failed_sectors:
+                result["auth_failed_sectors"] = auth_failed_sectors
+            if read_failed_blocks:
+                result["read_failed_blocks"] = read_failed_blocks
+            return result
         finally:
             self._release_current_target(reason="mifare_read_complete")
 

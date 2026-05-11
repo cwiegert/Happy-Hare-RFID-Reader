@@ -631,6 +631,20 @@ def resolve_spool(gate, uid_hex):
             "(material=%r color=%r)",
             gate._name, gate._gate, uid_hex, material, color)
 
+    if tag is not None and getattr(tag, 'read_incomplete', False):
+        if tag.resolution is None or not isinstance(tag.resolution, dict):
+            tag.resolution = {'path': 'structured_read_incomplete'}
+        else:
+            tag.resolution = dict(tag.resolution)
+            tag.resolution['path'] = 'structured_read_incomplete'
+        if gate._debug >= 3:
+            logger.info(
+                "nfc_gate: [%s] gate %d — uid=%s  structured tag read "
+                "is incomplete; deferring auto-create/metadata assignment "
+                "until scan-jog finds a complete read window",
+                gate._name, gate._gate, uid_hex)
+        return None
+
     try:
         base_url = gate._spoolman._resolve_base_url()
     except Exception as e:

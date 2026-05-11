@@ -363,6 +363,29 @@ def test_resolve_auto_create_uses_vendor_top_level_then_patches_rfid_key(monkeyp
     }
 
 
+def test_resolve_incomplete_structured_read_defers_auto_create(monkeypatch):
+    fake_cls = _install_fake_lb_client(monkeypatch)
+    spoolman = _ResolverSpoolman()
+    gate = _resolver_gate(
+        '04AABB',
+        {
+            'material': 'PLA',
+            'brand': 'Bambu Lab',
+            'color_hex': 'FF5500',
+        },
+        spoolman)
+    gate._spoolman_auto_create = True
+    gate._state.current_tag.read_incomplete = True
+    gate._state.current_tag.read_retry_reason = 'auth failed sectors [2, 3]'
+
+    assert gate._resolve_spool('04AABB') is None
+    assert spoolman.calls == [('uid', '04AABB')]
+    assert fake_cls.instances == []
+    assert gate._state.current_tag.resolution == {
+        'path': 'structured_read_incomplete',
+    }
+
+
 def test_resolve_auto_create_failure_falls_back_unresolved(monkeypatch):
     class _FailingLBSpoolmanClient(_FakeLBSpoolmanClient):
         def __init__(self, base_url, timeout=5.0):

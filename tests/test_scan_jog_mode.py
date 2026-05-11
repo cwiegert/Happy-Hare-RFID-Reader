@@ -236,6 +236,7 @@ def _make_gate(gate=0, scan_jog_mm=50.0, scan_max_mm=200.0,
     g._scan_idle_ready_time = 0.0
     g._scan_found_event     = None
     g._scan_gate_selected   = False
+    g._scan_hh_prep_pending = False
     g._scan_previous_active_gate = -1
     g._scan_timer         = None
     g._prev_gate_status   = -1
@@ -981,20 +982,33 @@ def test_scan_starts_without_immediate_jog():
     assert g._scan_mm_total == 0.0
     assert g._scan_next_chunk_time == pytest_approx(100.0)
 
-def test_start_scan_clears_hh_gate_cache_before_spoolman_sync():
-    """scan start must call _NFC_GATE_CLEAR_CACHE before MMU_SPOOLMAN SYNC."""
+def test_start_scan_defers_hh_prep_until_timer_step():
+    """scan start only marks HH prep pending so hooks can return first."""
     g = _make_gate(gate=2)
     g._start_scan_mode()
     scripts = g.printer.gcode_scripts
-    clear_idx = next(
-        (i for i, s in enumerate(scripts) if '_NFC_GATE_CLEAR_CACHE GATE=2' in s),
-        None)
-    sync_idx = next(
-        (i for i, s in enumerate(scripts) if 'MMU_SPOOLMAN SYNC=1' in s),
-        None)
-    assert clear_idx is not None, "_NFC_GATE_CLEAR_CACHE GATE=2 not called on scan start"
-    assert sync_idx  is not None, "MMU_SPOOLMAN SYNC=1 not called on scan start"
-    assert clear_idx < sync_idx,  "cache clear must run before Spoolman sync"
+    assert not any('_NFC_GATE_CLEAR_CACHE' in s for s in scripts)
+    assert not any('MMU_SPOOLMAN SYNC=1' in s for s in scripts)
+    assert g._scan_hh_prep_pending
+
+def test_scan_step_runs_deferred_hh_prep_before_first_move():
+    """First scan timer step runs clear/sync before the first MMU_TEST_MOVE."""
+    g = _make_gate(gate=2, scan_jog_mm=50.0, scan_max_mm=200.0,
+                   scan_poll_interval=0.5)
+    g._start_scan_mode()
+    g.printer.set_print_state('standby')
+    g.printer.set_mmu(MockMMU(gear_short_move_speed=80.0))
+    g._poll = lambda: False
+
+    g._scan_step_event(100.0)
+
+    scripts = g.printer.gcode_scripts
+    assert len(scripts) == 3
+    assert scripts[0] == '_NFC_GATE_CLEAR_CACHE GATE=2'
+    assert scripts[1] == 'MMU_SPOOLMAN SYNC=1 QUIET=1'
+    assert 'MMU_SELECT GATE=2' in scripts[2]
+    assert 'MMU_TEST_MOVE MOVE=50.00' in scripts[2]
+    assert not g._scan_hh_prep_pending
 
 def test_start_scan_sync_hh_false_skips_both_hh_calls():
     """sync_hh=False must skip both _NFC_GATE_CLEAR_CACHE and MMU_SPOOLMAN SYNC.
@@ -1005,6 +1019,7 @@ def test_start_scan_sync_hh_false_skips_both_hh_calls():
     scripts = g.printer.gcode_scripts
     assert not any('_NFC_GATE_CLEAR_CACHE' in s for s in scripts)
     assert not any('MMU_SPOOLMAN' in s for s in scripts)
+    assert not g._scan_hh_prep_pending
 
 def test_scan_step_issues_one_chunk_when_due():
     """No tag + due chunk issues scan_jog_mm, not the full scan distance."""
@@ -1012,6 +1027,7 @@ def test_scan_step_issues_one_chunk_when_due():
                    scan_poll_interval=0.5)
     g._scan_mode = True
     g._scan_next_chunk_time = 100.0
+    g._scan_hh_prep_pending = False
     g.printer.set_print_state('standby')
     g.printer.set_mmu(MockMMU(gear_short_move_speed=80.0))
     g._poll = lambda: False

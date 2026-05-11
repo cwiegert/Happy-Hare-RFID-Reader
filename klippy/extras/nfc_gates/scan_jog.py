@@ -137,6 +137,15 @@ def clear_hh_gate_cache(gate):
             gate._name, gate._gate, e)
 
 
+def run_pending_hh_prep(gate):
+    """Run HH prep once from the scan timer, outside the hook call stack."""
+    if not getattr(gate, '_scan_hh_prep_pending', False):
+        return
+    gate._scan_hh_prep_pending = False
+    clear_hh_gate_cache(gate)
+    sync_spoolman_before_scan(gate)
+
+
 def get_active_gate(gate):
     """Return Happy Hare's currently selected gate, or -1 if unavailable."""
     hh = gate._read_hh_status()
@@ -198,10 +207,7 @@ def start(gate, max_mm=None, sync_hh=True):
             gate._scan_previous_uid, gate._scan_previous_spool)
     gate._hh_load_paused = False
     gate._scan_gate_selected = False  # deferred to first jog (must run from timer, not GCode handler)
-
-    if sync_hh:
-        clear_hh_gate_cache(gate)
-        sync_spoolman_before_scan(gate)
+    gate._scan_hh_prep_pending = bool(sync_hh)
 
     gate._scan_timer = gate.reactor.register_timer(
         gate._scan_step_event,
@@ -244,6 +250,8 @@ def step_event(gate, eventtime):
         return gate._scan_next_chunk_time
     if retry_poll:
         log_decode_retry_poll_start(gate)
+
+    run_pending_hh_prep(gate)
 
     try:
         tag_found = gate._poll()

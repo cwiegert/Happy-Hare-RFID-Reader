@@ -556,8 +556,7 @@ def finish(gate):
     found_msg = "[OK] NFC[%d]: tag found" % gate._gate
     info_both(found_msg)
     gate._console(found_msg)
-    msg = "[REWIND] NFC[%d]: rewinding %.1fmm" % (
-        gate._gate, gate._scan_mm_total)
+    msg = _rewind_message(gate, "[REWIND]")
     logger.info(msg)
     gate._console(msg)
     gate._run_rewind()
@@ -601,8 +600,7 @@ def finish(gate):
 def rewind_and_exit(gate):
     gate._scan_mode = False
     gate._state.miss_count = 0
-    msg = "[WARN] NFC[%d]: no tag found; rewinding %.1fmm" % (
-        gate._gate, gate._scan_mm_total)
+    msg = _rewind_message(gate, "[WARN]", prefix="no tag found; ")
     logger.warning(msg)
     gate._console(msg)
     gate._run_rewind()
@@ -651,10 +649,33 @@ def run_jog(gate, mm):
         gcode.run_script("MMU_TEST_MOVE MOVE=%.2f QUIET=1" % mm)
 
 
+def _rewind_parts(gate):
+    scan_mm = max(0.0, float(getattr(gate, '_scan_mm_total', 0.0) or 0.0))
+    buffer_mm = max(
+        0.0,
+        float(getattr(gate, '_scan_rewind_buffer_mm', 30.0) or 0.0))
+    fast_rewind = max(0.0, scan_mm - buffer_mm)
+    return scan_mm, buffer_mm, fast_rewind
+
+
+def _rewind_message(gate, level, prefix=""):
+    scan_mm, buffer_mm, fast_rewind = _rewind_parts(gate)
+    if fast_rewind > 0.0:
+        return ("%s NFC[%d]: %srewinding %.1fmm "
+                "(scan=%.1fmm buffer=%.1fmm)" % (
+                    level, gate._gate, prefix, fast_rewind,
+                    scan_mm, buffer_mm))
+    return ("%s NFC[%d]: %srewind fast move skipped "
+            "(scan=%.1fmm buffer=%.1fmm)" % (
+                level, gate._gate, prefix, scan_mm, buffer_mm))
+
+
 def run_rewind(gate):
     if gate._scan_mm_total <= 0.0:
         return
     gcode = gate.printer.lookup_object('gcode')
-    gcode.run_script("MMU_TEST_MOVE MOVE=%.2f QUIET=1\nM400"
-                     % (-(gate._scan_mm_total - 10)))
-    gcode.run_script("mmu_check_gate")
+    _, _, fast_rewind = _rewind_parts(gate)
+    if fast_rewind > 0.0:
+        gcode.run_script("MMU_TEST_MOVE MOVE=%.2f QUIET=1\nM400"
+                         % (-fast_rewind))
+    gcode.run_script("_MMU_STEP_UNLOAD_GATE")

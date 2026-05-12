@@ -1137,9 +1137,24 @@ def test_run_rewind_gcode_content():
     g._run_rewind()
     scripts = g.printer.gcode_scripts
     assert len(scripts) == 2
-    assert 'MMU_TEST_MOVE MOVE=-90.00' in scripts[0]
-    assert scripts[1] == 'mmu_check_gate'
+    assert 'MMU_TEST_MOVE MOVE=-70.00' in scripts[0]
+    assert scripts[1] == '_MMU_STEP_UNLOAD_GATE'
     assert 'MMU_UNLOAD' not in scripts[0]
+
+def test_run_rewind_uses_configured_buffer():
+    g = _make_gate(gate=3, scan_rewind_buffer_mm=150.0)
+    g._scan_mm_total = 220.0
+    g._run_rewind()
+    scripts = g.printer.gcode_scripts
+    assert len(scripts) == 2
+    assert 'MMU_TEST_MOVE MOVE=-70.00' in scripts[0]
+    assert scripts[1] == '_MMU_STEP_UNLOAD_GATE'
+
+def test_run_rewind_short_scan_skips_fast_rewind():
+    g = _make_gate(gate=3, scan_rewind_buffer_mm=150.0)
+    g._scan_mm_total = 100.0
+    g._run_rewind()
+    assert g.printer.gcode_scripts == ['_MMU_STEP_UNLOAD_GATE']
 
 def test_rewind_skipped_when_nothing_jogged():
     """_run_rewind must not issue any GCode if scan_mm_total is 0."""

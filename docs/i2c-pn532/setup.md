@@ -123,13 +123,13 @@ NFC gate status  (4 gates configured):
 When Klipper connects, each lane initialises automatically and reports to the console. Look for:
 
 ```
-✅ NFC[lane0]: reader ready.  HH seed: spool_id=42  Startup polling is enabled; first poll in 0.0s.
+[OK] NFC[lane0]: reader ready.  HH seed: spool_id=42  Startup polling is enabled; first poll in 0.0s.
 ```
 
 or, if the gate was empty in Happy Hare:
 
 ```
-✅ NFC[lane0]: reader ready.  HH reports gate empty  Run NFC GATE=0 READ=1 to start polling.
+[OK] NFC[lane0]: reader ready.  HH reports gate empty  Run NFC GATE=0 READ=1 to start polling.
 ```
 
 **The HH seed line is important.** It means NFC_Manager read Happy Hare's gate map on startup and pre-loaded the lane cache with the spool HH already knows about. The first poll will verify the physical tag matches that spool — if it does, no redundant dispatch is sent to Happy Hare. If the spool was swapped while Klipper was down, the mismatch is detected and `_NFC_SPOOL_CHANGED` fires normally.

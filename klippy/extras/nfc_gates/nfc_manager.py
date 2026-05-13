@@ -543,7 +543,7 @@ class NFCGate:
                     "nfc_gate: [%s] PN532 did not respond — "
                     "check wiring and I2C address (default 0x24)", self._name)
             gcmd.respond_info("%s NFC[%s]: reader %s" %
-                              ("✅" if alive else "[WARN]", self._name,
+                              ("[OK]" if alive else "[WARN]", self._name,
                                "OK" if alive else "not responding"))
             if (self._shared and alive and self._startup_polling == 1
                     and not self._is_printing()
@@ -1018,7 +1018,7 @@ class NFCGate:
                     % (self._name, init_cmd))
             elif self._shared:
                 self._gcode.respond_info(
-                    "✅ NFC[%s]: shared reader ready.  %s"
+                    "[OK] NFC[%s]: shared reader ready.  %s"
                     % (self._name,
                        "Startup polling is enabled; first poll in %.1fs."
                        % self._startup_poll_delay
@@ -1029,7 +1029,7 @@ class NFCGate:
                              if self._hh_seed_spool_id is not None
                              else "  HH reports gate empty")
                 self._gcode.respond_info(
-                    "✅ NFC[%s]: reader ready.%s  %s"
+                    "[OK] NFC[%s]: reader ready.%s  %s"
                     % (self._name,
                        seed_note,
                        "Startup polling is enabled; first poll in %.1fs."
@@ -1981,7 +1981,7 @@ class NFCGate:
         # get_status() and issues those commands directly.
         _ac_note = " [new spool synced]" if auto_created else ""
         gcmd.respond_info(
-            "✅ NFC[%s]: spool %d staged%s — macro will send to Happy Hare"
+            "[OK] NFC[%s]: spool %d staged%s — macro will send to Happy Hare"
             % (self._name, spool_id, _ac_note))
         logger.info(
             "nfc_gate: [%s] PRELOAD_CHECK — spool %d validated, "

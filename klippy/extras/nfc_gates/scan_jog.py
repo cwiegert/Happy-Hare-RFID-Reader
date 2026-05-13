@@ -302,11 +302,11 @@ def finish(gate):
             gate._hh_load_paused = True
             gate._state.miss_count = 0
         if event_type == 'changed' and spool is not None:
-            msg = "✅ NFC[%d]: spool %s assigned" % (g, spool)
+            msg = "[OK] NFC[%d]: spool %s assigned" % (g, spool)
             info_both(msg)
             gate._console(msg)
         elif event_type == 'changed' and meta is not None:
-            msg = "✅ NFC[%d]: tag metadata assigned" % g
+            msg = "[OK] NFC[%d]: tag metadata assigned" % g
             info_both(msg)
             gate._console(msg)
         elif event_type == 'uid_only':

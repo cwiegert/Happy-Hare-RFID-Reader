@@ -17,7 +17,7 @@ Console prefixes are used consistently:
 - `⚠️` means NFC skipped, ignored, or warned but kept the system recoverable.
 - `⛔` means an action was blocked by a safety/precondition check.
 - `✅` means the requested action completed.
-- `😊` means a tag was found/read successfully.
+- `[OK]` means a tag was found/read successfully.
 - `🔍` means scan-jog started.
 - `⏪` means scan-jog is rewinding.
 
@@ -87,7 +87,7 @@ JOG_SCAN=1` or by the automatic scan-jog trigger.
 | Scan-jog started | `🔍 NFC[laneN]: scan-jog started for gate <n> (max=<mm>mm  poll=<seconds>s)` | `INFO     nfc_gate: [laneN] gate <n> scan mode started — chunk=<mm>mm max=<mm>mm speed=<mm/s> chunk_interval=<seconds>s dwell=<seconds>s poll=<seconds>s` at `debug: 3` |
 | Move step queued | `NFC[<n>]: moving <mm>mm  scan position <mm> / <mm>mm` | `INFO     NFC[<n>]: moving <mm>mm  scan position <mm> / <mm>mm` and `INFO     NFC[<n>]: move queued <mm>mm  scan position <mm> / <mm>mm` |
 | Scan poll failed | `💥 NFC[<n>]: scan poll failed` | `ERROR    💥 NFC[<n>]: scan poll failed` |
-| Tag found | `😊 NFC[<n>]: tag found` | `INFO     😊 NFC[<n>]: tag found` and mirrored to `klippy.log` |
+| Tag found | `[OK] NFC[<n>]: tag found` | `INFO     [OK] NFC[<n>]: tag found` and mirrored to `klippy.log` |
 | Rewinding after tag found | `⏪ NFC[<n>]: rewinding <mm>mm` | `INFO     ⏪ NFC[<n>]: rewinding <mm>mm` |
 | Spool assigned | `✅ NFC[<n>]: spool <spool> assigned` | `INFO     ✅ NFC[<n>]: spool <spool> assigned` and mirrored to `klippy.log` |
 | Metadata assigned | `✅ NFC[<n>]: tag metadata assigned` | `INFO     ✅ NFC[<n>]: tag metadata assigned` and mirrored to `klippy.log` |
@@ -111,8 +111,8 @@ Shared reader messages are specific to `[nfc_gate shared]` and `NFC_SHARED`.
 | `READ=0` stops polling | `NFC[shared]: polling stop requested` | `INFO     nfc_gate: [shared] shared READ=0 — polling stopped; pending spool=<spool> kept` |
 | Manual scan while printing | `⚠️ NFC[shared]: shared scan skipped while printing` | `WARNING  nfc_gate: [shared] shared scan skipped while printing` |
 | Manual poll while printing | `⚠️ NFC[shared]: shared poll skipped while printing` | `WARNING  nfc_gate: [shared] shared poll skipped while printing` |
-| Successful tag read | `😊 NFC[shared]: spool <spool> detected (UID <uid>) — load spool into gate now` | `INFO     nfc_gate: [shared] shared tag resolved — spool=<spool> uid=<uid> auto_created=False pending for <seconds>s` |
-| Successful auto-created tag read | `😊 NFC[shared]: spool <spool> detected (UID <uid>) [new spool] — load spool into gate now` | `INFO     nfc_gate: [shared] shared tag resolved — spool=<spool> uid=<uid> auto_created=True pending for <seconds>s` |
+| Successful tag read | `[OK] NFC[shared]: spool <spool> detected (UID <uid>) — load spool into gate now` | `INFO     nfc_gate: [shared] shared tag resolved — spool=<spool> uid=<uid> auto_created=False pending for <seconds>s` |
+| Successful auto-created tag read | `[OK] NFC[shared]: spool <spool> detected (UID <uid>) [new spool] — load spool into gate now` | `INFO     nfc_gate: [shared] shared tag resolved — spool=<spool> uid=<uid> auto_created=True pending for <seconds>s` |
 | Level-3 tag detail | No extra console message. | `INFO     nfc_gate: [shared] shared CHANGED — spool=<spool> uid=<uid> auto_created=<bool>; polling stopped, awaiting PRELOAD_CHECK` at `debug: 3` |
 | Duplicate pending tag | `⚠️ NFC[shared]: spool <spool> is already pending; duplicate tag read ignored` | `INFO     nfc_gate: [shared] shared duplicate tag ignored — spool=<spool> uid=<uid>` |
 | Different tag while pending | `⚠️ NFC[shared]: spool <pending> is already pending; read spool <new> uid=<uid> ignored. Run NFC_SHARED REPLACE=1 to discard the pending spool and scan another` | `WARNING  nfc_gate: [shared] shared tag ignored — pending spool=<pending>, new spool=<new> uid=<uid>; use NFC_SHARED REPLACE=1 to replace` |

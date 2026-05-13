@@ -318,6 +318,7 @@ def _make_shared(
     g._shared_last_action         = None
     g._shared_read_deadline       = 0.0
     g._shared_missed_resolutions  = 0
+    g._shared_polling_suspended_for_print = False
     g._spoolman_auto_create       = False
     g._tag_parsing                = False
     g._scan_mode                  = False
@@ -734,9 +735,20 @@ def test_shared_led_test_reports_missing_effect_config():
 
 def test_print_start_stops_polling():
     g = _make_shared(startup_polling=1)
+    g.printer.set_print_state('printing')
     g._polling = True
     g._handle_print_start(0)
     assert g._polling is False
+    assert g._shared_polling_suspended_for_print is True
+
+
+def test_print_start_ignores_idle_timeout_busy_without_real_print():
+    g = _make_shared(startup_polling=1)
+    g.printer.set_print_state('standby')
+    g._polling = True
+    g._handle_print_start(0)
+    assert g._polling is True
+    assert g._shared_polling_suspended_for_print is False
 
 
 def test_print_start_noop_when_not_polling():
@@ -749,8 +761,10 @@ def test_print_start_noop_when_not_polling():
 def test_print_end_resumes_when_no_pending():
     g = _make_shared(startup_polling=1)
     g._polling = False
+    g._shared_polling_suspended_for_print = True
     g._handle_print_end(0)
     assert g._polling is True
+    assert g._shared_polling_suspended_for_print is False
 
 
 def test_print_end_stays_stopped_when_valid_spool_pending():
@@ -758,21 +772,25 @@ def test_print_end_stays_stopped_when_valid_spool_pending():
     by restarting polling — the user hasn't loaded the spool yet."""
     g = _make_shared(startup_polling=1)
     g._polling = False
+    g._shared_polling_suspended_for_print = True
     _stage_pending(g, spool_id=42, ttl=120.0)
     g._handle_print_end(0)
     assert g._polling is False
     assert g._shared_pending_spool == 42  # spool untouched
+    assert g._shared_polling_suspended_for_print is False
 
 
 def test_print_end_resumes_when_pending_expired():
     """Expired pending should not block polling restart — it's already gone."""
     g = _make_shared(startup_polling=1)
     g._polling = False
+    g._shared_polling_suspended_for_print = True
     _stage_pending(g, spool_id=42, ttl=1.0)
     g.reactor.advance(10.0)           # deadline in the past
     g._handle_print_end(0)
     assert g._polling is True
     assert g._shared_pending_spool is None
+    assert g._shared_polling_suspended_for_print is False
 
 
 def test_pending_timeout_auto_expires_and_resumes_startup_polling():

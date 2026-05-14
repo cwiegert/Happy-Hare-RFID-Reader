@@ -142,7 +142,7 @@ def sync_spoolman_before_scan(gate):
 
 
 def clear_hh_gate_cache(gate):
-    """Clear stale HH gate metadata (spool, color, material) before scan-jog."""
+    """Mark the gate loaded but unknown before scan-jog resolves the spool."""
     gcode = gate.printer.lookup_object('gcode', None)
     if gcode is None:
         return

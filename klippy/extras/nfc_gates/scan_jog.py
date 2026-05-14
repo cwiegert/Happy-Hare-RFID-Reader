@@ -522,24 +522,23 @@ def restore_left_neighbor(gate):
     gcode = gate.printer.lookup_object('gcode', None)
     if gcode is None:
         return
-    msg = ("[REWIND] NFC[%d]: parking left neighbor gate %d at gate sensor"
-           % (gate._gate, left_gate))
+    msg = ("[REWIND] NFC[%d]: parking at gate sensor"
+           % left_gate)
     logger.info(msg)
-    gate._console(msg)
     try:
+        gcode.run_script("MMU_SELECT GATE=%d" % left_gate)
+        gate._console(msg)
         gcode.run_script(
-            "MMU_SELECT GATE=%d\n"
             "_MMU_STEP_UNLOAD_GATE\n"
-            "MMU_SELECT GATE=%d"
-            % (left_gate, gate._gate))
+            "MMU_SELECT GATE=%d" % gate._gate)
     except Exception as e:
         logger.warning(
             "nfc_gate: [%s] gate %d scan mode — failed to restore left "
             "neighbor gate %d: %s",
             gate._name, gate._gate, left_gate, e)
         gate._console(
-            "[WARN] NFC[%d]: failed to restore left neighbor gate %d — "
-            "move it back manually" % (gate._gate, left_gate))
+            "[WARN] NFC[%d]: failed to park at gate sensor — "
+            "move it back manually" % left_gate)
         return
     if gate._debug >= 3:
         logger.info(

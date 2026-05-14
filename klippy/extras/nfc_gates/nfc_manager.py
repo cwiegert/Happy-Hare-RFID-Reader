@@ -774,15 +774,15 @@ class NFCGate:
 
         if self._gcode is not None:
             if self._failed:
-                self._gcode.respond_info(
+                self._gcode.respond_info(scan_jog._color_tags(
                     "[WARN] NFC[%s]: reader not ready — check wiring. "
                     "Run NFC GATE=%d INIT=1 after fixing."
-                    % (self._name, self._gate))
+                    % (self._name, self._gate)))
             else:
                 seed_note = ("  HH seed: spool_id=%d" % self._hh_seed_spool_id
                              if self._hh_seed_spool_id is not None
                              else "  HH reports gate empty")
-                self._gcode.respond_info(
+                self._gcode.respond_info(scan_jog._color_tags(
                     "[OK] NFC[%s]: reader ready.%s  %s"
                     % (self._name,
                        seed_note,
@@ -790,7 +790,7 @@ class NFCGate:
                        % self._startup_poll_delay
                        if self._startup_polling == 1
                        else "Run NFC GATE=%d READ=1 to start polling."
-                            % self._gate))
+                            % self._gate)))
 
         if not self._failed and self._startup_polling == 1:
             self._polling = True
@@ -809,6 +809,8 @@ class NFCGate:
         self.reactor.update_timer(self._poll_timer, self.reactor.NEVER)
         if self._scan_timer is not None:
             self.reactor.update_timer(self._scan_timer, self.reactor.NEVER)
+        if self._scan_mode:
+            scan_jog.disconnect_cleanup(self)
         if NFCGate._active_scan_gate == self._gate:
             NFCGate._active_scan_gate = None
 

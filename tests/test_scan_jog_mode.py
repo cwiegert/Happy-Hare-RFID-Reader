@@ -123,8 +123,11 @@ class GCodeCapture:
     def __init__(self):
         self.scripts = []
         self.responses = []
+        self.fail_on = None
 
     def run_script(self, script):
+        if self.fail_on is not None and self.fail_on in script:
+            raise RuntimeError("planned gcode failure")
         self.scripts.append(script)
 
     def respond_info(self, msg):
@@ -1361,6 +1364,41 @@ def test_left_neighbor_matching_uid_shifts_neighbor_and_continues_scan():
         'MMU_SELECT GATE=1')
 
 
+def test_left_neighbor_clearance_failure_aborts_without_assignment():
+    left = _make_gate(gate=0)
+    left._state.current_uid = 'LEFTUID'
+    g = _make_gate(gate=1)
+    g.printer.set_mmu(MockMMU(gate_status=[1, 1], gate_spool_id=[10, -1]))
+    g.printer._gcode.fail_on = 'MOVE=75.00'
+    g._scan_mode = True
+    g._scan_mm_total = 50.0
+    g._scan_found_event = ('changed', 1, 'LEFTUID', 10, None)
+    g._state.current_uid = 'LEFTUID'
+    g._state.current_spool = 10
+    g.printer.set_print_state('standby')
+    g._poll = lambda: True
+    dispatched = []
+    g._poll_klipper_dispatch = lambda *args: dispatched.append(args)
+
+    old_lanes = list(_lane_instances)
+    try:
+        _lane_instances[:] = [left, g]
+        result = g._scan_step_event(100.0)
+    finally:
+        _lane_instances[:] = old_lanes
+
+    assert result == g.reactor.NEVER
+    assert not g._scan_mode
+    assert not g._scan_left_neighbor_shifted
+    assert g._scan_found_event is None
+    assert g._state.current_uid is None
+    assert g._state.current_spool is None
+    assert dispatched == []
+    assert any('MOVE=-20.00' in s for s in g.printer.gcode_scripts)
+    assert any('failed to clear left neighbor gate 0' in msg
+               for msg in g.printer._gcode.responses)
+
+
 def test_left_neighbor_nonmatching_uid_finishes_normally():
     left = _make_gate(gate=0)
     left._state.current_uid = 'LEFTUID'
@@ -1504,6 +1542,34 @@ def test_repeated_left_neighbor_hit_aborts_and_does_not_stack_clearance():
     assert any('MOVE=-20.00' in s for s in g.printer.gcode_scripts)
     assert any('still reading left neighbor gate 0' in msg
                for msg in g.printer._gcode.responses)
+
+
+def test_disconnect_cleans_scan_state_and_restores_shifted_left_neighbor():
+    g = _make_gate(gate=2)
+    g._start_scan_mode()
+    timer = g._scan_timer
+    g._scan_left_neighbor_gate = 1
+    g._scan_left_neighbor_shift_mm = 75.0
+    g._scan_left_neighbor_shifted = True
+    g._scan_left_neighbor_uid = 'LEFTUID'
+    g._scan_found_event = ('changed', 2, 'LEFTUID', 10, None)
+
+    g._handle_disconnect()
+
+    assert not g._polling
+    assert not g._scan_mode
+    assert g._scan_timer is None
+    assert g._scan_found_event is None
+    assert not g._scan_left_neighbor_shifted
+    assert g.reactor.timers[g._poll_timer][1] == g.reactor.NEVER
+    assert g.reactor.timers[timer][1] == g.reactor.NEVER
+    assert NFCGate._active_scan_gate is None
+    assert any(script == (
+        'MMU_SELECT GATE=1\n'
+        'MMU_TEST_MOVE MOVE=-75.00 QUIET=1\n'
+        'M400\n'
+        'MMU_SELECT GATE=2')
+        for script in g.printer.gcode_scripts)
 
 
 # ── Poll timer resume ─────────────────────────────────────────────────────────

@@ -236,6 +236,7 @@ def test_scan_defaults():
     assert d.scan_rewind_buffer_mm == 30.0
     assert d.scan_decode_retry_mm == 2.0
     assert d.scan_decode_retry_rounds == 5
+    assert d.scan_reads_per_position == 3
     assert d.scan_poll_interval == 0.1
     assert d.scan_enabled  == True
 
@@ -245,6 +246,7 @@ def test_scan_keys_overridden():
         'scan_rewind_buffer_mm': 45.0,
         'scan_decode_retry_mm': 4.0,
         'scan_decode_retry_rounds': 2,
+        'scan_reads_per_position': 4,
         'scan_poll_interval': 0.2,
         'scan_enabled':       False,
     }))
@@ -252,6 +254,7 @@ def test_scan_keys_overridden():
     assert d.scan_rewind_buffer_mm == 45.0
     assert d.scan_decode_retry_mm == 4.0
     assert d.scan_decode_retry_rounds == 2
+    assert d.scan_reads_per_position == 4
     assert d.scan_poll_interval == 0.2
     assert d.scan_enabled  == False
 

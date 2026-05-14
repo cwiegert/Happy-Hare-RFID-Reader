@@ -77,12 +77,13 @@ This disables gate-status polling entirely — Happy Hare calls NFC only after t
 
 | Key | Default | Effect |
 |---|---|---|
-| `scan_enabled` | `True` | Master switch — set `False` to disable automatic scan-jog |
+| `scan_enabled` | `False` | Automatic gate-status trigger; keep `False` when using the Happy Hare post-preload hook |
 | `scan_jog_mm` | `75.0` | Filament advance per step (mm) |
+| `scan_reads_per_position` | `3` | NFC read attempts at each stopped scan position before the next substep |
 | `scan_rewind_buffer_mm` | `30.0` | Distance left for Happy Hare's final gate parking step |
 | `scan_decode_retry_mm` | `2.0` | Distance between nearby retry positions after an incomplete rich tag read |
 | `scan_decode_retry_rounds` | `5` | Nearby retry rounds; each round probes both sides of the first UID hit |
-| `scan_poll_interval` | `0.1` | Minimum seconds between NFC reads during scan |
+| `scan_poll_interval` | `0.1` | Seconds between stopped-position NFC reads during scan |
 
 ---
 

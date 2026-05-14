@@ -7,6 +7,7 @@ from .log import info_both, logger
 
 
 DECODE_RETRY_SETTLE_DELAY = 1.0
+SCAN_JOG_SUBSTEPS = 3
 
 
 def manual_jog_scan(gate, gcmd):
@@ -89,9 +90,19 @@ def chunk_interval(gate, mm):
 
 
 def chunk_dwell(gate):
-    """Return the stationary read window after each scan chunk."""
-    """want to make sure to give the reader 3 full pulls to read the tag"""
-    return 3.0 * gate._scan_poll_interval
+    """Return the stationary read window after each scan substep."""
+    reads = max(1, int(getattr(gate, '_scan_reads_per_position', 3)))
+    return reads * gate._scan_poll_interval
+
+
+def substep_distance(gate):
+    """Return the scan-jog submove distance.
+
+    MMU_TEST_MOVE defaults to WAIT=1 in Happy Hare, so reads happen after the
+    move returns, not while the spool is moving.  Substeps create physical read
+    positions inside each configured scan_jog_mm chunk.
+    """
+    return gate._scan_jog_mm / float(SCAN_JOG_SUBSTEPS)
 
 
 def next_event_time(gate, mm):
@@ -189,6 +200,7 @@ def start(gate, max_mm=None):
     gate._scan_mode = True
     gate._scan_mm_total = 0.0
     gate._scan_next_chunk_time = gate.reactor.monotonic()
+    gate._scan_position_reads_done = 0
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
     gate._scan_decode_retry_offset = 0.0
@@ -209,13 +221,12 @@ def start(gate, max_mm=None):
     if gate._debug >= 3:
         logger.info(
             "nfc_gate: [%s] gate %d scan mode started — "
-            "chunk=%.1fmm max=%.1fmm speed=%.1fmm/s "
-            "chunk_interval=%.2fs dwell=%.2fs poll=%.2fs",
+            "chunk=%.1fmm substep=%.1fmm max=%.1fmm speed=%.1fmm/s "
+            "reads_per_position=%d poll=%.2fs",
             gate._name, gate._gate,
-            gate._scan_jog_mm, gate._scan_max_mm,
+            gate._scan_jog_mm, substep_distance(gate), gate._scan_max_mm,
             get_speed(gate),
-            chunk_interval(gate, gate._scan_jog_mm),
-            chunk_dwell(gate),
+            max(1, int(getattr(gate, '_scan_reads_per_position', 3))),
             gate._scan_poll_interval)
 
 
@@ -244,6 +255,15 @@ def step_event(gate, eventtime):
         return gate._scan_next_chunk_time
     if retry_poll:
         log_decode_retry_poll_start(gate)
+    elif not decode_retry_exhausted(gate) and now < gate._scan_next_chunk_time:
+        if gate._debug >= 3:
+            logger.info(
+                "nfc_gate: [%s] gate %d waiting %.2fs before next "
+                "stopped-position read at scan position %.1f / %.1fmm",
+                gate._name, gate._gate,
+                gate._scan_next_chunk_time - now,
+                gate._scan_mm_total, gate._scan_max_mm)
+        return gate._scan_next_chunk_time
 
     run_pending_hh_prep(gate)
 
@@ -258,6 +278,8 @@ def step_event(gate, eventtime):
 
     if retry_poll:
         log_decode_retry_poll_result(gate, tag_found)
+    elif not tag_found:
+        gate._scan_position_reads_done += 1
 
     if tag_found:
         if current_tag_decode_incomplete(gate):
@@ -281,6 +303,19 @@ def step_event(gate, eventtime):
         if gate._scan_mm_total < gate._scan_max_mm:
             return now + gate._scan_poll_interval
 
+    reads_per_position = max(
+        1, int(getattr(gate, '_scan_reads_per_position', 3)))
+    if (not decode_retry_in_progress(gate)
+            and gate._scan_position_reads_done < reads_per_position):
+        if gate._debug >= 3:
+            logger.info(
+                "nfc_gate: [%s] gate %d stopped-position read %d/%d "
+                "found no tag at scan position %.1f / %.1fmm",
+                gate._name, gate._gate,
+                gate._scan_position_reads_done, reads_per_position,
+                gate._scan_mm_total, gate._scan_max_mm)
+        return gate.reactor.monotonic() + gate._scan_poll_interval
+
     if gate._scan_mm_total >= gate._scan_max_mm:
         if gate._scan_found_event is not None:
             msg = ("NFC[%d]: scan reached max distance after decode retries; "
@@ -295,15 +330,17 @@ def step_event(gate, eventtime):
         gate._rewind_and_exit_scan()
         return gate.reactor.NEVER
 
-    # Only queue the next jog when the previous move is estimated complete
-    # and the stationary dwell has elapsed. Poll continues at
-    # scan_poll_interval during both motion and dwell.
+    # MMU_TEST_MOVE blocks until the move completes, so reads are placed at
+    # stopped positions.  Queue one physical substep after the configured
+    # number of reads at the current position has been exhausted.
     if now >= gate._scan_next_chunk_time:
         remaining = gate._scan_max_mm - gate._scan_mm_total
-        chunk = min(gate._scan_jog_mm, remaining)
+        chunk = min(substep_distance(gate), remaining)
         next_position = gate._scan_mm_total + chunk
-        msg = ("NFC[%d]: moving %.1fmm  scan position %.1f / %.1fmm"
-               % (gate._gate, chunk, next_position, gate._scan_max_mm))
+        msg = ("NFC[%d]: moving %.1fmm  scan position %.1f / %.1fmm "
+               "(substep of %.1fmm)"
+               % (gate._gate, chunk, next_position, gate._scan_max_mm,
+                  gate._scan_jog_mm))
         logger.info(msg)
         gate._console(msg)
         if gate._debug >= 4:
@@ -311,13 +348,14 @@ def step_event(gate, eventtime):
                          gate._gate, chunk)
         gate._run_jog(chunk)
         gate._scan_mm_total += chunk
+        gate._scan_position_reads_done = 0
         gate._scan_next_chunk_time = (
-            now + chunk_interval(gate, chunk) + chunk_dwell(gate))
+            gate.reactor.monotonic() + gate._scan_poll_interval)
         logger.info(
             "NFC[%d]: move queued %.1fmm  scan position %.1f / %.1fmm",
             gate._gate, chunk, gate._scan_mm_total, gate._scan_max_mm)
 
-    return now + gate._scan_poll_interval
+    return gate._scan_next_chunk_time
 
 
 def current_tag_decode_incomplete(gate):

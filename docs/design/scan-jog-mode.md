@@ -141,11 +141,12 @@ All added to `[nfc_gate]` (overridable per `[nfc_gate laneN]`):
 
 | Key | Python fallback | Shipped `nfc_reader.cfg` | Meaning |
 |---|---|---|---|
-| `scan_enabled` | `True` | `True` | Master switch — `False` disables scan mode entirely |
-| `scan_jog_mm` | `50.0` | `25.0` | Filament advance per jog step (mm) |
+| `scan_enabled` | `True` | `False` | Controls the automatic gate-status trigger; `JOG_SCAN` still works when false |
+| `scan_jog_mm` | `50.0` | `75.0` | Logical filament advance per scan chunk (mm), divided into three stopped-position substeps |
+| `scan_reads_per_position` | `3` | `3` | NFC read attempts at each stopped spool position before moving the next substep |
 | `scan_decode_retry_mm` | `2.0` | `2.0` | Distance between nearby retry positions |
 | `scan_decode_retry_rounds` | `5` | `5` | Nearby retry rounds before accepting the current result |
-| `scan_poll_interval` | `0.1` | `0.1` | Minimum seconds between NFC reads during scan |
+| `scan_poll_interval` | `0.1` | `0.1` | Seconds between stopped-position NFC reads during scan |
 
 `scan_jog_mm` of 25 mm gives a ~5 cm read window (25 mm on each side of center plus the antenna width) for finding tags that are slightly off-axis.
 The maximum scan distance is read at scan start from Happy Hare's

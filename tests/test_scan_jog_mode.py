@@ -198,7 +198,8 @@ def _make_gate(gate=0, scan_jog_mm=50.0, scan_max_mm=200.0,
                scan_enabled=True,
                scan_rewind_buffer_mm=30.0,
                scan_decode_retry_mm=2.0,
-               scan_decode_retry_rounds=5):
+               scan_decode_retry_rounds=5,
+               scan_reads_per_position=1):
     """Build a minimal NFCGate with scan-jog state, bypassing __init__.
 
     Uses object.__new__ to skip Klipper config/I2C setup, then manually
@@ -215,6 +216,7 @@ def _make_gate(gate=0, scan_jog_mm=50.0, scan_max_mm=200.0,
     g._scan_rewind_buffer_mm = scan_rewind_buffer_mm
     g._scan_decode_retry_mm = scan_decode_retry_mm
     g._scan_decode_retry_rounds = scan_decode_retry_rounds
+    g._scan_reads_per_position = scan_reads_per_position
     g._scan_max_mm        = scan_max_mm
     g._scan_poll_interval = scan_poll_interval
     g._scan_enabled       = scan_enabled
@@ -222,6 +224,7 @@ def _make_gate(gate=0, scan_jog_mm=50.0, scan_max_mm=200.0,
     g._scan_mm_total      = 0.0
     g._scan_start_time    = 0.0
     g._scan_next_chunk_time = 0.0
+    g._scan_position_reads_done = 0
     g._scan_decode_retry_attempts = 0
     g._scan_decode_retry_uid = None
     g._scan_decode_retry_offset = 0.0
@@ -915,7 +918,7 @@ def test_scan_decode_retry_state_cleared_on_finish_and_no_tag_exit():
     assert g._scan_decode_retry_attempts == 0
 
 def test_scan_step_no_tag_reschedules_at_poll_interval():
-    """Poll cadence stays independent while a chunk is still moving."""
+    """Before the next stopped-position read is due, scan waits."""
     g = _make_gate(scan_max_mm=200.0, scan_poll_interval=0.5)
     g._scan_mode       = True
     g._scan_start_time = 100.0   # scan just started
@@ -925,7 +928,7 @@ def test_scan_step_no_tag_reschedules_at_poll_interval():
     g.printer.set_mmu(MockMMU(gear_short_move_speed=80.0))
     g._poll = lambda: False
     result = g._scan_step_event(100.0)
-    assert result == pytest_approx(100.5)
+    assert result == pytest_approx(101.0)
 
 def test_scan_step_timeout_rewinds_and_exits():
     """After scan_max_mm/speed + 5s slack, _rewind_and_exit_scan is called."""
@@ -989,11 +992,11 @@ def test_scan_step_runs_deferred_hh_prep_before_first_move():
     assert scripts[0] == '_NFC_GATE_CLEAR_CACHE GATE=2'
     assert scripts[1] == 'MMU_SPOOLMAN SYNC=1 QUIET=1'
     assert 'MMU_SELECT GATE=2' in scripts[2]
-    assert 'MMU_TEST_MOVE MOVE=50.00' in scripts[2]
+    assert 'MMU_TEST_MOVE MOVE=16.67' in scripts[2]
     assert not g._scan_hh_prep_pending
 
 def test_scan_step_issues_one_chunk_when_due():
-    """No tag + due chunk issues scan_jog_mm, not the full scan distance."""
+    """No tag + due movement issues one scan_jog_mm substep."""
     g = _make_gate(gate=1, scan_jog_mm=50.0, scan_max_mm=200.0,
                    scan_poll_interval=0.5)
     g._scan_mode = True
@@ -1008,14 +1011,67 @@ def test_scan_step_issues_one_chunk_when_due():
     scripts = g.printer.gcode_scripts
     assert len(scripts) == 1
     assert 'MMU_SELECT GATE=1' in scripts[0]
-    assert 'MMU_TEST_MOVE MOVE=50.00' in scripts[0]
-    assert g._scan_mm_total == 50.0
-    assert g._scan_next_chunk_time == pytest_approx(102.125)
+    assert 'MMU_TEST_MOVE MOVE=16.67' in scripts[0]
+    assert g._scan_mm_total == pytest_approx(50.0 / 3.0)
+    assert g._scan_next_chunk_time == pytest_approx(100.5)
     assert result == pytest_approx(100.5)
 
 
+def test_scan_reads_per_position_before_substep_move():
+    """Scan-jog reads a stopped position N times before the next substep."""
+    g = _make_gate(gate=1, scan_jog_mm=50.0, scan_max_mm=200.0,
+                   scan_poll_interval=0.5, scan_reads_per_position=3)
+    g._scan_mode = True
+    g._scan_next_chunk_time = 100.0
+    g._scan_hh_prep_pending = False
+    g.printer.set_print_state('standby')
+    g.printer.set_mmu(MockMMU(gear_short_move_speed=80.0))
+    polls = []
+    g._poll = lambda: polls.append(g.reactor.monotonic()) or False
+
+    result = g._scan_step_event(100.0)
+    assert result == pytest_approx(100.5)
+    assert g._scan_position_reads_done == 1
+    assert not g.printer.gcode_scripts
+
+    g.reactor._time = 100.5
+    result = g._scan_step_event(100.5)
+    assert result == pytest_approx(101.0)
+    assert g._scan_position_reads_done == 2
+    assert not g.printer.gcode_scripts
+
+    g.reactor._time = 101.0
+    result = g._scan_step_event(101.0)
+    assert result == pytest_approx(101.5)
+    assert g._scan_position_reads_done == 0
+    assert len(polls) == 3
+    assert g._scan_mm_total == pytest_approx(50.0 / 3.0)
+    assert any('MMU_TEST_MOVE MOVE=16.67' in script
+               for script in g.printer.gcode_scripts)
+
+
+def test_scan_reads_stop_immediately_when_tag_found():
+    """A found tag exits scan without consuming remaining reads."""
+    g = _make_gate(gate=1, scan_jog_mm=50.0, scan_max_mm=200.0,
+                   scan_poll_interval=0.5, scan_reads_per_position=3)
+    g._scan_mode = True
+    g._scan_next_chunk_time = 100.0
+    g._scan_hh_prep_pending = False
+    g.printer.set_print_state('standby')
+    finished = []
+    g._poll = lambda: True
+    g._finish_scan = lambda: finished.append(True)
+
+    result = g._scan_step_event(100.0)
+
+    assert result == g.reactor.NEVER
+    assert finished
+    assert not g.printer.gcode_scripts
+    assert g._scan_mm_total == 0.0
+
+
 def test_scan_step_dwell_after_completed_chunk_before_next_jog():
-    """A completed jog gets three poll intervals of stationary read time."""
+    """A completed substep waits until the next stopped-position read."""
     g = _make_gate(gate=1, scan_jog_mm=50.0, scan_max_mm=200.0,
                    scan_poll_interval=0.5)
     g._scan_mode = True
@@ -1030,10 +1086,10 @@ def test_scan_step_dwell_after_completed_chunk_before_next_jog():
 
     assert len(g.printer.gcode_scripts) == 0
     assert g._scan_mm_total == 50.0
-    assert result == pytest_approx(101.5)
+    assert result == pytest_approx(102.125)
 
 def test_derived_lane_max_controls_final_chunk_size():
-    """A lane Bowden length limits the last chunk instead of overshooting."""
+    """A lane Bowden length limits substeps instead of overshooting."""
     g = _make_gate(gate=1, scan_jog_mm=50.0, scan_max_mm=999.0,
                    scan_poll_interval=0.5)
     g._start_scan_mode(max_mm=g._get_lane_scan_max_mm())
@@ -1046,12 +1102,12 @@ def test_derived_lane_max_controls_final_chunk_size():
     g._scan_step_event(100.0)
 
     assert g._scan_max_mm == 175.0
-    assert g._scan_mm_total == 175.0
-    assert any('MMU_TEST_MOVE MOVE=25.00' in script
+    assert g._scan_mm_total == pytest_approx(150.0 + (50.0 / 3.0))
+    assert any('MMU_TEST_MOVE MOVE=16.67' in script
                for script in g.printer.gcode_scripts)
 
 def test_scan_step_does_not_stack_chunks_before_interval():
-    """Chunks are not queued until the calculated move interval has elapsed."""
+    """Substeps are not queued until the stopped-position read time arrives."""
     g = _make_gate(gate=1, scan_jog_mm=50.0, scan_max_mm=200.0,
                    scan_poll_interval=0.5)
     g._scan_mode = True
@@ -1065,7 +1121,7 @@ def test_scan_step_does_not_stack_chunks_before_interval():
 
     assert len(g.printer.gcode_scripts) == 0
     assert g._scan_mm_total == 50.0
-    assert result == pytest_approx(100.5)
+    assert result == pytest_approx(100.645)
 
 def test_get_scan_speed_reads_from_hh():
     """_get_scan_speed returns gear_short_move_speed from the mmu object."""

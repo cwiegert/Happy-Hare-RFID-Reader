@@ -142,8 +142,9 @@ Both integer and string spellings are accepted for `console_log_level` (e.g. `co
 
 | Parameter | Python fallback | Shipped `nfc_reader.cfg` | Type | Bounds |
 |---|---|---|---|---|
-| `scan_enabled` | `True` | `True` | bool | — |
-| `scan_jog_mm` | `50.0` | `25.0` | float | 1.0–500.0 |
+| `scan_enabled` | `True` | `False` | bool | — |
+| `scan_jog_mm` | `50.0` | `75.0` | float | 1.0–500.0 |
+| `scan_reads_per_position` | `3` | `3` | int | 1–20 |
 | `scan_poll_interval` | `0.1` | `0.1` | float | 0.1–5.0 |
 
 The scan max distance is derived at scan start from Happy Hare's saved

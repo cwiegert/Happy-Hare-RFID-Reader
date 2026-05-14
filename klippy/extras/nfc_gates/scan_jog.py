@@ -2,8 +2,6 @@
 #
 # Scan-and-jog mode helpers for NFCGate.
 
-import logging
-
 from . import hh_status
 from .gate_state import DIRECT_METADATA_SPOOL
 from .log import info_both, logger
@@ -14,68 +12,16 @@ SCAN_JOG_SUBSTEPS = 3
 LEFT_NEIGHBOR_CLEARANCE_MM = 75.0
 LEFT_NEIGHBOR_CLEARANCE_RETRIES = 3
 
-_CONSOLE_LEVELS = {
-    'error': logging.ERROR,
-    '1': logging.ERROR,
-    'warning': logging.WARNING,
-    'warn': logging.WARNING,
-    '2': logging.WARNING,
-    'info': logging.INFO,
-    '3': logging.INFO,
-    'debug': logging.DEBUG,
-    '4': logging.DEBUG,
-}
-
 
 def _color_tags(text):
     """Wrap console bracket tags with HTML color spans for the Klipper UI."""
-    text = text.replace('[WARN]',  '<span style="color:#FFFF00">[WARN]</span>')
-    text = text.replace('[OK]',    '<span style="color:#90EE90">[OK]</span>')
+    text = text.replace('[SCAN]',   '<span style="color:#FFA040">[SCAN]</span>')
+    text = text.replace('[WARN]',   '<span style="color:#FFFF00">[WARN]</span>')
+    text = text.replace('[OK]',     '<span style="color:#90EE90">[OK]</span>')
     text = text.replace('[REWIND]', '<span style="color:#90EE90">[REWIND]</span>')
-    text = text.replace('[ERROR]', '<span style="color:#FF6060">[ERROR]</span>')
+    text = text.replace('[ERROR]',  '<span style="color:#FF6060">[ERROR]</span>')
     return text
 
-
-def _normalise_console_level(level):
-    if isinstance(level, int):
-        return {
-            1: logging.ERROR,
-            2: logging.WARNING,
-            3: logging.INFO,
-            4: logging.DEBUG,
-        }.get(level, logging.WARNING)
-    return _CONSOLE_LEVELS.get(str(level).strip().lower(), logging.WARNING)
-
-
-def _message_level(msg):
-    if '[ERROR]' in msg:
-        return logging.ERROR
-    if '[WARN]' in msg:
-        return logging.WARNING
-    if ('[OK]' in msg or '[REWIND]' in msg or '[SCAN]' in msg
-            or msg.startswith('⏳')):
-        return logging.INFO
-    return logging.DEBUG
-
-
-def _log_info(gate, msg, *args, min_debug=3):
-    if getattr(gate, '_debug', 2) >= min_debug:
-        logger.info(msg, *args)
-
-
-def _log_warning(gate, msg, *args):
-    if getattr(gate, '_debug', 2) >= 2:
-        logger.warning(msg, *args)
-
-
-def _log_error(gate, msg, *args):
-    if getattr(gate, '_debug', 2) >= 1:
-        logger.error(msg, *args)
-
-
-def _info_both(gate, msg, *args, min_debug=3):
-    if getattr(gate, '_debug', 2) >= min_debug:
-        info_both(msg, *args)
 
 
 def manual_jog_scan(gate, gcmd):
@@ -123,11 +69,11 @@ def manual_jog_scan(gate, gcmd):
 
     gate.reactor.update_timer(gate._poll_timer, gate.reactor.NEVER)
     start(gate, max_mm=max_mm)
-    gcmd.respond_info(
+    gcmd.respond_info(_color_tags(
         "[SCAN] NFC[%s]: scan-jog started for gate %d"
         " (max=%.0fmm  poll=%.2fs)"
         % (gate._name, gate._gate,
-           gate._scan_max_mm, gate._scan_poll_interval))
+           gate._scan_max_mm, gate._scan_poll_interval)))
 
 
 def is_printing(gate):
@@ -432,7 +378,7 @@ def step_event(gate, eventtime):
                "(substep of %.1fmm)"
                % (gate._gate, chunk, next_position, gate._scan_max_mm,
                   gate._scan_jog_mm))
-        _log_info(gate, msg, min_debug=4)
+        logger.info(msg)
         gate._console(msg)
         if gate._debug >= 4:
             logger.debug("NFC[%d]: run_script MMU_TEST_MOVE MOVE=%.2f QUIET=1",
@@ -442,11 +388,9 @@ def step_event(gate, eventtime):
         gate._scan_position_reads_done = 0
         gate._scan_next_chunk_time = (
             gate.reactor.monotonic() + gate._scan_poll_interval)
-        _log_info(
-            gate,
+        logger.info(
             "NFC[%d]: move queued %.1fmm  scan position %.1f / %.1fmm",
-            gate._gate, chunk, gate._scan_mm_total, gate._scan_max_mm,
-            min_debug=4)
+            gate._gate, chunk, gate._scan_mm_total, gate._scan_max_mm)
 
     return gate._scan_next_chunk_time
 
@@ -580,7 +524,7 @@ def restore_left_neighbor(gate):
         return
     msg = ("[REWIND] NFC[%d]: left neighbor gate %d rewinding %.1fmm "
            "to park position" % (gate._gate, left_gate, shift_mm))
-    _log_info(gate, msg)
+    logger.info(msg)
     gate._console(msg)
     try:
         gcode.run_script(
@@ -814,18 +758,16 @@ def queue_decode_retry_move(gate, now, uid, reason, max_attempts, retry_mm):
     attempt = gate._scan_decode_retry_attempts
     msg = ("NFC[%d]: tag decode incomplete; retry %d/%d after %.1fmm jog"
            % (gate._gate, attempt, max_attempts, move))
-    _log_warning(gate, "%s (uid=%s reason=%s)", msg, uid, reason)
+    logger.warning("%s (uid=%s reason=%s)", msg, uid, reason)
     gate._console("[WARN] " + msg)
     reset_uid_only_read(gate, uid)
     gate._run_jog(move)
     gate._scan_mm_total += move
     gate._scan_decode_retry_offset += move
     gate._scan_next_chunk_time = gate.reactor.monotonic() + DECODE_RETRY_SETTLE_DELAY
-    _log_info(
-        gate,
+    logger.info(
         "NFC[%d]: decode retry move queued %.1fmm  scan position %.1f / %.1fmm",
-        gate._gate, move, gate._scan_mm_total, gate._scan_max_mm,
-        min_debug=4)
+        gate._gate, move, gate._scan_mm_total, gate._scan_max_mm)
     return True
 
 
@@ -886,18 +828,16 @@ def retry_incomplete_decode(gate, now):
     attempt = gate._scan_decode_retry_attempts
     msg = ("NFC[%d]: tag decode incomplete; retry %d/%d after %.1fmm jog"
            % (gate._gate, attempt, max_attempts, move))
-    _log_warning(gate, "%s (uid=%s reason=%s)", msg, uid, reason)
+    logger.warning("%s (uid=%s reason=%s)", msg, uid, reason)
     gate._console("[WARN] " + msg)
     reset_uid_only_read(gate, uid)
     gate._run_jog(move)
     gate._scan_mm_total += move
     gate._scan_decode_retry_offset += move
     gate._scan_next_chunk_time = gate.reactor.monotonic() + DECODE_RETRY_SETTLE_DELAY
-    _log_info(
-        gate,
+    logger.info(
         "NFC[%d]: decode retry move queued %.1fmm  scan position %.1f / %.1fmm",
-        gate._gate, move, gate._scan_mm_total, gate._scan_max_mm,
-        min_debug=4)
+        gate._gate, move, gate._scan_mm_total, gate._scan_max_mm)
     return True
 
 
@@ -918,10 +858,10 @@ def finish(gate):
     gate._scan_mode = False
     gate._state.miss_count = 0
     found_msg = "[OK] NFC[%d]: tag found" % gate._gate
-    _info_both(gate, found_msg)
+    info_both(found_msg)
     gate._console(found_msg)
     msg = _rewind_message(gate, "[REWIND]")
-    _log_info(gate, msg)
+    logger.info(msg)
     gate._console(msg)
     gate._run_rewind()
     restore_left_neighbor(gate)
@@ -946,11 +886,11 @@ def finish(gate):
             gate._state.miss_count = 0
         if event_type == 'changed' and spool is not None:
             msg = "[OK] NFC[%d]: spool %s assigned" % (g, spool)
-            _info_both(gate, msg)
+            info_both(msg)
             gate._console(msg)
         elif event_type == 'changed' and meta is not None:
             msg = "[OK] NFC[%d]: tag metadata assigned" % g
-            _info_both(gate, msg)
+            info_both(msg)
             gate._console(msg)
         elif event_type == 'uid_only':
             msg = "[WARN] NFC[%d]: tag has no Spoolman match" % g
@@ -1008,15 +948,7 @@ def rewind_and_exit(gate):
 
 
 def console(gate, msg):
-    """Send scan-jog console output with console_log_level filtering."""
-    level = _message_level(msg)
-    if level < logging.ERROR:
-        if not getattr(gate, '_console_output', False):
-            return
-        console_level = _normalise_console_level(
-            getattr(gate, '_console_log_level', 'warning'))
-        if level < console_level:
-            return
+    """Send a message directly to the Klipper console."""
     gcode = gate.printer.lookup_object('gcode', None)
     if gcode is None:
         return

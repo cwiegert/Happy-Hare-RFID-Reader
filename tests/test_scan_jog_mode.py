@@ -528,8 +528,8 @@ def test_load_transition_waits_for_idle_settle_before_scan():
     result = g._poll_timer_event(100.1)
     assert g._scan_mode
     assert NFCGate._active_scan_gate == 0
-    assert g.printer._gcode.responses[-1].startswith(
-        '[SCAN] NFC[0]: starting scan-jog (max=')
+    assert '[SCAN]' in g.printer._gcode.responses[-1]
+    assert 'NFC[0]: starting scan-jog (max=' in g.printer._gcode.responses[-1]
     assert result == g.reactor.NEVER
 
 def test_no_trigger_while_printing():
@@ -572,8 +572,8 @@ def test_scan_lock_defers_pending_trigger_for_three_seconds():
     result = g._poll_timer_event(result)
 
     assert g._scan_mode
-    assert g.printer._gcode.responses[-1].startswith(
-        '[SCAN] NFC[2]: starting scan-jog (max=')
+    assert '[SCAN]' in g.printer._gcode.responses[-1]
+    assert 'NFC[2]: starting scan-jog (max=' in g.printer._gcode.responses[-1]
     assert result == g.reactor.NEVER
 
 def test_scan_disabled_skips_all_detection():
@@ -1032,43 +1032,6 @@ def test_scan_step_issues_one_chunk_when_due():
     assert result == pytest_approx(100.5)
 
 
-def test_scan_step_move_trace_logs_only_at_debug_four():
-    from nfc_gates import scan_jog
-
-    messages = []
-    old_info = scan_jog.logger.info
-    scan_jog.logger.info = lambda msg, *args: messages.append(
-        msg % args if args else msg)
-    try:
-        g = _make_gate(gate=1, scan_jog_mm=50.0, scan_max_mm=200.0,
-                       scan_poll_interval=0.5)
-        g._debug = 3
-        g._scan_mode = True
-        g._scan_next_chunk_time = 100.0
-        g._scan_hh_prep_pending = False
-        g.printer.set_print_state('standby')
-        g.printer.set_mmu(MockMMU(gear_short_move_speed=80.0))
-        g._poll = lambda: False
-        g._scan_step_event(100.0)
-
-        assert not any('move queued' in msg for msg in messages)
-        messages[:] = []
-
-        g = _make_gate(gate=1, scan_jog_mm=50.0, scan_max_mm=200.0,
-                       scan_poll_interval=0.5)
-        g._debug = 4
-        g._scan_mode = True
-        g._scan_next_chunk_time = 100.0
-        g._scan_hh_prep_pending = False
-        g.printer.set_print_state('standby')
-        g.printer.set_mmu(MockMMU(gear_short_move_speed=80.0))
-        g._poll = lambda: False
-        g._scan_step_event(100.0)
-
-        assert any('move queued' in msg for msg in messages)
-    finally:
-        scan_jog.logger.info = old_info
-
 
 def test_scan_reads_per_position_before_substep_move():
     """Scan-jog reads a stopped position N times before the next substep."""
@@ -1258,8 +1221,8 @@ def test_manual_jog_success_message_has_readable_spacing():
     g._manual_jog_scan(gcmd)
 
     assert g._scan_mode
-    assert gcmd.responses[-1].startswith(
-        '[SCAN] NFC[test]: scan-jog started for gate 3 (max=')
+    assert '[SCAN]' in gcmd.responses[-1]
+    assert 'NFC[test]: scan-jog started for gate 3 (max=' in gcmd.responses[-1]
 
 def test_manual_jog_schedules_required_hh_prep():
     g = _make_gate(gate=3)
@@ -1345,57 +1308,6 @@ def test_rewind_skipped_when_nothing_jogged():
     g = _make_gate(gate=1)
     g._run_rewind()   # scan_mm_total defaults to 0.0
     assert len(g.printer.gcode_scripts) == 0
-
-
-def test_scan_jog_console_output_false_suppresses_non_errors():
-    g = _make_gate(gate=1)
-    g._console_output = False
-
-    g._console("[WARN] NFC[1]: warning")
-    g._console("[OK] NFC[1]: ok")
-    g._console("[ERROR] NFC[1]: error")
-
-    plain = [_strip_html(msg) for msg in g.printer._gcode.responses]
-    assert plain == ["[ERROR] NFC[1]: error"]
-
-
-def test_scan_jog_console_log_level_two_shows_warnings_only():
-    g = _make_gate(gate=1)
-    g._console_output = True
-    g._console_log_level = 2
-
-    g._console("[WARN] NFC[1]: warning")
-    g._console("[OK] NFC[1]: ok")
-    g._console("NFC[1]: moving 1.0mm")
-
-    plain = [_strip_html(msg) for msg in g.printer._gcode.responses]
-    assert plain == ["[WARN] NFC[1]: warning"]
-
-
-def test_scan_jog_console_log_level_three_shows_state_changes_not_trace():
-    g = _make_gate(gate=1)
-    g._console_output = True
-    g._console_log_level = 3
-
-    g._console("[SCAN] NFC[1]: starting")
-    g._console("[REWIND] NFC[1]: rewinding")
-    g._console("NFC[1]: moving 1.0mm")
-
-    plain = [_strip_html(msg) for msg in g.printer._gcode.responses]
-    assert plain == [
-        "[SCAN] NFC[1]: starting",
-        "[REWIND] NFC[1]: rewinding",
-    ]
-
-
-def test_scan_jog_console_log_level_four_shows_trace():
-    g = _make_gate(gate=1)
-    g._console_output = True
-    g._console_log_level = 4
-
-    g._console("NFC[1]: moving 1.0mm")
-
-    assert g.printer._gcode.responses == ["NFC[1]: moving 1.0mm"]
 
 
 # ── Left-neighbor interference ────────────────────────────────────────────────

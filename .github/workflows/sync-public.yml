@@ -26,6 +26,8 @@ jobs:
           rm -rf tools/
           rm -rf docs/tools/
           rm -f README-private.md
+          rm -f VENDORED.md
+          rm -f PR.md
 
       - name: Push to public repo
         if: ${{ github.event.inputs.dry_run != 'true' }}

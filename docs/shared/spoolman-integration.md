@@ -44,7 +44,7 @@ NFC GATE=0 SCAN=1
 The UID prints in the console.
 
 **From a phone:**
-Any NFC reader app on Android or iOS can read the UID. The UID is factory-programmed and identical regardless of which reader reads it.
+Any NFC reader app on Android or iOS can read the UID. The UID is factory-programmed and identical regardless of which reader reads it.   NFCTools is a good option
 
 ---
 

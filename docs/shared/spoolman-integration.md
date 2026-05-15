@@ -223,7 +223,25 @@ Example OpenSpool-like JSON payload (MIME `application/vnd.openspool` or generic
 }
 ```
 
-If you prefer command-line tools, write any NDEF tool that can store a MIME record containing the JSON above. For Bambu factory/tagged MIFARE spools follow Bambu-specific tooling and authentication (see `klippy/extras/nfc_gates/vendor/rfid_tag_parser.py` notes about authenticated reads).
+If you are using the NFC Tools app, write the payload as a plain text record. Do not use a rich-text editor or any tool that formats or escapes quotes automatically.
+
+Example NFC Tools write steps:
+1. Open NFC Tools and go to the **Write** tab.
+2. Tap **Add a record**.
+3. Choose **Text**.
+4. Paste the exact JSON payload below into the text field, including all braces, quotes, commas, and colons:
+
+```json
+{"brand":"Sunlu","material":"ASA","color_hex":"#FF5500","min_temp":200,"max_temp":220,"bed_temp":60,"diameter":1.75}
+```
+
+5. Tap **Write**, then place the tag on the reader.
+
+The text field on the tag must contain the raw JSON object exactly as shown; the parser reads that text as metadata. The `material` field is required for Spoolman auto-create.
+
+If your writer supports custom MIME records, use MIME type `application/vnd.openspool` and the same JSON payload exactly.
+
+For Bambu factory/tagged MIFARE spools, use the appropriate authenticated writer; plain text writes only apply to generic rich tags.
 
 When testing: enable `tag_parsing: True` and `spoolman_auto_create: True` in your `nfc_reader.cfg` so the auto-create path runs on read. Watch the Klipper console logs for `auto_create` resolution and any HTTP error messages.
 

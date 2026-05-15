@@ -15,7 +15,7 @@ Load spool → HH parks filament → scan-jog rotates spool → tag in range →
 - A Voron with an EMU running ~~[Happy Hare](https://github.com/moggieuk/Happy-Hare)~~
 - The [jacksky6 JK-dev branch](https://github.com/jacksky6/Happy-Hare/tree/JK-dev) of Happy Hare.
 - One mcu per filament lane (EBB36, EBB42, or SLB)
-- One PN532 NFC reader module per gate (~$3–5 each) 
+- One PN532 NFC reader module per gate (~$3–5 each)    the holder is designed for [35mm PCB](https://www.amazon.com/dp/B0DDKX2JCD)
 - M2 x 4 self-tapping screws to mount each PN532 to the bracket
 - Spoolman running and accessible from the Pi
 - NFC tags on your spools (NTAG213/215/216 or Mifare Classic)

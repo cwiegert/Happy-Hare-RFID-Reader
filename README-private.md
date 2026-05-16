@@ -13,7 +13,7 @@ Load spool → HH parks filament → scan-jog rotates spool → tag in range →
 ## What You Need
 
 - A Voron with an EMU running ~~[Happy Hare](https://github.com/moggieuk/Happy-Hare)~~
-- The [jacksky6 JK-dev branch](https://github.com/jacksky6/Happy-Hare/tree/JK-dev) of Happy Hare.
+- The [igiannakas IG-dev branch](https://github.com/igiannakas/Happy-Hare/tree/IG-dev)  of Happy Hare.
 - One mcu per filament lane (EBB36, EBB42, or SLB)
 - One PN532 NFC reader module per gate (~$3–5 each) 
 - M2 x 4 self-tapping screws to mount each PN532 to the bracket
@@ -55,7 +55,7 @@ NFC GATE=0 JOG_SCAN=1
 ```
 This runs the exact same sequence with the same precondition checks (HH idle, not printing, no other gate scanning).
 
-**Happy Hare post-preload hook (alternative to automatic polling):** The [jacksky6 JK-dev branch](https://github.com/jacksky6/Happy-Hare/tree/JK-dev) of Happy Hare adds a `variable_user_post_preload_extension` hook. Configure it to trigger NFC scan-jog automatically after each `MMU_PRELOAD`:
+**Happy Hare post-preload hook (alternative to automatic polling):** The [igiannakas IG-dev branch](https://github.com/igiannakas/Happy-Hare/tree/IG-dev)  of Happy Hare adds a `variable_user_post_preload_extension` hook. Configure it to trigger NFC scan-jog automatically after each `MMU_PRELOAD`:
 
 ```ini
 [gcode_macro _MMU_SEQUENCE_VARS]

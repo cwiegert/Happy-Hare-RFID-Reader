@@ -67,7 +67,7 @@ NFC GATE=0 JOG_SCAN=1
 ```
 This runs the exact same sequence with the same precondition checks (HH idle, not printing, no other gate scanning).
 
-**Happy Hare post-preload hook (alternative to automatic polling):** The [jacksky6 JK-dev branch](https://github.com/jacksky6/Happy-Hare/tree/JK-dev) of Happy Hare adds a `variable_user_post_preload_extension` hook. Configure it to trigger NFC scan-jog automatically after each `MMU_PRELOAD`:
+**Happy Hare post-preload hook (alternative to automatic polling):** The [igiannakas IG-dev branch](https://github.com/igiannakas/Happy-Hare/tree/IG-dev) of Happy Hare adds a `variable_user_post_preload_extension` hook. Configure it to trigger NFC scan-jog automatically after each `MMU_PRELOAD`:
 
 ```ini
 [gcode_macro _MMU_SEQUENCE_VARS]
@@ -134,7 +134,7 @@ SSH to the Pi and clone the repo:
 
 ```bash
 cd ~
-git clone https://github.com/cwiegert/HH-RFID-Reaader.git emu-nfc-reader
+git clone https://github.com/cwiegert/HH-RFID-Reader.git emu-nfc-reader
 cd ~/emu-nfc-reader
 bash install.sh
 ```

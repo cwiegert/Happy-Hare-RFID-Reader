@@ -106,6 +106,55 @@ After a UID resolves, NFC dispatches `_NFC_SPOOL_CHANGED`; the default macro upd
 
 ---
 
+## Dropout & Build-up logic (UID → Spool → Filament → Vendor)
+
+This section describes the cascade the software follows when a UID is read and how missing entities are handled.
+
+Dropout logic (what happens when something is missing)
+
+- UID present but no Spoolman match
+  - If `spoolman_auto_create: False` → the system falls back to the UID-only path and fires `_NFC_TAG_NO_SPOOL`. The gate remains `AVAILABLE=1` and Happy Hare will treat the lane as loaded (no `SPOOL_ID` set).
+  - If `spoolman_auto_create: True` and `tag_parsing: True` but the tag metadata is insufficient (no `material`) → auto-create is skipped and the read is unresolved.
+- Spool created but UID write fails
+  - After auto-creation, the adapter attempts to write the UID into the configured Spoolman extra field (`spoolman_rfid_key`). If that HTTP patch fails, the read is treated as unresolved to avoid losing the authoritative UID→spool link.
+- Auto-create failure
+  - If the tag metadata is incomplete, or if Spoolman cannot accept the new spool record, auto-create aborts and the read is treated as unresolved.
+
+Build-up logic (auto-create flow when metadata is present)
+
+- Preconditions:
+  - `tag_parsing: True`
+  - `spoolman_auto_create: True`
+  - Tag parser returned a `meta` dict containing at minimum `material` (e.g. "PLA"). Additional helpful fields: `brand`/`vendor`, `color_hex`, `min_temp`, `max_temp`, `bed_temp`, `diameter`.
+
+- Decision/build tree:
+  1. If the tag carries an embedded `spoolman_id`, that ID is checked first.
+     - If the spool exists, it is used directly.
+     - If the spool ID is invalid, the flow continues to UID lookup and then auto-create.
+  2. If no spool ID is embedded, the system looks up the UID in `rfid_tag`.
+     - If the UID is already attached to a spool, that spool is used.
+     - If the UID is not found, auto-create begins.
+  3. During auto-create, the system determines whether a matching vendor and filament/profile already exist:
+     - If `brand`/`vendor` is present, the existing vendor is used when possible; otherwise a new vendor entry may be created.
+     - If a filament/profile matching the parsed metadata exists for that vendor, it is reused; otherwise a new filament/profile is created and the vendor is assigned on that filament.
+     - Finally, the spool record is created for that filament/profile if needed.
+  4. After the spool record exists, the UID is written into the configured `spoolman_rfid_key` extra field on that spool.
+
+- Practical result:
+  - Existing spool by UID → no create needed.
+  - Existing spool by embedded ID → no create needed.
+  - Missing spool but enough metadata → new spool record is created.
+  - Missing filament/profile metadata → auto-create is skipped and the read is unresolved.
+
+- On success: the new or existing spool ID is used and `_NFC_SPOOL_CHANGED` is fired with `SPOOL_ID=<new_id>`.
+- On any failure: auto-create aborts, the read is treated as unresolved, and the console/logs show the error. Inspect verbose logs to see the exact HTTP response.
+
+Notes:
+- Auto-create uses the same Spoolman URL resolved by your configuration.
+- The system always writes the UID to the configured `spoolman_rfid_key` field after creating the spool so later reads resolve by UID.
+
+---
+
 ## Spoolman URL Configuration
 
 **Automatic (recommended):**
@@ -146,6 +195,55 @@ console_log_level: info
 ```
 
 Restart Klipper, then run `NFC GATE=0 POLL=1`.
+
+---
+
+## Creating a rich tag (examples and required fields)
+
+A "rich" tag carries NDEF metadata the vendored parser understands (OpenSpool/OpenPrintTag/Bambu/Elegoo/etc.). To have Spoolman auto-create records from a tag, the tag should include at least the `material` field. Recommended additional fields:
+- `brand` or `vendor` (string)
+- `material` (string) — required for auto-create
+- `color_hex` (string, `#RRGGBB`) — optional but recommended
+- `min_temp` / `max_temp` (integers) — recommended for sensible temps
+- `bed_temp` (integer) — optional
+- `diameter` (float, e.g. `1.75`) — optional
+- `spoolman_id` (integer) — optional embedded Spoolman ID; if present the resolver will try this first
+
+Example OpenSpool-like JSON payload (MIME `application/vnd.openspool` or generic NDEF JSON):
+
+```json
+{
+  "brand": "eSun",
+  "material": "PLA",
+  "color_hex": "#FF5500",
+  "min_temp": 200,
+  "max_temp": 220,
+  "bed_temp": 60,
+  "diameter": 1.75
+}
+```
+
+If you are using the NFC Tools app, write the payload as a plain text record. Do not use a rich-text editor or any tool that formats or escapes quotes automatically.
+
+Example NFC Tools write steps:
+1. Open NFC Tools and go to the **Write** tab.
+2. Tap **Add a record**.
+3. Choose **Text**.
+4. Paste the exact JSON payload below into the text field, including all braces, quotes, commas, and colons:
+
+```json
+{"brand":"Sunlu","material":"ASA","color_hex":"#FF5500","min_temp":200,"max_temp":220,"bed_temp":60,"diameter":1.75}
+```
+
+5. Tap **Write**, then place the tag on the reader.
+
+The text field on the tag must contain the raw JSON object exactly as shown; the parser reads that text as metadata. The `material` field is required for Spoolman auto-create.
+
+If your writer supports custom MIME records, use MIME type `application/vnd.openspool` and the same JSON payload exactly.
+
+For Bambu factory/tagged MIFARE spools, use the appropriate authenticated writer; plain text writes only apply to generic rich tags.
+
+When testing: enable `tag_parsing: True` and `spoolman_auto_create: True` in your `nfc_reader.cfg` so the auto-create path runs on read. Watch the Klipper console logs for `auto_create` resolution and any HTTP error messages.
 
 ---
 

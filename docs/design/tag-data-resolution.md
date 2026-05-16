@@ -278,7 +278,7 @@ The default macro sets the Happy Hare gate map directly from these values:
 
 ```gcode
 MMU_GATE_MAP GATE={gate} MATERIAL={material} COLOR={color} AVAILABLE=1 QUIET=1
-MMU_GATE_MAP GATE={gate} APPLY=1
+MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 ```
 
 The macro must handle both the Spoolman path (where `SPOOL_ID` is present, `MATERIAL`/`COLOR` may not be) and the direct path (where `MATERIAL`/`COLOR` are present, `SPOOL_ID` is not). Klipper GCode macros will error if a referenced variable is not passed, so the default macro uses conditional blocks:
@@ -289,7 +289,7 @@ The macro must handle both the Spoolman path (where `SPOOL_ID` is present, `MATE
 {% else %}
     MMU_GATE_MAP GATE={gate} MATERIAL={material|default('')} COLOR={color|default('')} AVAILABLE=1 QUIET=1
 {% endif %}
-MMU_GATE_MAP GATE={gate} APPLY=1
+MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 ```
 
 ---

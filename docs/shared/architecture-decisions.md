@@ -90,7 +90,8 @@ absent_threshold: 3    # consecutive missed reads
 
 ## Decision: Per-Lane I2C Bus (One PN532 Per EBB42)
 
-**What we decided:** Each gate has one PN532, wired to the I2C bus on that lane's EBB42. There is no shared I2C bus across lanes.
+**What we decided:** Each per-lane gate reader has one PN532, wired to the I2C
+bus on that lane's EBB42. There is no shared I2C bus across the lane readers.
 
 **Why we chose this over a shared bus / multiplexer:**
 - No I2C address management. Every PN532 can stay at `0x24` because they are on separate buses.
@@ -98,7 +99,15 @@ absent_threshold: 3    # consecutive missed reads
 - Failures are isolated. A PN532 that holds SDA low only affects one lane.
 - The lane MCU already exists as part of the Happy Hare hardware setup. Its I2C bus is available with no extra wiring effort.
 
-**Trade-off accepted:** This design only works when each lane has its own MCU. A printer with a single MCU for all lanes would need a different approach (multiplexer or shared bus with unique addresses).
+**Trade-off accepted:** The per-lane reader design only works when each lane has
+its own MCU. A printer with a single MCU for all lane readers would need a
+different approach (multiplexer or shared bus with unique addresses).
+
+**Shared-reader exception:** The optional shared reader is not part of the
+per-lane reader set. It is a single PN532 mounted inside the MMU body and wired
+to whichever MCU hosts that I2C bus. It stages `NEXT_SPOOLID` for Happy Hare
+instead of assigning a physical lane directly. See
+[Shared Reader](shared-reader.md).
 
 ---
 

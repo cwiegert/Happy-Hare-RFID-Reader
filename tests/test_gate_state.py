@@ -44,6 +44,12 @@ _nfc_pkg.__path__    = [os.path.join(_EXTRAS, 'nfc_gates')]
 _nfc_pkg.__package__ = 'nfc_gates'
 
 _null = _NullLogger()
+
+def _stub_parse_tag(raw, uid_hex=None, trace=None):
+    if trace is not None:
+        trace('debug', 'stub parser called')
+    return None
+
 _stub('nfc_gates.log',
       logger=_null, configure=lambda *a, **k: None,
       info=lambda *a, **k: None,
@@ -60,11 +66,18 @@ _stub('nfc_gates.pn532_driver',
       low_level_debug_help_lines=lambda command_base: [],
       run_low_level_debug=lambda *a, **k: False)
 _stub('nfc_gates.spoolman_client', SpoolmanClient=object)
-_stub('nfc_gates.vendor',
-      __path__=[os.path.join(_EXTRAS, 'nfc_gates', 'vendor')],
-      __package__='nfc_gates.vendor')
+_vendor_pkg = _stub('nfc_gates.vendor',
+                   __path__=[os.path.join(_EXTRAS, 'nfc_gates', 'vendor')],
+                   __package__='nfc_gates.vendor')
+_nfc_pkg.vendor = _vendor_pkg
+
+def _stub_parse_tag(raw, uid_hex=None, trace=None):
+    if trace is not None:
+        trace('debug', 'stub parser used')
+    return None
+
 _stub('nfc_gates.vendor.rfid_tag_parser',
-      parse_tag=lambda raw, uid_hex=None: None,
+      parse_tag=_stub_parse_tag,
       is_parse_error=lambda info: bool(
           isinstance(info, dict) and (info.get('error') or info.get('parse_error'))))
 
@@ -72,6 +85,7 @@ from nfc_gates.gate_state import (
     CurrentTag, GateState, DIRECT_METADATA_SPOOL,
     EVENT_CHANGED, EVENT_UID_ONLY, EVENT_REMOVED)
 from nfc_gates.klipper_interface import KlipperInterface
+import nfc_gates.klipper_interface as klipper_interface
 from nfc_gates.nfc_manager import NFCGate
 import nfc_gates.tag_handler as tag_handler
 
@@ -933,6 +947,29 @@ def test_klipper_interface_changed_with_spool_id():
     ki.dispatch(EVENT_CHANGED, gate=0, uid_hex='04AABB', spool_id=42)
     assert gcode.scripts == ['_NFC_SPOOL_CHANGED GATE=0 SPOOL_ID=42 UID=04AABB']
 
+def test_klipper_interface_changed_with_spool_id_scan_finish():
+    ki, gcode = _make_ki()
+    ki.dispatch(EVENT_CHANGED, gate=0, uid_hex='04AABB', spool_id=42,
+                scan_finish=True)
+    assert gcode.scripts == [
+        '_NFC_SPOOL_CHANGED GATE=0 SPOOL_ID=42 UID=04AABB SCAN_FINISH=1'
+    ]
+
+def test_klipper_interface_debug_two_suppresses_info_log_file_chatter():
+    p = _MockPrinterKI()
+    ki = KlipperInterface(p, _ImmediateReactor(), debug=2)
+    messages = []
+    old_info = klipper_interface.logger.info
+    klipper_interface.logger.info = lambda msg, *args: messages.append(
+        msg % args if args else msg)
+    try:
+        ki.dispatch(EVENT_CHANGED, gate=0, uid_hex='04AABB', spool_id=42)
+    finally:
+        klipper_interface.logger.info = old_info
+
+    assert p._gcode.scripts == ['_NFC_SPOOL_CHANGED GATE=0 SPOOL_ID=42 UID=04AABB']
+    assert messages == []
+
 def test_klipper_interface_changed_metadata_only_full_meta():
     ki, gcode = _make_ki()
     ki.dispatch(EVENT_CHANGED, gate=1, uid_hex='04AABB', spool_id=None,
@@ -980,6 +1017,14 @@ def test_klipper_interface_uid_only():
     ki, gcode = _make_ki()
     ki.dispatch(EVENT_UID_ONLY, gate=2, uid_hex='04CCDD', spool_id=None)
     assert gcode.scripts == ['_NFC_TAG_NO_SPOOL GATE=2 UID=04CCDD']
+
+def test_klipper_interface_uid_only_scan_finish():
+    ki, gcode = _make_ki()
+    ki.dispatch(EVENT_UID_ONLY, gate=2, uid_hex='04CCDD', spool_id=None,
+                scan_finish=True)
+    assert gcode.scripts == [
+        '_NFC_TAG_NO_SPOOL GATE=2 UID=04CCDD SCAN_FINISH=1'
+    ]
 
 def test_klipper_interface_removed():
     ki, gcode = _make_ki()

@@ -114,6 +114,11 @@ scan_poll_interval:    0.10
 | `scan_decode_retry_rounds` | `5` | Nearby retry rounds before accepting the current UID/metadata result. Each round probes both sides of the first UID hit. |
 | `scan_poll_interval` | `0.10` | Seconds between stopped-position NFC read attempts during scan-jog. Since Happy Hare `MMU_TEST_MOVE` blocks by default, this is not a read-while-moving interval. |
 
+There is no user setting for left-neighbor interference. During scan-jog, gate
+`N` checks only the cached UID on gate `N - 1`; if it exactly matches the UID
+just read, NFC moves the left neighbor 75 mm out of range, continues scanning,
+and restores the neighbor on scan exit.
+
 **Happy Hare post-preload hook (alternative to automatic polling):**
 
 The [igiannakas IG-dev branch](https://github.com/igiannakas/Happy-Hare/tree/IG-dev) of Happy Hare adds `variable_user_post_preload_extension` in `config/base/mmu_macro_vars.cfg`. Set it to trigger NFC scan-jog after each successful `MMU_PRELOAD`:
@@ -200,6 +205,9 @@ console_log_level: warning
 | `debug` | `2` | `0` (or `off`) = no logging. `1` (or `error`) = errors only. `2` (or `warning`) = warnings and errors. `3` (or `info`) = state changes, Spoolman lookups, HH handoff. `4` (or `debug`) = full I2C protocol trace. |
 | `console_output` | `False` | Send NFC log messages to the Fluidd/Mainsail console. Errors always appear in the console regardless of this setting. |
 | `console_log_level` | `warning` | Minimum level to show in console when `console_output: True`. Accepts string (`error`, `warning`, `info`, `debug`) or numeric (`1`–`4`). |
+
+Shared reader console messages and their matching `nfc_reader.log` entries are
+defined in [Message Definitions](message_definition.md).
 
 **Recommended for normal printing:**
 ```ini
@@ -293,7 +301,7 @@ Default:
 {% else %}
     MMU_GATE_MAP GATE={gate} [NAME=..] [MATERIAL=..] [COLOR=..] [TEMP=..] AVAILABLE=1 QUIET=1
 {% endif %}
-MMU_GATE_MAP GATE={gate} APPLY=1
+MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 ```
 
 `AUTO_CREATED=1` is set when the spool record was just created by `spoolman_auto_create`. The macro runs `MMU_SPOOLMAN REFRESH=1 QUIET=1` first so Happy Hare's Spoolman cache includes the new spool before the gate assignment is sent.
@@ -305,7 +313,7 @@ Called after `absent_threshold` consecutive missed polls. Parameter: `GATE`.
 Default:
 ```gcode
 MMU_GATE_MAP GATE={gate} SPOOLID=-1 AVAILABLE=0 SYNC=1 QUIET=1
-MMU_GATE_MAP GATE={gate} APPLY=1
+MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 ```
 
 ### `_NFC_TAG_NO_SPOOL`
@@ -313,6 +321,111 @@ MMU_GATE_MAP GATE={gate} APPLY=1
 Called when a tag is detected but no matching spool is found in Spoolman. Parameters: `GATE`, `UID`.
 
 Default: prints the unknown UID to the console with instructions to register it.
+
+---
+
+---
+
+## Shared Reader
+
+The shared reader is an optional single PN532 mounted inside the MMU body — not tied to any EMU lane. Tap a tagged spool on it before loading; when Happy Hare starts the pregate preload NFC stages the spool ID automatically.
+
+**No per-lane readers are required.** A shared-only installation needs only the base `[nfc_gate]` section (for Spoolman config) and the `[nfc_gate shared]` section. No `[nfc_gate lane0]` or similar sections are needed.
+
+The shared reader lives in its own file — `nfc_reader_shared.cfg` — so it can be added to any install without editing the lane hardware config. For a **pure shared install**, include it instead of `nfc_reader_hw.cfg`. For a **hybrid install** (per-lane readers plus a shared reader), include both.
+
+Run `install.sh` to generate `nfc_reader_shared.cfg` with your hardware values, or copy the template from `config/nfc_reader_shared.cfg` in the repo and edit `i2c_mcu`, `i2c_bus`, and `i2c_address` manually.
+
+### Config
+
+The `[nfc_gate shared]` section lives in `nfc_reader_shared.cfg`:
+
+```ini
+[nfc_gate shared]
+i2c_mcu:                mmu
+i2c_bus:                i2c1
+i2c_address:            0x24
+shared:                 true
+startup_polling:        1
+```
+
+Full config with all optional keys shown:
+
+```ini
+[nfc_gate shared]
+i2c_mcu:                mmu
+i2c_bus:                i2c1
+i2c_address:            0x24
+shared:                 true
+startup_polling:        1
+poll_interval:          3.0
+shared_pending_timeout: 120.0
+shared_read_timeout:    120.0
+shared_tag_read_effect: mmu_RFID_read
+shared_spool_ready_effect: mmu_RFID_ready
+shared_tag_unresolved_effect: mmu_RFID_unresolved
+shared_missed_limit:    3
+force_spool_id:         false
+```
+
+| Setting | Default | Description |
+|---|---|---|
+| `shared` | `false` | Enable shared dispatch for this reader. Must be `true`. |
+| `startup_polling` | `0` | Set to `1` to poll at Klipper boot. Explicit user choice. |
+| `poll_interval` | `3.0` | Seconds between reads while polling is active. |
+| `shared_pending_timeout` | `120.0` | Seconds a scanned spool remains eligible for the next preload. |
+| `shared_read_timeout` | `120.0` | Seconds polling may run without resolving a valid tag before auto-stopping. No effect when started via `startup_polling` or PRELOAD_CHECK auto-restart. |
+| `shared_tag_read_effect` | `''` | Name of a `[mmu_led_effect]` to play as soon as the shared reader sees a tag. Leave empty to skip tag-detected LED feedback. |
+| `shared_spool_ready_effect` | `''` | Name of a `[mmu_led_effect]` to play when the tag resolves to a Spoolman spool and is ready to load. Leave empty to skip ready LED feedback. |
+| `shared_tag_unresolved_effect` | `''` | Name of a `[mmu_led_effect]` to play when the tag UID does not resolve to a spool. Leave empty to skip unresolved LED feedback. |
+| `shared_missed_limit` | `3` | Consecutive unresolvable UID reads before a console message advises the user to use `MMU_PRELOAD`. Minimum 1. |
+| `force_spool_id` | `false` | When `true`, `PRELOAD_CHECK` raises a gcode error if no spool is staged, blocking Happy Hare from completing the pregate load until a tag has been scanned. |
+
+`mmu_gate` and `scan_enabled` are not user-configurable — both are set internally by `shared: true`. Only one shared reader may be configured. The reader inherits `spoolman_url`, `spoolman_rfid_key`, `tag_parsing`, `spoolman_auto_create`, and all logging settings from the base `[nfc_gate]` section.
+
+**Rich tags** work with the shared reader only when they resolve to a real
+Spoolman spool ID. That can happen through an existing UID lookup, an embedded
+`spoolman_id`, or `spoolman_auto_create: true`. Metadata-only rich tags are not
+enough for shared preload staging because `MMU_GATE_MAP NEXT_SPOOLID` requires
+an integer spool ID. See [Shared Reader — Rich tag compatibility](shared-reader.md#rich-tag-compatibility).
+
+### Happy Hare hook wiring
+
+Add one user extension hook to `mmu_macro_vars.cfg`:
+
+```ini
+[gcode_macro _MMU_SEQUENCE_VARS]
+; stage NEXT_SPOOLID before a pregate-triggered automatic preload
+variable_user_pre_load_extension: '_NFC_SHARED_PRELOAD'
+```
+
+`variable_user_pre_load_extension` fires at the start of every pregate load. `PRELOAD_CHECK` skips only while printing — it is safe to leave wired for all loads. If no spool is staged a console message advises the user; with `force_spool_id: true` the load is blocked instead.
+
+Shared polling pauses automatically when printing starts and resumes when printing completes via Klipper's `idle_timeout` events — no post-unload hook is needed.
+
+The pre-load hook points to a macro shipped in `nfc_macros.cfg`. Override it in your own cfg to add logic around the NFC check without changing the HH variable.
+
+### LED effect
+
+Define a named `[mmu_led_effect]` in your LED config (same style as `emu_macros.cfg`):
+
+```ini
+[mmu_led_effect mmu_RFID_read]
+define_on: gates
+layers: strobe 1 2 top (1, 1, 0)
+
+[mmu_led_effect mmu_RFID_ready]
+define_on: gates
+layers: strobe 1 2 top (0, 1, 0)
+
+[mmu_led_effect mmu_RFID_unresolved]
+define_on: gates
+layers: strobe 1 5 top (1, 0, 0)
+```
+
+The effect names must match `shared_tag_read_effect`, `shared_spool_ready_effect`, and `shared_tag_unresolved_effect` in the gate config.
+
+`shared_auto_create_effect: mmu_RFID_creating` runs a bright yellow chase while Spoolman creates a missing spool, then stops before the green ready blink.
 
 ---
 

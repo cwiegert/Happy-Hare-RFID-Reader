@@ -211,9 +211,9 @@ This is intentional: a Spoolman outage does not affect HH or printing. Gates tha
 
 | Message type | `nfc_reader.log` | `klippy.log` | Console |
 |---|---|---|---|
-| Per-poll trace (`debug ≥ 4`, `logger.debug()`) | ✅ | ❌ | ❌ |
-| Integration — Spoolman / HH sync (`debug ≥ 3`, `logger.info()`) | ✅ | ❌ | if `console_output: True` |
-| Warnings — config issues, failure transitions (`debug ≥ 2`, `logger.warning()`) | ✅ | ✅ | if `console_output: True` |
+| Per-poll / movement trace (`debug ≥ 4`, `logger.debug()` or trace console message) | ✅ | ❌ | if `console_output: True` and `console_log_level ≤ 4` |
+| Integration — Spoolman / HH sync / scan state (`debug ≥ 3`, `logger.info()` or `[OK]`/`[SCAN]`/`[REWIND]`) | ✅ | ❌ | if `console_output: True` and `console_log_level ≤ 3` |
+| Warnings — config issues, failure transitions (`debug ≥ 2`, `logger.warning()` or `[WARN]`) | ✅ | ✅ | if `console_output: True` and `console_log_level ≤ 2` |
 | Errors — init fail, I2C error (`debug ≥ 1`, `logger.error()`) | ✅ | ✅ | ✅ always |
 | PN532 init result OK (`logger.info()`) | ✅ | ❌ | ✅ via `respond_info` |
 | PN532 init result failed (`logger.error()`) | ✅ | ✅ | ✅ via `respond_info` |

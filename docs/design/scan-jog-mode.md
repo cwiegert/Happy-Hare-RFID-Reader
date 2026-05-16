@@ -75,7 +75,7 @@ _poll_timer_event (every poll_interval)
 - A 2-second idle-settle delay (`_scan_idle_ready_time`) is inserted after HH reports idle. This prevents premature scan entry while HH is still completing its park move.
 - If another gate holds the scan lock, `_scan_pending` is re-armed and a 3-second retry is scheduled rather than silently dropping the trigger or spamming logs.
 
-**Manual trigger:** `NFC GATE=N JOG_SCAN=1` calls `scan_jog.manual_jog_scan(gate, gcmd)` directly. It runs the same precondition checks (not printing, HH idle, no other gate scanning, reader healthy) and calls `start(gate)`. No edge detection is involved. Happy Hare prep is always required, but `_NFC_GATE_CLEAR_CACHE` and `MMU_SPOOLMAN SYNC=1` are deferred to the scan timer so a Happy Hare post-preload hook can return before NFC calls back into HH.
+**Manual trigger:** `NFC GATE=N JOG_SCAN=1` calls `scan_jog.manual_jog_scan(gate, gcmd)` directly. It runs the same precondition checks (not printing, HH idle, no other gate scanning, reader healthy) and calls `start(gate)`. No edge detection is involved. Happy Hare prep is always required, but `_NFC_GATE_CLEAR_CACHE GATE=N` and `MMU_SPOOLMAN SYNC=1` are deferred to the scan timer so a Happy Hare post-preload hook can return before NFC calls back into HH.
 
 ---
 
@@ -126,6 +126,13 @@ self._scan_mode            = False
 self._scan_mm_total        = 0.0       # mm jogged forward so far
 self._scan_next_chunk_time = 0.0       # reactor timestamp when next jog chunk may fire
 self._scan_found_event     = None      # cached event suppressed during jog; dispatched after rewind
+
+# Left-neighbor interference mitigation
+self._scan_left_neighbor_gate = -1
+self._scan_left_neighbor_shift_mm = 0.0
+self._scan_left_neighbor_shifted = False
+self._scan_left_neighbor_uid = None
+self._scan_left_neighbor_attempts = 0
 
 # Trigger detection
 self._prev_gate_status     = -1        # -1 = cold start (no 0→1 false trigger)
@@ -182,7 +189,9 @@ def start(gate, max_mm=None):
 
 `start()` marks HH prep pending instead of running it synchronously. The first scan timer step consumes `_scan_hh_prep_pending`, then calls `clear_hh_gate_cache` and `sync_spoolman_before_scan` before polling and before the first jog move. This keeps the required HH state updates while avoiding reentrant `gcode.run_script()` calls from inside the Happy Hare hook stack.
 
-`clear_hh_gate_cache` issues `_NFC_GATE_CLEAR_CACHE GATE=N`, which calls `MMU_GATE_MAP GATE=N SPOOLID=-1 NAME=Unknown MATERIAL=Unknown COLOR=FFFFFF55 AVAILABLE=1`. This gives the Mainsail UI an "unknown filament" placeholder while the scan jog runs. `AVAILABLE=1` keeps the gate marked as loaded so HH does not treat it as empty.
+`clear_hh_gate_cache` issues `_NFC_GATE_CLEAR_CACHE GATE=N`. That macro calls `MMU_GATE_MAP GATE=N SPOOLID=-1 AVAILABLE=1 QUIET=1`, so Happy Hare keeps the gate loaded while clearing the stale spool assignment before scan-jog resolves the current spool. It deliberately does not write placeholder `NAME`, `MATERIAL`, or `COLOR` fields, because those can persist in Happy Hare after the real spool id is assigned.
+
+If scan-jog cannot resolve a spool id, stale filament metadata is cleared at the unresolved exit instead of at scan start. A tag that reads but has no Spoolman match dispatches `_NFC_TAG_NO_SPOOL ... SCAN_FINISH=1`; a scan that finds no tag calls `_NFC_SCAN_UNRESOLVED GATE=N` after rewind. Both paths clear `NAME`, `MATERIAL`, `COLOR`, and `TEMP` without dumping the full Happy Hare gate map.
 
 `sync_spoolman_before_scan` pushes the cleared HH gate state to Spoolman via `MMU_SPOOLMAN SYNC=1`, vacating the spool's location field before the jog begins.
 
@@ -192,7 +201,7 @@ def start(gate, max_mm=None):
 | Manual `NFC JOG_SCAN=1` | runs from scan timer | runs from scan timer |
 | HH post-preload hook | runs from scan timer | runs from scan timer |
 
-When the scan succeeds, `_NFC_SPOOL_CHANGED` issues the next `MMU_SPOOLMAN SYNC=1` with the newly identified spool.
+When the scan succeeds, `finish()` dispatches `_NFC_SPOOL_CHANGED ... SCAN_FINISH=1` after rewind. The macro assigns the identified spool and runs `MMU_SPOOLMAN SYNC=1`. `SCAN_FINISH` remains on the event as a compatibility marker, but the default macros do not print the full Happy Hare gate map.
 
 ### `step_event(gate, eventtime)` — the loop body
 
@@ -207,6 +216,9 @@ def step_event(gate, eventtime):
 
     now = gate.reactor.monotonic()
     tag_found = gate._poll()
+
+    if tag_found and handle_left_neighbor_interference(gate, now):
+        return gate.reactor.monotonic() + gate._scan_poll_interval
 
     if tag_found:
         if retry_incomplete_decode(gate, now):
@@ -234,6 +246,39 @@ The timer always returns `now + scan_poll_interval` so NFC is polled continuousl
 ### `finish(gate)` — tag found
 
 When a UID is detected but the rich payload read is marked incomplete, scan-jog queues nearby retry jogs before accepting the current UID/metadata result. The retry decision is format-neutral: reader/parser code sets `CurrentTag.read_incomplete` and `read_retry_reason`; scan-jog only applies the configured `scan_decode_retry_mm` / `scan_decode_retry_rounds` policy. Each retry round probes both sides of the first UID hit position. The first implementation marks incomplete MIFARE reads when sector authentication or block reads fail, which covers spool-mounted Bambu tags at the edge of the reader field.
+
+### Left-neighbor interference
+
+Some tagged spools expose a tag on both sides. With the PN532 mounted on the
+left side of each lane, gate `N` can occasionally see the parked spool on gate
+`N - 1` during scan-jog. The mitigation is intentionally narrow:
+
+- only active during scan-jog
+- only checks the immediate left neighbor
+- only treats a read as interference when the read UID exactly matches the
+  left NFC gate object's cached UID
+- never compares Spoolman spool IDs or Happy Hare display metadata
+
+When the match is confirmed, scan-jog selects the left gate, moves it forward
+75 mm, waits with `M400`, reselects the current gate, clears the false scan
+result, and reads again. If the same left-neighbor UID is still visible, it may
+repeat that clearance move up to three total times. The current gate's
+`_scan_mm_total` is unchanged because the current spool did not move.
+
+If the reader still sees the same left-neighbor UID after the third clearance
+move and follow-up read, scan-jog emits an `[ERROR]`, exits through the normal
+rewind path, and restores the left neighbor by the accumulated clearance
+distance. It does not assign the neighbor spool to the current lane.
+
+Both successful and aborted scan exits call `restore_left_neighbor()` after the
+current gate rewind is queued:
+
+```gcode
+MMU_SELECT GATE=<left>
+MMU_TEST_MOVE MOVE=-75.00 QUIET=1
+M400
+MMU_SELECT GATE=<current>
+```
 
 ```python
 def finish(gate):
@@ -328,6 +373,7 @@ Scan-jog messages follow the standard debug level conventions:
 | `starting scan-jog (max=Xmm poll=Ys)` | `debug >= 3`; console always | ✅ | ❌ |
 | `scan-jog not available while reason` | warning (always) | ✅ | ✅ |
 | `tag identified — rewinding Xmm` | `info` (always) | ✅ | ❌ |
+| `rewind complete; gate parking handed to Happy Hare` | `info` (always) | ✅ | ❌ |
 | `no tag — jogged Xmm / Xmm` | `info` (always at each step) | ✅ | ❌ |
 | `print started — aborting` | warning (always) | ✅ | ✅ |
 | `no tag after Xmm — rewinding` | warning (always) | ✅ | ✅ |

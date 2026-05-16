@@ -2,7 +2,18 @@
 
 [← README](../../Readme.md) | [Next: Install →](../shared/install-uninstall.md)
 
-Each filament gate gets **one PN532 wired directly to that gate's EBB42**. There is no shared bus — each reader lives on its own lane MCU's I2C bus.
+For per-lane EMU readers, each filament gate gets **one PN532 wired directly to
+that gate's EBB42**. There is no shared bus across the per-lane readers — each
+reader lives on its own lane MCU's I2C bus.
+
+The optional shared reader is the exception: it is a single PN532 mounted inside
+the MMU body and configured separately in `nfc_reader_shared.cfg`. It still
+must be wired to **some Klipper MCU's available I2C bus** — for example the MMU
+MCU, a toolhead MCU, or another controller already declared with an `[mcu ...]`
+section. The installer can write `i2c_mcu` / `i2c_bus` into
+`nfc_reader_shared.cfg`, but it does not create or validate that physical bus;
+you must pick real SDA/SCL pins supported by that MCU and wire the PN532 there.
+See [Shared Reader](../shared/shared-reader.md) for that wiring/config flow.
 
 ```
 lane0 EBB42  ←I2C→  PN532 (gate 0)

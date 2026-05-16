@@ -1,8 +1,10 @@
 # Commands & Macros
 
-[← README](../../Readme.md) | [Configuration →](configuration.md)
+[← README](../../Readme.md) | [Configuration](configuration.md) | [Messages →](message_definition.md)
 
 This is the day-to-day reference for operating the NFC gate reader from the Fluidd/Mainsail console.
+
+For shared reader console and `nfc_reader.log` messages, see [Message Definitions](message_definition.md).
 
 ---
 
@@ -10,7 +12,7 @@ This is the day-to-day reference for operating the NFC gate reader from the Flui
 
 | Command | What it does |
 |---|---|
-| `NFC_STATUS` | Show current state of every configured gate |
+| `NFC_STATUS` | Show current state of every configured gate (includes shared reader if configured) |
 | `NFC GATE=<n> STATUS=1` | Show one gate's state |
 | `NFC GATE=<n> INIT=1` | Initialize (or re-initialize) the PN532 reader |
 | `NFC GATE=<n> SCAN=1` | One raw read — shows UID, no Spoolman lookup |
@@ -23,6 +25,23 @@ This is the day-to-day reference for operating the NFC gate reader from the Flui
 | `NFC GATE=<n> HELP=1` | Show available commands |
 | `NFC_HH_SYNC_CACHE` | Re-seed all lane caches from the current Happy Hare gate map |
 | `NFC GATE=<n> HH_SYNC=1 SPOOL_ID=<n>` | Seed one lane's cache directly (called by `NFC_HH_SYNC_CACHE`) |
+| `NFC_SHARED READ=1` | Start shared polling manually; rejected while printing |
+| `NFC_SHARED READ=0` | Stop shared polling (keeps any pending spool) |
+| `NFC_SHARED STATUS=1` | Show detailed shared reader state |
+| `NFC_SHARED SUMMARY=1` | Show one-line shared reader state and next action |
+| `NFC_SHARED HELP=1` | Show shared reader command help |
+| `NFC_SHARED CANCEL=1` | Cancel a staged shared spool and stop polling |
+| `NFC_SHARED REPLACE=1` | Discard a staged spool and scan another |
+| `NFC_SHARED LED_TEST=1` | Test configured shared tag-read LED effect |
+| <span style="color:orange">━━━ **Advanced Shared Reader** — internal/recovery commands, not low-level PN532 debug ━━━</span> | |
+| `NFC_SHARED CLEAR=1` | Clear pending spool, stop polling, reset shared state |
+| `NFC_SHARED PRELOAD_CHECK=1` | Approve `NEXT_SPOOLID` if a valid pending spool exists (called from HH pre-load hook) |
+| `NFC_SHARED PRELOAD_COMMIT=1 SPOOL_ID=<id>` | Clear pending state after the hook macro successfully sends `NEXT_SPOOLID` |
+| `NFC_SHARED PRELOAD_CLEAR_ASSIGNED=1 SPOOL_ID=<id>` | Clear shared pending state when HH already has this spool assigned |
+| `NFC_SHARED POLL=1` | Force one full read/resolve cycle on the shared reader; skips while printing |
+| `NFC_SHARED SCAN=1` | Raw hardware scan only — no Spoolman/HH dispatch; skips while printing |
+| `NFC_SHARED INIT=1` | Re-run PN532 init on the shared reader; resumes startup polling if enabled |
+| `NFC_SHARED CLEAR_CACHE=1` | Clear tag cache on the shared reader (keeps pending spool) |
 | <span style="color:red">━━━ **Low-Level Debug** — requires `low_level_debug: True` — bypasses normal state machine ━━━</span> | |
 | `NFC GATE=<n> STEP=WAKEUP` | Write `0x00` to nudge PN532 out of power-down |
 | `NFC GATE=<n> STEP=READY` | Read STATUS byte — expects `01` (ready) |
@@ -70,8 +89,8 @@ The seed is always cleared after the first `CHANGED` event — it fires at most 
 
 **Console output at startup:**
 ```
-✅ NFC[lane0]: reader ready.  HH seed: spool_id=42  Startup polling is enabled; first poll in 0.0s.
-✅ NFC[lane1]: reader ready.  HH reports gate empty  Run NFC GATE=1 READ=1 to start polling.
+[OK] NFC[lane0]: reader ready.  HH seed: spool_id=42  Startup polling is enabled; first poll in 0.0s.
+[OK] NFC[lane1]: reader ready.  HH reports gate empty  Run NFC GATE=1 READ=1 to start polling.
 ```
 
 **If Happy Hare wasn't ready** when the NFC init ran (rare — both init at `klippy:connect`), the seed step is skipped and all first-poll reads dispatch normally. Run `NFC_HH_SYNC_CACHE` to manually re-seed.
@@ -366,12 +385,12 @@ Fires when a tag resolves to a spool and the gate state changed. Two dispatch pa
 
 **Spoolman path** — tag UID matched a Spoolman record:
 ```gcode
-_NFC_SPOOL_CHANGED GATE=<gate> SPOOL_ID=<id> UID=<uid> [AUTO_CREATED=1]
+_NFC_SPOOL_CHANGED GATE=<gate> SPOOL_ID=<id> UID=<uid> [AUTO_CREATED=1] [SCAN_FINISH=1]
 ```
 
 **Metadata path** — tag carries embedded filament data (Spoolman disabled or no match):
 ```gcode
-_NFC_SPOOL_CHANGED GATE=<gate> UID=<uid> [NAME=<str>] [MATERIAL=<str>] [COLOR=<hex>] [TEMP=<int>]
+_NFC_SPOOL_CHANGED GATE=<gate> UID=<uid> [NAME=<str>] [MATERIAL=<str>] [COLOR=<hex>] [TEMP=<int>] [SCAN_FINISH=1]
 ```
 
 Parameters:
@@ -379,6 +398,7 @@ Parameters:
 - `SPOOL_ID` — Spoolman spool ID (integer); present on Spoolman path only
 - `UID` — NFC tag UID (hex string); always present
 - `AUTO_CREATED` — `1` when `spoolman_auto_create` just created the spool record; absent otherwise
+- `SCAN_FINISH` — `1` when the event came from scan-jog after rewind; accepted as a compatibility marker by the default macros
 - `NAME` — display name from `material_detail` or `material`, prefixed with brand/vendor/tag format when present; metadata path only
 - `MATERIAL` — filament material string from tag metadata (e.g. `PLA`, `ABS`); metadata path only
 - `COLOR` — color hex string from tag metadata (e.g. `FF0000`); metadata path only
@@ -394,7 +414,7 @@ Default behavior:
 {% else %}
     MMU_GATE_MAP GATE={gate} [NAME=..] [MATERIAL=..] [COLOR=..] [TEMP=..] AVAILABLE=1 QUIET=1
 {% endif %}
-MMU_GATE_MAP GATE={gate} APPLY=1
+MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 ```
 
 On the Spoolman path, `AVAILABLE=1` marks the gate as loaded and `SYNC=1` lets Happy Hare push the update to Spoolman. When `AUTO_CREATED=1`, `MMU_SPOOLMAN REFRESH=1 QUIET=1` runs first so Happy Hare's Spoolman cache includes the new spool before the gate assignment is sent. On the metadata path, whatever fields are present on the tag are forwarded to `MMU_GATE_MAP`. `APPLY=1` applies the updated map immediately on both paths.
@@ -415,7 +435,7 @@ Parameters:
 Default behavior:
 ```gcode
 MMU_GATE_MAP GATE={gate} SPOOLID=-1 AVAILABLE=0 SYNC=1 QUIET=1
-MMU_GATE_MAP GATE={gate} APPLY=1
+MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 ```
 
 Clears the gate in Happy Hare's gate map. `AVAILABLE=0` marks the gate as empty. `APPLY=1` applies the change immediately.
@@ -429,18 +449,35 @@ The macro also checks `printer.mmu.action` — if the MMU is mid-load, unload, o
 Fires when a tag UID is detected but no matching spool is found in Spoolman.
 
 ```gcode
-_NFC_TAG_NO_SPOOL GATE=<gate> UID=<uid>
+_NFC_TAG_NO_SPOOL GATE=<gate> UID=<uid> [SCAN_FINISH=1]
 ```
 
 Parameters:
 - `GATE` — Happy Hare gate number
 - `UID` — the unrecognized tag UID
+- `SCAN_FINISH` — `1` when the event came from scan-jog after rewind; accepted as a compatibility marker by the default macro
 
-Default behavior: prints a message to the console with the UID and instructions to register it.
+Default behavior: prints a message to the console with the UID and instructions to register it, clears stale visible filament fields, and keeps the gate loaded/available.
 
-**Optional:** If you want unregistered tags to clear the Happy Hare gate instead of just logging, add this line to the macro body:
 ```gcode
-MMU_GATE_MAP GATE={gate} SPOOLID=-1 SYNC=1 QUIET=1
+MMU_GATE_MAP GATE={gate} SPOOLID=-1 NAME=Unknown MATERIAL=Unknown COLOR=FFFFFF TEMP=0 AVAILABLE=1 SYNC=1 QUIET=1
+MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
+```
+
+---
+
+### `_NFC_SCAN_UNRESOLVED`
+
+Fires after scan-jog rewinds when no tag/spool could be resolved. It clears stale visible Happy Hare filament metadata while keeping the gate loaded/available.
+
+```gcode
+_NFC_SCAN_UNRESOLVED GATE=<gate>
+```
+
+Default behavior:
+```gcode
+MMU_GATE_MAP GATE={gate} SPOOLID=-1 NAME=Unknown MATERIAL=Unknown COLOR=FFFFFF TEMP=0 AVAILABLE=1 SYNC=1 QUIET=1
+MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 ```
 
 ---
@@ -458,6 +495,7 @@ _NFC_SPOOL_CHANGED GATE=0 UID=04AABBCCDD MATERIAL=PLA COLOR=FF0000 TEMP=215
 
 _NFC_SPOOL_REMOVED GATE=0
 _NFC_TAG_NO_SPOOL GATE=0 UID=04AABBCCDD
+_NFC_SCAN_UNRESOLVED GATE=0
 ```
 
 If Happy Hare updates correctly, the pipeline from macro inward is working. If it doesn't, check:
@@ -471,19 +509,123 @@ If Happy Hare updates correctly, the pipeline from macro inward is working. If i
 
 The event macros are in `~/printer_data/config/nfc/nfc_macros.cfg`. Edit them to match your Happy Hare version.
 
-**All Happy Hare commands must stay inside `nfc_macros.cfg`** — do not put `MMU_GATE_MAP` or other Happy Hare commands in Python. This keeps Happy Hare-facing behavior visible and editable in config without touching Python code.
+For lane readers, the Happy Hare-facing gate assignment commands live in
+`nfc_macros.cfg` so they remain visible and editable without touching Python.
+The shared reader uses a narrow bridge: the macro first chooses either the
+per-lane-owned path or the shared staging path. In the shared path, Python
+validates pending state with `NFC_SHARED PRELOAD_CHECK=1`, the macro runs Happy
+Hare's public commands, and `NFC_SHARED PRELOAD_COMMIT=1` clears pending state
+only after `NEXT_SPOOLID` has been accepted. In the per-lane-owned path,
+`NFC_SHARED PRELOAD_CLEAR_ASSIGNED=1` clears only the shared pending state.
 
 ### Happy Hare commands used by the defaults
 
 | Command | Effect |
 |---|---|
 | `MMU_GATE_MAP GATE=<n> SPOOLID=<id> AVAILABLE=1 SYNC=1 QUIET=1` | Assign a spool to a gate, mark it available, and sync to Spoolman |
-| `MMU_GATE_MAP GATE=<n> APPLY=1` | Apply the current gate map immediately |
+| `MMU_GATE_MAP GATE=<n> APPLY=1 QUIET=1` | Apply the current gate map immediately |
 | `MMU_GATE_MAP GATE=<n> SPOOLID=-1 AVAILABLE=0 SYNC=1 QUIET=1` | Clear a gate, mark it empty, and sync to Spoolman |
 | `MMU_GATE_MAP GATE=<n> [NAME=..] [MATERIAL=..] [COLOR=..] [TEMP=..] AVAILABLE=1 QUIET=1` | Assign metadata (no Spoolman spool ID) — metadata path only |
 | `MMU_SPOOLMAN REFRESH=1 QUIET=1` | Force Happy Hare to re-sync its Spoolman cache — called before gate assignment when a new spool was auto-created |
 
-The default macros are designed for Happy Hare with `spoolman_support: push`. `SYNC=1` tells Happy Hare to push the local gate map change to Spoolman. If your Happy Hare version uses different command names or parameters, update the macro body.
+The default lane macros are designed for Happy Hare with `spoolman_support:
+push`. `SYNC=1` tells Happy Hare to push the local gate map change to Spoolman.
+If your Happy Hare version uses different lane command names or parameters,
+update the macro body. Shared-reader `NEXT_SPOOLID` staging is implemented in
+Python and uses Happy Hare's public GCode command surface.
+
+---
+
+## Shared Reader
+
+The shared reader is a single PN532 mounted inside the MMU body. Tap a spool tag on it before loading; NFC stages the spool ID for the next pregate preload automatically. See [Shared Reader](shared-reader.md) for the full setup and workflow guide.
+
+### Normal flow
+
+1. Shared reader is polling. With `startup_polling: 1` it starts at boot and pauses automatically when printing starts, resuming when printing completes.
+2. Tap your spool tag on the shared reader — NFC resolves the spool in Spoolman and stores it as pending. LED effect fires if configured.
+3. Drop the spool into an MMU lane and push the filament tip into the pregate sensor.
+4. Happy Hare detects the pregate load and fires `variable_user_pre_load_extension` → `_NFC_SHARED_PRELOAD`.
+5. If HH already has the pending spool assigned, the macro calls `NFC_SHARED PRELOAD_CLEAR_ASSIGNED=1` and skips shared staging. Otherwise it runs `NFC_SHARED PRELOAD_CHECK=1` and issues `MMU_GATE_MAP NEXT_SPOOLID=<id>` — Happy Hare assigns the spool to the loaded gate.
+6. Pending state is cleared only after Happy Hare accepts the command. For auto-created Spoolman spools, NFC refreshes HH's Spoolman cache first. Polling restarts automatically for the next spool.
+
+### Commands
+
+**`NFC_SHARED STATUS=1`** — Show detailed shared reader state: summary, polling
+flags, read deadline, pending spool/UID, auto-created flag, miss counter,
+strict mode, LED effect, print-safety block, last action, next action, and
+last error.
+
+```
+shared: idle
+shared: polling, no tag pending
+shared: pending spool 42  uid=ABCDEF  expires in 87s
+shared: expired  spool 42  uid=ABCDEF
+shared: error  tag uid=ABCDEF not in Spoolman
+```
+
+**`NFC_SHARED READ=1`** — Start shared polling. Rejected while printing. If a pending spool already exists, it refuses to overwrite it and tells you to use `NFC_SHARED REPLACE=1` or `NFC_SHARED CANCEL=1`. Polling auto-stops after `shared_read_timeout` seconds if no tag resolves. Not needed when `startup_polling: 1`.
+
+**`NFC_SHARED READ=0`** — Stop shared polling without clearing any pending spool.
+
+**`NFC_SHARED SUMMARY=1`** — Show one compact line with current shared state and the next suggested user action.
+
+**`NFC_SHARED HELP=1`** — Show the shared reader command list.
+
+**`NFC_SHARED CANCEL=1`** — User-friendly cancel command. Clears any staged spool and stops polling.
+
+**`NFC_SHARED REPLACE=1`** — Discard the staged spool and start a new timed scan. Use this when you tapped the wrong spool tag.
+
+**`NFC_SHARED LED_TEST=1`** — Play the configured `shared_tag_read_effect` without scanning a tag. Use this during setup to confirm the HH LED effect exists and works.
+
+### Advanced Shared Reader Commands
+
+These are shared-reader control and recovery commands. They are not low-level
+PN532 debug commands, and they do not require `low_level_debug: True`.
+
+**`NFC_SHARED CLEAR=1`** — Clear pending state, stop polling, reset the reader. Use this to cancel a staged spool before the preload fires.
+
+**`NFC_SHARED PRELOAD_CHECK=1`** — Called automatically by `variable_user_pre_load_extension`. Approves `MMU_GATE_MAP NEXT_SPOOLID=<id>` if a valid pending spool exists. Skips only while printing. If no spool is staged, a console message advises tapping a tag first or using `MMU_PRELOAD`. With `force_spool_id: true` the load is blocked entirely until a spool is staged.
+
+The default macro runs `MMU_SPOOLMAN REFRESH=1` when needed, then
+`MMU_GATE_MAP NEXT_SPOOLID=<id>`, then `NFC_SHARED PRELOAD_COMMIT=1`. If
+HH/Spoolman staging fails, commit never runs and the pending spool is kept for
+the next preload attempt until it times out.
+
+**`NFC_SHARED PRELOAD_CLEAR_ASSIGNED=1 SPOOL_ID=<id>`** — Called automatically
+by the default macro when Happy Hare already reports the pending spool in its
+gate map. This preserves per-lane precedence by clearing the shared reader's
+pending state without sending `NEXT_SPOOLID`.
+
+**`NFC_SHARED POLL=1`** — Force one full read/resolve cycle. Skips while printing and reports that no poll was run.
+
+**`NFC_SHARED SCAN=1`** — Raw hardware scan only — shows UID, no Spoolman lookup or dispatch. Skips while printing.
+
+**`NFC_SHARED INIT=1`** — Re-run PN532 initialisation. Use after a wiring fault or reader failure. If `startup_polling: 1` is set, the printer is not printing, and no spool is pending, polling resumes automatically after a successful init.
+
+**`NFC_SHARED CLEAR_CACHE=1`** — Clear the tag UID cache without clearing any pending spool state.
+
+### Pending timeout
+
+`shared_pending_timeout` starts when a tag resolves. If no preload fires within
+that window, the pending spool expires automatically. With `startup_polling: 1`,
+polling resumes after the expired spool is cleared. Tap again to queue a new
+spool.
+
+### Unresolvable tags
+
+If the reader sees a UID that Spoolman cannot resolve, it increments a miss counter. After `shared_missed_limit` consecutive misses (default 3) a console message appears advising the user to use `MMU_PRELOAD` to load without spool assignment. The counter resets on a successful read, `CLEAR=1`, `READ=1`, or `REPLACE=1`.
+
+### Re-scanning
+
+Once a tag resolves, polling stops. To scan a different spool issue
+`NFC_SHARED REPLACE=1`. Plain `READ=1` will refuse to overwrite a pending spool
+and will tell you to use `REPLACE=1` or `CANCEL=1`.
+
+If an advanced/manual read path sees another valid tag while a spool is already
+pending, NFC keeps the original pending spool, reports the newly read
+UID/spool as ignored, and tells the user to run `NFC_SHARED REPLACE=1` if
+replacement was intentional.
 
 ---
 

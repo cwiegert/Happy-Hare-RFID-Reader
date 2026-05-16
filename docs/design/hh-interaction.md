@@ -100,13 +100,13 @@ These macros are defined in `nfc_macros.cfg` and are the only user-editable inte
 MMU_SPOOLMAN REFRESH=1 QUIET=1          ; force HH to pull new spool from Spoolman
 {% endif %}
 MMU_GATE_MAP GATE={gate} SPOOLID={spool_id} AVAILABLE=1 SYNC=1 QUIET=1
-MMU_GATE_MAP GATE={gate} APPLY=1
+MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 ```
 
 **Metadata-direct path** (`SPOOL_ID` absent — Spoolman disabled, tag carries filament data):
 ```gcode
 MMU_GATE_MAP GATE={gate} [NAME={name}] [MATERIAL={material}] [COLOR={color}] [TEMP={temp}] AVAILABLE=1 QUIET=1
-MMU_GATE_MAP GATE={gate} APPLY=1
+MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 ```
 
 `SYNC=1` tells HH to synchronize the assignment to Spoolman. `AVAILABLE=1` marks the gate as having filament loaded. `APPLY=1` pushes the updated map into the active print state. `MMU_SPOOLMAN REFRESH=1` is called before `MMU_GATE_MAP` when `AUTO_CREATED=1` so HH's Spoolman cache includes the newly created spool before the assignment is made. NFC does not PATCH Spoolman `location` directly; Happy Hare owns that synchronization through `MMU_SPOOLMAN SYNC=1 QUIET=1`.
@@ -119,7 +119,7 @@ MMU_GATE_MAP GATE={gate} APPLY=1
     { action_respond_info("... ignoring removal.") }
 {% else %}
     MMU_GATE_MAP GATE={gate} SPOOLID=-1 AVAILABLE=0 SYNC=1 QUIET=1
-    MMU_GATE_MAP GATE={gate} APPLY=1
+    MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 {% endif %}
 ```
 
@@ -205,7 +205,7 @@ When the Spoolman lookup fails (no UID in Spoolman, or Spoolman not configured):
        _NFC_SPOOL_CHANGED GATE=0 SPOOL_ID=42 UID=A3F200CC
    Macro executes:
        MMU_GATE_MAP GATE=0 SPOOLID=42 AVAILABLE=1 SYNC=1 QUIET=1
-       MMU_GATE_MAP GATE=0 APPLY=1
+       MMU_GATE_MAP GATE=0 APPLY=1 QUIET=1
    HH now has gate_spool_id[0] = 42.
 
 7. Next poll cycle (10 s later):
@@ -284,7 +284,7 @@ All GCode is dispatched from `nfc_macros.cfg`. The NFC Python layer never calls 
 | `MMU_SPOOLMAN` | `REFRESH=1 QUIET=1` | `_NFC_SPOOL_CHANGED` (auto-create only) | Force HH to pull newly created spool from Spoolman before assignment |
 | `MMU_GATE_MAP` | `GATE=N SPOOLID=N AVAILABLE=1 SYNC=1 QUIET=1` | `_NFC_SPOOL_CHANGED` (Spoolman path) | Assign spool to gate and mark available |
 | `MMU_GATE_MAP` | `GATE=N [NAME=X] [MATERIAL=X] [COLOR=X] [TEMP=N] AVAILABLE=1 QUIET=1` | `_NFC_SPOOL_CHANGED` (metadata path) | Set gate filament metadata when Spoolman is disabled |
-| `MMU_GATE_MAP` | `GATE=N APPLY=1` | `_NFC_SPOOL_CHANGED`, `_NFC_SPOOL_REMOVED` | Push updated map into active print state |
+| `MMU_GATE_MAP` | `GATE=N APPLY=1 QUIET=1` | `_NFC_SPOOL_CHANGED`, `_NFC_SPOOL_REMOVED` | Push updated map into active print state |
 | `MMU_GATE_MAP` | `GATE=N SPOOLID=-1 AVAILABLE=0 SYNC=1 QUIET=1` | `_NFC_SPOOL_REMOVED` | Clear gate assignment |
 | `MMU_SELECT` | `GATE=N` | scan-jog first jog only | Set active gate for `MMU_TEST_MOVE` |
 | `MMU_TEST_MOVE` | `MOVE=mm QUIET=1` | scan-jog each jog step and rewind | Drive gear stepper |

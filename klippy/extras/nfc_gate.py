@@ -25,6 +25,7 @@
 
 __version__ = '1.0.0'
 
+from .nfc_gates import nfc_manager as _nfc_manager
 from .nfc_gates.nfc_manager import NFCGate, NFCGateDefaults, _lane_instances
 
 # Tracks which printer object owns the current _lane_instances contents.
@@ -38,17 +39,19 @@ def load_config(config):
     global _current_printer
     _current_printer = config.get_printer()
     del _lane_instances[:]
+    _nfc_manager._shared_instance = None
     return NFCGateDefaults(config)
 
 
 def load_config_prefix(config):
-    # Handles [nfc_gate lane0], [nfc_gate lane1], etc.
+    # Handles [nfc_gate lane0], [nfc_gate lane1], [nfc_gate shared], etc.
     global _current_printer
     printer  = config.get_printer()
     if printer is not _current_printer:
         # No base [nfc_gate] section — first lane triggers the reset.
         _current_printer = printer
         del _lane_instances[:]
+        _nfc_manager._shared_instance = None
     defaults = printer.lookup_object('nfc_gate', None)
     gate     = NFCGate(config, defaults)
     # Replace any existing entry for this lane name (guards against Klipper

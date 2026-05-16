@@ -61,7 +61,7 @@ Runs 2 seconds after `klippy:connect`. Does the actual hardware work:
 1. Calls `self._reader.init()` → wakes the PN532 with `GetFirmwareVersion` (with retries), then sends `SAMConfiguration`
 2. Sets `self._failed = True/False` based on whether the reader responds
 3. Calls `_seed_cache_from_hh(eventtime)` — reads HH gate map and pre-populates the lane cache (see polling-state-machine.md)
-4. Sends a ✅ or ❌ console status message with HH seed info
+4. Sends a ✅ or 💥 console status message with HH seed info
 5. If `startup_polling == 1` and init succeeded: arms the poll timer with `startup_poll_delay` offset
 
 None of the PN532 hardware initialization or HH seeding happens at `klippy:connect` time — all of it is in `_delayed_init`.

@@ -201,7 +201,7 @@ Rules applied to the metadata path:
       {% if temp     %} TEMP={temp | int}{% endif %}
       AVAILABLE=1 QUIET=1
 {% endif %}
-MMU_GATE_MAP GATE={gate} APPLY=1
+MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 ```
 
 - `SYNC=1` on the Spoolman path pushes the spool assignment back to Spoolman so the spool's location field stays current

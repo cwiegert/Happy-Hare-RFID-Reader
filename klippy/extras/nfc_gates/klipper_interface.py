@@ -9,10 +9,11 @@
 #
 # Macros called (define in printer.cfg / nfc_macros.cfg):
 #
-#   _NFC_SPOOL_CHANGED  GATE=<n>  SPOOL_ID=<id>  UID=<hex>  [AUTO_CREATED=1]
+#   _NFC_SPOOL_CHANGED  GATE=<n>  SPOOL_ID=<id>  UID=<hex>  [AUTO_CREATED=1] [SCAN_FINISH=1]
 #   _NFC_SPOOL_CHANGED  GATE=<n>  [NAME=<str>]  [MATERIAL=<str>]  [COLOR=<hex>]  [TEMP=<int>]  UID=<hex>
+#                       [SCAN_FINISH=1]
 #   _NFC_SPOOL_REMOVED  GATE=<n>
-#   _NFC_TAG_NO_SPOOL   GATE=<n>  UID=<hex>
+#   _NFC_TAG_NO_SPOOL   GATE=<n>  UID=<hex>  [SCAN_FINISH=1]
 
 import re
 
@@ -28,12 +29,12 @@ class KlipperInterface:
         self._debug = debug
 
     def dispatch(self, event_type, gate, uid_hex, spool_id, meta=None,
-                 auto_created=False):
+                 auto_created=False, scan_finish=False):
         """Schedule a GCode macro call for the given gate event."""
         self._reactor.register_callback(
             lambda e, et=event_type, g=gate, u=uid_hex, s=spool_id, m=meta,
-                   ac=auto_created:
-                self._run_gcode(et, g, u, s, m, ac))
+                   ac=auto_created, sf=scan_finish:
+                self._run_gcode(et, g, u, s, m, ac, sf))
 
     @staticmethod
     def _macro_value(value):
@@ -54,17 +55,20 @@ class KlipperInterface:
         return base
 
     def _run_gcode(self, event_type, gate, uid_hex, spool_id, meta=None,
-                   auto_created=False):
+                   auto_created=False, scan_finish=False):
         gcode = self._printer.lookup_object('gcode')
         try:
             if event_type == EVENT_CHANGED:
                 if spool_id is not None:
-                    script = "_NFC_SPOOL_CHANGED GATE={} SPOOL_ID={} UID={}{}".format(
+                    script = "_NFC_SPOOL_CHANGED GATE={} SPOOL_ID={} UID={}{}{}".format(
                         gate, spool_id, uid_hex,
-                        " AUTO_CREATED=1" if auto_created else "")
-                    logger.info("nfc_gates: gate %d → spool %d detected (UID %s%s)",
-                                 gate, spool_id, uid_hex,
-                                 " [auto-created]" if auto_created else "")
+                        " AUTO_CREATED=1" if auto_created else "",
+                        " SCAN_FINISH=1" if scan_finish else "")
+                    if self._debug >= 3:
+                        logger.info(
+                            "nfc_gates: gate %d → spool %d detected (UID %s%s)",
+                            gate, spool_id, uid_hex,
+                            " [auto-created]" if auto_created else "")
                 else:
                     name     = self._metadata_name(meta or {})
                     material = self._macro_value((meta or {}).get('material', ''))
@@ -80,18 +84,27 @@ class KlipperInterface:
                     if temp is not None:
                         parts.append('TEMP={}'.format(int(temp)))
                     parts.append('UID={}'.format(uid_hex))
+                    if scan_finish:
+                        parts.append('SCAN_FINISH=1')
                     script = ' '.join(parts)
-                    logger.info("nfc_gates: gate %d → tag %s metadata-only "
-                                "(name=%s material=%s color=%s temp=%s)",
-                                gate, uid_hex, name, material, color, temp)
+                    if self._debug >= 3:
+                        logger.info(
+                            "nfc_gates: gate %d → tag %s metadata-only "
+                            "(name=%s material=%s color=%s temp=%s)",
+                            gate, uid_hex, name, material, color, temp)
             elif event_type == EVENT_UID_ONLY:
-                script = "_NFC_TAG_NO_SPOOL GATE={} UID={}".format(gate, uid_hex)
-                logger.info("nfc_gates: gate %d → tag %s (no spool ID in Spoolman)",
-                             gate, uid_hex)
+                script = "_NFC_TAG_NO_SPOOL GATE={} UID={}{}".format(
+                    gate, uid_hex, " SCAN_FINISH=1" if scan_finish else "")
+                if self._debug >= 3:
+                    logger.info(
+                        "nfc_gates: gate %d → tag %s (no spool ID in Spoolman)",
+                        gate, uid_hex)
             elif event_type == EVENT_REMOVED:
                 script = "_NFC_SPOOL_REMOVED GATE={}".format(gate)
-                logger.info("nfc_gates: gate %d → spool removed (was spool_id=%s)",
-                             gate, spool_id)
+                if self._debug >= 3:
+                    logger.info(
+                        "nfc_gates: gate %d → spool removed (was spool_id=%s)",
+                        gate, spool_id)
             else:
                 logger.warning("nfc_gates: unknown event type %r", event_type)
                 return

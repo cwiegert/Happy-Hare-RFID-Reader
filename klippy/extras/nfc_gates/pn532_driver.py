@@ -202,12 +202,14 @@ def _parse_inlist_payload(payload):
 
 class _PN532Base:
 
-    def __init__(self, gate, transceive_delay, crc_delay, debug, low_level_debug):
+    def __init__(self, gate, transceive_delay, crc_delay, debug, low_level_debug,
+                 sleep_fn=None):
         self._gate           = gate
         self._scan_delay     = transceive_delay   # InListPassiveTarget wait
         self._release_delay  = crc_delay          # InRelease wait
         self._debug          = debug
         self._low_level_debug = low_level_debug
+        self._sleep          = sleep_fn if sleep_fn is not None else time.sleep
         self._clear_current_card()
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -468,10 +470,10 @@ class _PN532Base:
 
             self._release_current_target(
                 reason="page_%d_retry_%d" % (page, attempt + 1))
-            time.sleep(0.025)
+            self._sleep(0.025)
             target_info = self.read_target(timeout=0.500)
             if target_info is None:
-                time.sleep(0.050)
+                self._sleep(0.050)
                 target_info = self.read_target(timeout=0.500)
                 if target_info is None:
                     return None
@@ -505,7 +507,7 @@ class _PN532Base:
                 else:
                     user_data.extend(page_data[:remaining_pages * 4])
                 current_page += 4
-                time.sleep(0.005)
+                self._sleep(0.005)
             return user_data
         finally:
             self._release_current_target(reason="user_memory_complete")
@@ -583,7 +585,7 @@ class _PN532Base:
                 current_page += 4
                 if current_page > 255:
                     break
-                time.sleep(0.005)
+                self._sleep(0.005)
 
             result = user_data[:min(len(user_data), target_bytes)]
             if self._debug >= 4 and ndef_len is not None:
@@ -736,7 +738,7 @@ class _PN532Base:
                         "_wake_pn532: gate %d (%s) attempt %d failed: %s\n%s",
                         self._gate, self._transport_name, attempt + 1,
                         e, traceback.format_exc())
-            time.sleep(0.050)
+            self._sleep(0.050)
 
         log_warning("_wake_pn532: gate %d (%s) failed after %d attempts — "
                     "check wiring",
@@ -877,10 +879,12 @@ class PN532Driver(_PN532Base):
                  transceive_delay=0.250,
                  crc_delay=0.050,
                  debug=1,
-                 low_level_debug=False):
+                 low_level_debug=False,
+                 sleep_fn=None):
         self._i2c = i2c
         self._transport_name = 'PN532'
-        super().__init__(gate, transceive_delay, crc_delay, debug, low_level_debug)
+        super().__init__(gate, transceive_delay, crc_delay, debug, low_level_debug,
+                         sleep_fn=sleep_fn)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Frame parsing — I2C frames include a leading STATUS byte
@@ -972,7 +976,7 @@ class PN532Driver(_PN532Base):
                               self._gate, e, traceback.format_exc())
                     return False
 
-            time.sleep(poll_interval)
+            self._sleep(poll_interval)
 
         if self._debug >= 4:
             logger.debug("_read_ack: gate %d (PN532) timeout after %.1fs",
@@ -1041,7 +1045,7 @@ class PN532Driver(_PN532Base):
                               self._gate, e, traceback.format_exc())
                     return None
 
-            time.sleep(poll_interval)
+            self._sleep(poll_interval)
 
         if self._debug >= 4:
             logger.debug("_recv: gate %d (PN532) timeout after %.1fs waiting for ready",
@@ -1175,10 +1179,12 @@ class PN532SPIDriver(_PN532Base):
                  transceive_delay=0.250,
                  crc_delay=0.050,
                  debug=1,
-                 low_level_debug=False):
+                 low_level_debug=False,
+                 sleep_fn=None):
         self._spi = spi
         self._transport_name = 'PN532 SPI'
-        super().__init__(gate, transceive_delay, crc_delay, debug, low_level_debug)
+        super().__init__(gate, transceive_delay, crc_delay, debug, low_level_debug,
+                         sleep_fn=sleep_fn)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Frame parsing — SPI frames have no STATUS prefix
@@ -1266,7 +1272,7 @@ class PN532SPIDriver(_PN532Base):
                               self._gate, e, traceback.format_exc())
                     return False
 
-            time.sleep(poll_interval)
+            self._sleep(poll_interval)
 
         if self._debug >= 4:
             logger.debug("_read_ack: gate %d (PN532 SPI) timeout after %.1fs",
@@ -1332,7 +1338,7 @@ class PN532SPIDriver(_PN532Base):
                               self._gate, e, traceback.format_exc())
                     return None
 
-            time.sleep(poll_interval)
+            self._sleep(poll_interval)
 
         if self._debug >= 4:
             logger.debug("_recv: gate %d (PN532 SPI) timeout after %.1fs",

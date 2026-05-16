@@ -77,6 +77,32 @@ def _format_record_message(record):
         return str(record.msg)
 
 
+def _quote_respond_value(value):
+    value = str(value).replace('\\', '\\\\').replace('"', '\\"')
+    return value.replace('\n', '\\n')
+
+
+def _respond_prefixed(message, levelno):
+    msg = _quote_respond_value(message)
+    if hasattr(_console_gcode, 'run_script'):
+        if levelno >= logging.ERROR:
+            _console_gcode.run_script(
+                'RESPOND TYPE=error PREFIX="NFC" MSG="%s"' % msg)
+        else:
+            _console_gcode.run_script(
+                'RESPOND PREFIX="NFC" MSG="%s"' % msg)
+        return
+    if levelno >= logging.ERROR:
+        if hasattr(_console_gcode, 'respond'):
+            _console_gcode.respond("NFC: %s" % message)
+        elif hasattr(_console_gcode, 'respond_raw'):
+            _console_gcode.respond_raw("!! NFC: %s" % message)
+        else:
+            _console_gcode.respond_info("ERROR: NFC: %s" % message)
+    else:
+        _console_gcode.respond_info("NFC: %s" % message)
+
+
 def _respond_to_console(record):
     """
     Send selected NFC log messages to the Klipper console.
@@ -98,15 +124,7 @@ def _respond_to_console(record):
 
     def _send(_eventtime=None, message=msg, levelno=record.levelno):
         try:
-            if levelno >= logging.ERROR:
-                if hasattr(_console_gcode, 'respond'):
-                    _console_gcode.respond("NFC: %s" % message)
-                elif hasattr(_console_gcode, 'respond_raw'):
-                    _console_gcode.respond_raw("!! NFC: %s" % message)
-                else:
-                    _console_gcode.respond_info("ERROR: NFC: %s" % message)
-            else:
-                _console_gcode.respond_info("NFC: %s" % message)
+            _respond_prefixed(message, levelno)
         except Exception:
             # Never allow UI notification failure to recurse through logging.
             pass

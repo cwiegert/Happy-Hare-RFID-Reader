@@ -47,6 +47,9 @@ def test_int_2_is_warning():
 def test_int_3_is_info():
     assert _normalise_level(3) == logging.INFO
 
+def test_int_4_is_debug():
+    assert _normalise_level(4) == logging.DEBUG
+
 def test_string_error_is_error():
     assert _normalise_level('error') == logging.ERROR
 
@@ -58,6 +61,9 @@ def test_string_warn_is_warning():
 
 def test_string_info_is_info():
     assert _normalise_level('info') == logging.INFO
+
+def test_string_debug_is_debug():
+    assert _normalise_level('debug') == logging.DEBUG
 
 def test_uppercase_warning():
     assert _normalise_level('WARNING') == logging.WARNING

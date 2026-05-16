@@ -719,7 +719,19 @@ def resolve_spool(gate, uid_hex):
                         "(uid_hex=None; patching %s next) metadata=%s",
                         gate._name, gate._gate, uid_hex,
                         gate._spoolman._rfid_key, _summarize_meta(meta))
-                new_spool_id = lb.auto_create_spool(meta, uid_hex=None)
+                if getattr(gate, '_shared', False):
+                    play_creating = getattr(
+                        gate, '_shared_play_auto_create_effect', None)
+                    if play_creating is not None:
+                        play_creating()
+                try:
+                    new_spool_id = lb.auto_create_spool(meta, uid_hex=None)
+                finally:
+                    if getattr(gate, '_shared', False):
+                        stop_creating = getattr(
+                            gate, '_shared_stop_auto_create_effect', None)
+                        if stop_creating is not None:
+                            stop_creating()
                 if new_spool_id is not None:
                     new_spool_id = int(new_spool_id)
                     if gate._debug >= 3:

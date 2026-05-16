@@ -1,8 +1,8 @@
 # Design: Left-Neighbor Tag Interference During Scan-Jog
 
 > Engineering reference. Not end-user documentation.
-> Status: Proposed. This document describes the recommended implementation;
-> it does not represent implemented behavior yet.
+> Status: **Implemented** — `scan_jog.py` mitigation, `nfc_manager.py`
+> lane lookup support, and scan-jog tests.
 
 ## Problem
 
@@ -50,9 +50,9 @@ The current implementation already provides useful protection:
 The missing piece is identity disambiguation after a UID is read but before the
 scan is accepted as successful.
 
-## Recommended Insertion Point
+## Insertion Point
 
-The main implementation should live in:
+The implementation lives in:
 
 `klippy/extras/nfc_gates/scan_jog.py`
 
@@ -75,7 +75,7 @@ At this point:
 That makes it possible to reject the read, clear the deferred event, move the
 left neighbor out of the RF field, and continue scanning gate `N`.
 
-Recommended call shape:
+Implemented call shape:
 
 ```python
 tag_found = gate._poll()
@@ -94,7 +94,7 @@ If gate `N` reads the same UID already known for gate `N - 1`, the tag belongs
 to the left neighbor and there is no reason to resolve the read UID to a
 Spoolman spool before acting.
 
-Recommended order:
+Implemented order:
 
 1. Confirm a UID was read.
 2. Find the known UID for gate `N - 1` from the left NFC gate object.
@@ -109,7 +109,7 @@ This avoids unnecessary Spoolman resolution for the common strong-match case.
 The UID comparison is both safer and more efficient: it answers "did this
 reader see the left physical tag?" directly.
 
-Recommended helper logic:
+Helper logic:
 
 ```python
 def read_uid_from_scan_event(gate):
@@ -135,8 +135,7 @@ if left_uid is not None and left_uid == read_uid:
     return True
 ```
 
-The `known_uid_for_gate()` helper should be cheap and conservative. Preferred
-source:
+The `known_uid_for_gate()` helper is cheap and conservative. Preferred source:
 
 1. The left `NFCGate` instance cache, if it has `current_uid`.
 
@@ -198,13 +197,15 @@ If the current scan reads the left neighbor:
 6. Clear the false scan result.
 7. Continue the scan-jog loop.
 
-Only one clearance move should be attempted per scan. If the same scan reads
-the left neighbor again after a clearance move has already been queued, treat
-that as a larger mechanical/RF fault instead of issuing another positive move.
-Log and console a warning, abort scan-jog for the current gate, restore the
-left neighbor, and rewind the current gate through the normal scan exit path.
+Up to three clearance moves may be attempted per scan. After each move, the
+false scan result is cleared and the current lane reads again before any normal
+current-lane jog is queued. If the same scan still reads the left neighbor
+after the third clearance move, treat that as a larger mechanical/RF fault.
+Log and console an `[ERROR]`, abort scan-jog for the current gate, restore the
+left neighbor by the accumulated clearance distance, and rewind the current
+gate through the normal scan exit path.
 
-Recommended fixed distance:
+Fixed distance:
 
 ```python
 LEFT_NEIGHBOR_CLEARANCE_MM = 75.0
@@ -213,7 +214,7 @@ LEFT_NEIGHBOR_CLEARANCE_MM = 75.0
 No config option is recommended. A fixed value keeps the feature simple and
 avoids adding a tuning knob for a rare hardware geometry problem.
 
-Recommended GCode sequence:
+Clearance GCode sequence:
 
 ```gcode
 MMU_SELECT GATE=<left>
@@ -247,13 +248,14 @@ If the left neighbor was moved, it must be restored from every scan exit path:
 - print-start abort
 - scan poll exception path that exits scan-jog
 
-Recommended state on `NFCGate`:
+State on `NFCGate`:
 
 ```python
 gate._scan_left_neighbor_gate = -1
 gate._scan_left_neighbor_shift_mm = 0.0
 gate._scan_left_neighbor_shifted = False
 gate._scan_left_neighbor_uid = None
+gate._scan_left_neighbor_attempts = 0
 ```
 
 Initialize these in `scan_jog.start()`.
@@ -309,10 +311,9 @@ Using the existing decode retry settle constant is acceptable. A separate
 constant can be introduced if hardware testing shows the neighbor shift needs a
 different dwell.
 
-## Implementation Plan
+## Implementation Notes
 
-This section describes the intended first implementation. It should be treated
-as the checklist for the patch.
+This section describes the implemented first pass.
 
 ### Identity Rule
 
@@ -412,7 +413,9 @@ The handler should:
 6. If the left neighbor was already shifted during this scan and the same left
    gate/UID is still being read, log a fault, abort scan-jog, and return `True`.
 7. Log the interference decision.
-8. Move the left gate out of range.
+8. Move the left gate out of range. If the shift command fails, log the
+   failure, clear no scan state, return `False`, and let normal scan-jog
+   behavior continue.
 9. Clear the current gate's false read state.
 10. Keep scan-jog active and return `True`.
 
@@ -449,17 +452,21 @@ gate._scan_left_neighbor_uid = uid
 If the shift command raises, log a warning, clear no state, and return `False`
 so normal scan-jog behavior continues.
 
-Do not stack clearance moves. If `gate._scan_left_neighbor_shifted` is already
-`True` for the same left gate and UID, the implementation should not call
-`MMU_TEST_MOVE MOVE=75.00` again. It should report that the current reader is
-still seeing the left neighbor after clearance and exit scan-jog:
+Retry clearance moves conservatively. If `gate._scan_left_neighbor_shifted` is
+already `True` for the same left gate and UID, the implementation may call
+`MMU_TEST_MOVE MOVE=75.00` again until three total clearance moves have been
+queued. Each retry clears the false scan result and reads again before normal
+current-lane scan-jog movement resumes.
+
+If the same UID is still visible after the third clearance move and follow-up
+read, report an error and exit scan-jog:
 
 ```text
-[WARN] NFC[<current>]: still reading left neighbor gate <left> after 75mm clearance; check reader position, tag placement, or lane spacing
+[ERROR] NFC[<current>]: left lane gate <left> is interfering with the current lane read after 3 clearance moves (<mm>mm); check reader position, tag placement, or lane spacing
 ```
 
 That exit should use the normal rewind/restore path so the neighbor is returned
-with `MMU_TEST_MOVE MOVE=-75.00` and the current gate is rewound.
+with `MMU_TEST_MOVE MOVE=-<total clearance>` and the current gate is rewound.
 
 ### False Read Cleanup
 
@@ -536,6 +543,7 @@ Add scan state fields in `NFCGate.__init__` so tests and status are explicit:
 self._scan_left_neighbor_gate = -1
 self._scan_left_neighbor_shift_mm = 0.0
 self._scan_left_neighbor_shifted = False
+self._scan_left_neighbor_uid = None
 ```
 
 Expose or reuse a small lookup helper for the existing NFC gate registry:
@@ -594,13 +602,13 @@ def handle_left_neighbor_interference(gate, now):
         return False
 
     left_gate = gate._gate - 1
-    if left_neighbor_already_shifted(gate, left_gate, uid):
+    if left_neighbor_already_shifted(gate, left_gate, uid) and attempts >= 3:
         msg = (
-            "NFC[%d]: still reading left neighbor gate %d after %.0fmm "
-            "clearance; check reader position, tag placement, or lane spacing"
-            % (gate._gate, left_gate, gate._scan_left_neighbor_shift_mm))
-        logger.warning("[WARN] %s", msg)
-        gate._console("[WARN] " + msg)
+            "[ERROR] NFC[%d]: left lane gate %d is interfering with the "
+            "current lane read after %d clearance moves"
+            % (gate._gate, left_gate, attempts))
+        logger.error("%s", msg)
+        gate._console(msg)
         clear_false_scan_result(gate)
         gate._rewind_and_exit_scan()
         return True
@@ -610,7 +618,8 @@ def handle_left_neighbor_interference(gate, now):
         "to left neighbor gate %d; moving neighbor out of reader field",
         gate._name, gate._gate, uid, spool, left_gate)
 
-    shift_left_neighbor(gate)
+    if not shift_left_neighbor(gate):
+        return False
     clear_false_scan_result(gate)
     gate._scan_next_chunk_time = (
         gate.reactor.monotonic() + DECODE_RETRY_SETTLE_DELAY)

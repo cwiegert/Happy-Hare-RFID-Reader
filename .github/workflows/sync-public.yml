@@ -1,0 +1,46 @@
+name: NFC-Reader sych to Public Repo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — list files that would be pushed without pushing'
+        type: boolean
+        default: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove private files
+        run: |
+          rm -rf tests/
+          rm -rf docs/requirements/
+          rm -rf docs/design/
+          rm -rf tools/
+          rm -rf docs/tools/
+          rm -f README-private.md
+          rm -f VENDORED.md
+          rm -f PR.md
+
+      - name: Push to public repo
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git remote add public https://x-access-token:${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/cwiegert/HH-RFID-Reaader.git
+          git add -A
+          git commit -m "Sync from private repo" --allow-empty
+          git push public main --force
+
+      - name: Dry run — show files that would be pushed
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          echo "=== Files that would be pushed to public repo ==="
+          find . -not -path './.git/*' -not -name '.git' | sort

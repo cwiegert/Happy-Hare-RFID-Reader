@@ -99,6 +99,7 @@ sys.modules.pop('nfc_gates.nfc_manager', None)
 from nfc_gates.nfc_manager import NFCGate, _lane_instances
 from nfc_gates import tag_handler
 from nfc_gates.gate_state import GateState, CurrentTag, EVENT_CHANGED, EVENT_UID_ONLY, EVENT_REMOVED, DIRECT_METADATA_SPOOL
+from nfc_gates.shared_preload import SharedPreloadCoordinator
 
 
 # ── Test doubles ──────────────────────────────────────────────────────────────
@@ -318,6 +319,9 @@ def _make_shared(
     g._shared_last_action         = None
     g._shared_read_deadline       = 0.0
     g._shared_missed_resolutions  = 0
+    g._shared_preload_spool       = None
+    g._shared_preload_uid         = None
+    g._shared_preload_auto_created = False
     g._shared_polling_suspended_for_print = False
     g._spoolman_auto_create       = False
     g._tag_parsing                = False
@@ -450,52 +454,56 @@ def test_preload_check_no_pending_force_spool_id_raises():
 def test_preload_check_stages_next_spoolid():
     g = _make_shared()
     _stage_pending(g, spool_id=42)
-    gcmd = MockGCmd()
+    gcmd = MockGCmd({'EXPECTED_SPOOL_ID': 42})
     g._shared_preload_check(gcmd)
-    assert 'MMU_GATE_MAP NEXT_SPOOLID=42' in g._gcode.scripts
-    assert g._shared_pending_spool is None   # cleared after staging
-    assert g._polling is True                # polling restarted
+    assert g._gcode.scripts == []            # macro bridge owns HH commands
+    assert g._shared_preload_spool == 42     # Python approved the bridge
+    assert g._shared_pending_spool == 42     # kept until commit
+    assert g._polling is False
+    assert g._shared_last_action == 'approved spool 42 for NEXT_SPOOLID'
+
+    commit = MockGCmd({'PRELOAD_COMMIT': 1, 'SPOOL_ID': 42})
+    g.cmd_NFC_SHARED(commit)
+    assert g._shared_pending_spool is None
+    assert g._polling is True
     assert g._shared_last_action == 'staged spool 42 via NEXT_SPOOLID'
 
 
 def test_preload_check_refreshes_before_auto_created_next_spoolid():
     g = _make_shared()
     _stage_pending(g, spool_id=42, auto_created=True)
-    gcmd = MockGCmd()
+    gcmd = MockGCmd({'EXPECTED_SPOOL_ID': 42})
     g._shared_preload_check(gcmd)
-    assert g._gcode.scripts[:2] == [
-        'MMU_SPOOLMAN REFRESH=1 QUIET=1',
-        'MMU_GATE_MAP NEXT_SPOOLID=42',
-    ]
-    assert g._shared_pending_spool is None
-    assert g._polling is True
+    assert g._gcode.scripts == []
+    assert g._shared_preload_spool == 42
+    assert g._shared_preload_auto_created is True
+    assert g._shared_pending_spool == 42
+    assert g._polling is False
 
 
 def test_preload_check_keeps_pending_when_auto_created_refresh_fails():
     g = _make_shared()
     _stage_pending(g, spool_id=42, uid='AUTOUID', auto_created=True)
-    g._gcode.fail_on = 'MMU_SPOOLMAN REFRESH'
-    gcmd = MockGCmd()
+    gcmd = MockGCmd({'EXPECTED_SPOOL_ID': 42})
     g._shared_preload_check(gcmd)
-    assert not any('NEXT_SPOOLID' in s for s in g._gcode.scripts)
+    # If the macro-side MMU_SPOOLMAN REFRESH aborts, PRELOAD_COMMIT never runs.
+    # Pending stays intact because PRELOAD_CHECK only approves.
     assert g._shared_pending_spool == 42
     assert g._shared_pending_uid == 'AUTOUID'
     assert g._polling is False
-    assert any('REFRESH failed' in r and 'pending spool 42 kept' in r
-               for r in gcmd.responses)
+    assert g._shared_preload_spool == 42
 
 
 def test_preload_check_keeps_pending_when_gate_map_fails():
     g = _make_shared()
     _stage_pending(g, spool_id=42, uid='KEEPUID')
-    g._gcode.fail_on = 'MMU_GATE_MAP'
-    gcmd = MockGCmd()
+    gcmd = MockGCmd({'EXPECTED_SPOOL_ID': 42})
     g._shared_preload_check(gcmd)
-    assert not any('NEXT_SPOOLID' in s for s in g._gcode.scripts)
+    # If the macro-side MMU_GATE_MAP aborts, PRELOAD_COMMIT never runs.
     assert g._shared_pending_spool == 42
     assert g._shared_pending_uid == 'KEEPUID'
     assert g._polling is False
-    assert any('pending spool 42 kept' in r for r in gcmd.responses)
+    assert g._shared_preload_spool == 42
 
 
 def test_preload_check_expired_emits_advisory():
@@ -506,6 +514,20 @@ def test_preload_check_expired_emits_advisory():
     g._shared_preload_check(gcmd)
     assert not any('NEXT_SPOOLID' in s for s in g._gcode.scripts)
     assert any('no spool staged' in r for r in gcmd.responses)
+
+
+def test_preload_check_expired_expected_spool_aborts_bridge():
+    g = _make_shared()
+    _stage_pending(g, spool_id=7, ttl=1.0)
+    g.reactor.advance(10.0)
+    gcmd = MockGCmd({'EXPECTED_SPOOL_ID': 7})
+    try:
+        g._shared_preload_check(gcmd)
+        assert False, "expected stale macro bridge to abort"
+    except RuntimeError as e:
+        assert 'no longer valid' in str(e)
+    assert g._shared_pending_spool is None
+    assert g._shared_preload_spool is None
 
 
 def test_preload_check_skipped_while_printing():
@@ -519,28 +541,112 @@ def test_preload_check_skipped_while_printing():
     assert any('skipped while printing' in r for r in gcmd.responses)
 
 
-def test_preload_check_hybrid_already_assigned_silent():
-    """Hybrid: spool already assigned by per-lane reader — silent skip, no staging."""
+def test_preload_check_printing_expected_spool_aborts_bridge():
+    g = _make_shared()
+    _stage_pending(g, spool_id=5)
+    g.printer.set_print_state('printing')
+    gcmd = MockGCmd({'EXPECTED_SPOOL_ID': 5})
+    try:
+        g._shared_preload_check(gcmd)
+        assert False, "expected printing macro bridge to abort"
+    except RuntimeError as e:
+        assert 'skipped while printing' in str(e)
+    assert g._shared_pending_spool == 5
+    assert g._shared_preload_spool is None
+
+
+def test_preload_check_does_not_decide_per_lane_assignment():
+    """The macro owns routing; PRELOAD_CHECK only validates shared staging."""
     g = _make_shared(has_per_lane_readers=True)
     _stage_pending(g, spool_id=42)
     g.printer.set_mmu(MockMMU(gate_spool_ids=[42, -1, -1]))
-    gcmd = MockGCmd()
+    gcmd = MockGCmd({'EXPECTED_SPOOL_ID': 42})
     g._shared_preload_check(gcmd)
-    assert not any('NEXT_SPOOLID' in s for s in g._gcode.scripts)
-    assert not gcmd.responses          # silent — no console message
+    assert g._shared_preload_spool == 42
+    assert g._shared_pending_spool == 42
+
+
+def test_preload_clear_assigned_hybrid_silent():
+    g = _make_shared(has_per_lane_readers=True)
+    _stage_pending(g, spool_id=42)
+    g.printer.set_mmu(MockMMU(gate_spool_ids=[42, -1, -1]))
+    gcmd = MockGCmd({'SPOOL_ID': 42})
+    g._shared_preload_clear_assigned(gcmd)
     assert g._shared_pending_spool is None
+    assert g._shared_preload_spool is None
+    assert not gcmd.responses
+    assert g._polling is True
+    assert g._shared_last_action == (
+        'cleared spool 42 because HH already had it assigned')
 
 
-def test_preload_check_pure_shared_already_assigned_warns():
+def test_shared_preload_policy_is_dedicated_coordinator():
+    g = _make_shared()
+    coordinator = g._shared_preload_policy()
+    assert isinstance(coordinator, SharedPreloadCoordinator)
+    assert g._shared_preload_policy() is coordinator
+
+
+def test_preload_clear_assigned_pure_shared_warns():
     """Pure shared: spool already assigned is unexpected — warn on console."""
     g = _make_shared(has_per_lane_readers=False)
     _stage_pending(g, spool_id=42)
     g.printer.set_mmu(MockMMU(gate_spool_ids=[42, -1, -1]))
-    gcmd = MockGCmd()
-    g._shared_preload_check(gcmd)
+    gcmd = MockGCmd({'SPOOL_ID': 42})
+    g._shared_preload_clear_assigned(gcmd)
     assert not any('NEXT_SPOOLID' in s for s in g._gcode.scripts)
     assert any('already assigned' in r for r in gcmd.responses)
     assert g._shared_pending_spool is None
+
+
+def test_preload_clear_assigned_mismatch_keeps_pending_without_blocking():
+    g = _make_shared(has_per_lane_readers=True)
+    _stage_pending(g, spool_id=42)
+    g._shared_preload_clear_assigned(MockGCmd({'SPOOL_ID': 99}))
+    assert g._shared_pending_spool == 42
+    assert g._shared_last_action == (
+        'ignored per-lane clear for spool 99; pending spool is 42')
+
+
+def test_preload_clear_assigned_expired_pending_does_not_block():
+    g = _make_shared(has_per_lane_readers=True)
+    _stage_pending(g, spool_id=42, ttl=1.0)
+    g.reactor.advance(10.0)
+    g._shared_preload_clear_assigned(MockGCmd({'SPOOL_ID': 42}))
+    assert g._shared_pending_spool is None
+    assert g._shared_last_action == (
+        'ignored per-lane clear for spool 42; no shared pending')
+
+
+def test_preload_clear_assigned_missing_pending_does_not_block():
+    g = _make_shared(has_per_lane_readers=True)
+    g._shared_preload_clear_assigned(MockGCmd({'SPOOL_ID': 42}))
+    assert g._shared_pending_spool is None
+    assert g._shared_last_action == (
+        'ignored per-lane clear for spool 42; no shared pending')
+
+
+def test_preload_clear_assigned_invalid_spool_does_not_block():
+    g = _make_shared(has_per_lane_readers=True)
+    _stage_pending(g, spool_id=42)
+    gcmd = MockGCmd({'SPOOL_ID': -1})
+    g._shared_preload_clear_assigned(gcmd)
+    assert g._shared_pending_spool == 42
+    assert any('invalid SPOOL_ID' in r for r in gcmd.responses)
+
+
+def test_preload_commit_mismatch_keeps_pending():
+    g = _make_shared()
+    _stage_pending(g, spool_id=42, uid='KEEPUID')
+    g._shared_preload_check(MockGCmd({'EXPECTED_SPOOL_ID': 42}))
+    try:
+        g._shared_preload_commit(MockGCmd({'SPOOL_ID': 99}))
+        assert False, "expected commit mismatch to raise"
+    except RuntimeError as e:
+        assert 'spool mismatch' in str(e)
+    assert g._shared_pending_spool == 42
+    assert g._shared_pending_uid == 'KEEPUID'
+    assert g._polling is False
 
 
 # ── shared_status_line ────────────────────────────────────────────────────────
@@ -689,15 +795,6 @@ def test_shared_init_does_not_resume_when_pending():
     g.cmd_NFC_SHARED(gcmd)
     assert g._polling is False
     assert not any('startup polling resumed' in r for r in gcmd.responses)
-
-
-def test_shared_retry_alias_runs_preload_check():
-    g = _make_shared()
-    _stage_pending(g, spool_id=42)
-    gcmd = MockGCmd({'RETRY': 1})
-    g.cmd_NFC_SHARED(gcmd)
-    assert 'MMU_GATE_MAP NEXT_SPOOLID=42' in g._gcode.scripts
-    assert g._shared_pending_spool is None
 
 
 def test_shared_cancel_alias_clears_pending_and_stops():
@@ -1091,7 +1188,6 @@ def test_shared_help_groups_advanced_commands_separately():
     assert "NFC_SHARED commands:" in help_text
     assert "NFC_SHARED CANCEL=1" in help_text
     assert "NFC_SHARED REPLACE=1" in help_text
-    assert "NFC_SHARED RETRY=1" in help_text
     assert "NFC_SHARED SUMMARY=1" in help_text
     assert "NFC_SHARED HELP=1" in help_text
     assert "Advanced shared-reader commands:" in help_text
@@ -1106,6 +1202,35 @@ def test_shared_help_param_shows_help():
     gcmd = MockGCmd({'HELP': 1})
     g.cmd_NFC_SHARED(gcmd)
     assert any('NFC_SHARED commands:' in r for r in gcmd.responses)
+
+
+def test_shared_preload_macro_keeps_per_lane_assignment_precedence():
+    path = os.path.join(
+        os.path.dirname(__file__), '..', 'config', 'nfc_macros.cfg')
+    with open(path) as f:
+        macro = f.read()
+
+    normalize = "{% set gate_spool_ids = printer.mmu.gate_spool_id | default([]) | map('int') | list %}"
+    assigned_branch = '{% if already_assigned %}'
+    clear_assigned = 'NFC_SHARED PRELOAD_CLEAR_ASSIGNED=1 SPOOL_ID={spool_id}'
+    shared_branch = '{% else %}'
+    check = 'NFC_SHARED PRELOAD_CHECK=1 EXPECTED_SPOOL_ID={spool_id}'
+    gate_map = 'MMU_GATE_MAP NEXT_SPOOLID={spool_id}'
+    commit = 'NFC_SHARED PRELOAD_COMMIT=1 SPOOL_ID={spool_id}'
+
+    assert normalize in macro
+    assert '{% set already_assigned = spool_id in gate_spool_ids %}' in macro
+    assigned_idx = macro.index(assigned_branch)
+    clear_idx = macro.index(clear_assigned, assigned_idx)
+    shared_idx = macro.index(shared_branch, clear_idx)
+    check_idx = macro.index(check, shared_idx)
+    gate_map_idx = macro.index(gate_map, check_idx)
+    commit_idx = macro.index(commit, gate_map_idx)
+    assert assigned_idx < clear_idx
+    assert clear_idx < shared_idx
+    assert shared_idx < check_idx
+    assert check_idx < gate_map_idx
+    assert gate_map_idx < commit_idx
 
 
 if __name__ == '__main__':

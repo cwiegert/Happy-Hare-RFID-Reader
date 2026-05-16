@@ -44,6 +44,12 @@ _nfc_pkg.__path__    = [os.path.join(_EXTRAS, 'nfc_gates')]
 _nfc_pkg.__package__ = 'nfc_gates'
 
 _null = _NullLogger()
+
+def _stub_parse_tag(raw, uid_hex=None, trace=None):
+    if trace is not None:
+        trace('debug', 'stub parser called')
+    return None
+
 _stub('nfc_gates.log',
       logger=_null, configure=lambda *a, **k: None,
       info=lambda *a, **k: None,
@@ -64,7 +70,7 @@ _stub('nfc_gates.vendor',
       __path__=[os.path.join(_EXTRAS, 'nfc_gates', 'vendor')],
       __package__='nfc_gates.vendor')
 _stub('nfc_gates.vendor.rfid_tag_parser',
-      parse_tag=lambda raw, uid_hex=None: None,
+      parse_tag=_stub_parse_tag,
       is_parse_error=lambda info: bool(
           isinstance(info, dict) and (info.get('error') or info.get('parse_error'))))
 

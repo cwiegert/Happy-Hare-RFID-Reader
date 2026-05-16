@@ -559,8 +559,9 @@ MMU_GATE_MAP NEXT_SPOOLID=<spool_id>
 ```
 
 The refresh does not run when the tag is scanned and does not run for normal
-Spoolman UID lookups. If the refresh fails, the pending spool is kept so the
-user can retry after fixing the HH/Spoolman issue.
+Spoolman UID lookups. If the refresh fails, the pending spool is kept until
+timeout; after fixing the HH/Spoolman issue, trigger the normal preload hook
+again or tap the tag again if it expired.
 
 If the tag cannot resolve:
 
@@ -765,8 +766,9 @@ The shared reader supports loading multiple spools into multiple lanes in a sing
 uninterrupted workflow. The user starts one read session, then taps and loads
 repeatedly until all lanes are loaded.
 
-After `PRELOAD_CHECK` successfully stages a spool, polling restarts automatically.
-The reader is immediately ready for the next tap without any user action.
+After the pre-load hook validates a spool, sends `NEXT_SPOOLID`, and commits
+back to Python, polling restarts automatically. The reader is immediately ready
+for the next tap without any user action.
 
 Example — 4 spools, 4 lanes, `startup_polling: 1`:
 
@@ -779,8 +781,9 @@ tap spool 1 on shared reader
 
 insert filament into any gate
   → HH pregate sensor fires → variable_user_pre_load_extension runs
-  → NFC_SHARED PRELOAD_CHECK=1
+  → NFC_SHARED PRELOAD_CHECK=1 EXPECTED_SPOOL_ID=42
       → MMU_GATE_MAP NEXT_SPOOLID=42
+      → NFC_SHARED PRELOAD_COMMIT=1 SPOOL_ID=42
       → clear pending
       → restart polling          ← auto-restart, no read deadline
 
@@ -789,7 +792,7 @@ tap spool 2
   → polling stops
 
 insert filament into next gate
-  → PRELOAD_CHECK → MMU_GATE_MAP NEXT_SPOOLID=17
+  → PRELOAD_CHECK → MMU_GATE_MAP NEXT_SPOOLID=17 → PRELOAD_COMMIT
   → clear pending → restart polling
 
 tap spool 3, insert, tap spool 4, insert ...
@@ -797,7 +800,7 @@ tap spool 3, insert, tap spool 4, insert ...
 
 ### Auto-Restart Behavior
 
-The auto-restart inside `PRELOAD_CHECK` clears `_shared_read_deadline` to `0.0`
+The auto-restart inside `PRELOAD_COMMIT` clears `_shared_read_deadline` to `0.0`
 before restarting the timer. This means:
 
 - The original 120 s deadline from `NFC_SHARED READ=1` is not re-applied after

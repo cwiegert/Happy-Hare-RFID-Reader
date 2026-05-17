@@ -733,7 +733,7 @@ if git -C "${REPO_DIR}" config core.sparseCheckout 2>/dev/null | grep -q "true";
 else
     echo "Configuring sparse checkout to exclude docs/ from this machine..."
     git -C "${REPO_DIR}" sparse-checkout init
-    git -C "${REPO_DIR}" sparse-checkout set '/*' '!/docs/' '!/Readme.md' '!/VENDORED.md' '!/NFC Mounting Bracket/' '!/PR.md' '!/README-private.md'
+    git -C "${REPO_DIR}" sparse-checkout set '/*' '!/docs/' '!/Readme.md' '!/VENDORED.md' '!/NFC Mounting Bracket/' '!/PR.md' '!/README-private.md' '!/.github/'
     echo "  [done]   docs/ removed from working tree — remote repo unchanged"
     echo ""
 fi

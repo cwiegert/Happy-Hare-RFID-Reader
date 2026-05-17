@@ -91,6 +91,17 @@ def _get_console_config(config, default_enabled=False, default_level='warning'):
     return enabled, level
 
 
+def _flag_param(gcmd, name):
+    value = gcmd.get(name, None)
+    if value is None:
+        return False
+    if value == '':
+        return True
+    try:
+        return bool(gcmd.get_int(name, minval=0, maxval=1))
+    except Exception:
+        return bool(value)
+
 
 class _BusDefaultConfig:
     """Wraps a Klipper ConfigWrapper to supply an inherited default for i2c_bus."""
@@ -210,8 +221,8 @@ def _nfc_help(gcmd=None):
         "LOW_LEVEL=1 for full command set)",
         "NFC_HELP : Display the complete set of NFC commands and functions",
         "NFC_STATUS : Show every configured NFC reader",
-        "NFC GATE=<#> HELP=1 : Show commands for one per-lane reader",
-        "NFC GATE=<#> STATUS=1 : Show one per-lane reader state",
+        "NFC GATE=<#> HELP : Show commands for one per-lane reader",
+        "NFC GATE=<#> STATUS : Show one per-lane reader state",
         "NFC GATE=<#> SCAN=1 : Scan hardware once, no Spoolman/HH dispatch",
         "NFC GATE=<#> POLL=1 : Run one full read/resolve cycle",
         "NFC GATE=<#> READ=1 : Start timer polling",
@@ -227,14 +238,14 @@ def _nfc_help(gcmd=None):
         lines.extend([
             "",
             "Shared reader commands:",
-            "NFC_SHARED HELP=1 : Show shared reader commands",
-            "NFC_SHARED STATUS=1 : Show detailed shared reader state",
-            "NFC_SHARED SUMMARY=1 : Show one-line shared reader state",
+            "NFC_SHARED HELP : Show shared reader commands",
+            "NFC_SHARED STATUS : Show detailed shared reader state",
+            "NFC_SHARED SUMMARY : Show one-line shared reader state",
             "NFC_SHARED READ=1 : Start shared polling",
             "NFC_SHARED READ=0 : Stop shared polling",
-            "NFC_SHARED CANCEL=1 : Cancel a staged shared spool",
-            "NFC_SHARED REPLACE=1 : Discard a staged spool and scan another",
-            "NFC_SHARED LED_TEST=1 : Test configured shared tag-read LED effect",
+            "NFC_SHARED CANCEL : Cancel a staged shared spool",
+            "NFC_SHARED REPLACE : Discard a staged spool and scan another",
+            "NFC_SHARED LED_TEST : Test configured shared tag-read LED effect",
         ])
         if advanced:
             lines.extend([
@@ -628,7 +639,8 @@ class NFCGate:
     def _cmd_help(self, gcmd):
         lines = [
             "NFC GATE=%d commands:" % self._gate,
-            "  NFC GATE=%d STATUS=1  - show this gate state" % self._gate,
+            "  NFC GATE=%d HELP     - show this help" % self._gate,
+            "  NFC GATE=%d STATUS   - show this gate state" % self._gate,
             "  NFC GATE=%d INIT=1    - re-run reader init" % self._gate,
             "  NFC GATE=%d SCAN=1    - scan hardware once, no Spoolman/HH dispatch" % self._gate,
             "  NFC GATE=%d JOG_SCAN=1 - start scan-jog (same as automatic pre-load trigger)" % self._gate,
@@ -806,8 +818,8 @@ class NFCGate:
                         self._name, self._shared_pending_spool)
                     gcmd.respond_info(
                         "[WARN] NFC[%s]: spool %s is already pending; use "
-                        "NFC_SHARED REPLACE=1 to discard it and scan another, "
-                        "or NFC_SHARED CANCEL=1 to cancel"
+                        "NFC_SHARED REPLACE to discard it and scan another, "
+                        "or NFC_SHARED CANCEL to cancel"
                         % (self._name, self._shared_pending_spool))
                     return
                 self._shared_missed_resolutions = 0
@@ -923,7 +935,10 @@ class NFCGate:
         if read_value is not None:
             self._set_reading(gcmd, gcmd.get_int("READ", minval=0, maxval=1) == 1)
             return
-        if gcmd.get_int("STATUS", 0):
+        if _flag_param(gcmd, "HELP"):
+            self._cmd_help(gcmd)
+            return
+        if _flag_param(gcmd, "STATUS"):
             gcmd.respond_info(self.status_line())
             return
         if gcmd.get_int("INIT", 0):
@@ -1861,12 +1876,12 @@ class NFCGate:
                 else:
                     msg = (
                         "[WARN] NFC[%s]: spool %d is already pending; read spool %d "
-                        "uid=%s ignored. Run NFC_SHARED REPLACE=1 to discard "
+                        "uid=%s ignored. Run NFC_SHARED REPLACE to discard "
                         "the pending spool and scan another"
                         % (self._name, pending_spool, spool, uid))
                     logger.warning(
                         "nfc_gate: [%s] shared tag ignored — pending spool=%d, "
-                        "new spool=%d uid=%s; use NFC_SHARED REPLACE=1 to replace",
+                        "new spool=%d uid=%s; use NFC_SHARED REPLACE to replace",
                         self._name, pending_spool, spool, uid)
                     self._shared_last_action = (
                         "ignored spool %d while spool %d pending"
@@ -2075,7 +2090,7 @@ class NFCGate:
         if self._is_printing():
             return "wait for printing to finish; shared reads are blocked"
         if self._shared_pending_spool is not None:
-            return "insert filament before timeout, or run NFC_SHARED REPLACE=1"
+            return "insert filament before timeout, or run NFC_SHARED REPLACE"
         if self._shared_last_error:
             last_action = self._shared_last_action or ''
             if "expired" in self._shared_last_error:
@@ -2184,19 +2199,19 @@ class NFCGate:
         if read_value is not None:
             self._set_reading(gcmd, gcmd.get_int("READ", minval=0, maxval=1) == 1)
             return
-        if gcmd.get_int('STATUS', 0):
+        if _flag_param(gcmd, 'STATUS'):
             gcmd.respond_info(self.shared_status_detail())
             return
-        if gcmd.get_int('SUMMARY', 0):
+        if _flag_param(gcmd, 'SUMMARY'):
             gcmd.respond_info(self.shared_summary_line())
             return
-        if gcmd.get_int('HELP', 0):
+        if _flag_param(gcmd, 'HELP'):
             self._shared_help(gcmd)
             return
-        if gcmd.get_int('REPLACE', 0):
+        if _flag_param(gcmd, 'REPLACE'):
             self._shared_replace_pending(gcmd)
             return
-        if gcmd.get_int('CLEAR', 0):
+        if _flag_param(gcmd, 'CLEAR'):
             self._shared_clear_pending()
             self._shared_last_error = None
             self._shared_last_action = "shared state cleared"
@@ -2208,16 +2223,16 @@ class NFCGate:
             logger.info("nfc_gate: [%s] shared state cleared", self._name)
             gcmd.respond_info("NFC[%s]: shared state cleared" % self._name)
             return
-        if gcmd.get_int('PRELOAD_CHECK', 0):
+        if _flag_param(gcmd, 'PRELOAD_CHECK'):
             self._shared_preload_check(gcmd)
             return
-        if gcmd.get_int('PRELOAD_COMMIT', 0):
+        if _flag_param(gcmd, 'PRELOAD_COMMIT'):
             self._shared_preload_commit(gcmd)
             return
-        if gcmd.get_int('PRELOAD_CLEAR_ASSIGNED', 0):
+        if _flag_param(gcmd, 'PRELOAD_CLEAR_ASSIGNED'):
             self._shared_preload_clear_assigned(gcmd)
             return
-        if gcmd.get_int('CANCEL', 0):
+        if _flag_param(gcmd, 'CANCEL'):
             self._shared_clear_pending()
             self._shared_last_error = None
             self._shared_last_action = "pending spool canceled"
@@ -2227,7 +2242,7 @@ class NFCGate:
             logger.info("nfc_gate: [%s] pending spool canceled", self._name)
             gcmd.respond_info("NFC[%s]: pending spool canceled" % self._name)
             return
-        if gcmd.get_int('POLL', 0):
+        if _flag_param(gcmd, 'POLL'):
             if self._is_printing():
                 logger.warning(
                     "nfc_gate: [%s] shared poll skipped while printing",
@@ -2242,16 +2257,16 @@ class NFCGate:
             gcmd.respond_info("NFC[%s]: one poll complete; %s" %
                               (self._name, self.shared_status_line().strip()))
             return
-        if gcmd.get_int('SCAN', 0):
+        if _flag_param(gcmd, 'SCAN'):
             self._manual_scan(gcmd)
             return
-        if gcmd.get_int('INIT', 0):
+        if _flag_param(gcmd, 'INIT'):
             self._manual_init(gcmd)
             return
-        if gcmd.get_int('LED_TEST', 0):
+        if _flag_param(gcmd, 'LED_TEST'):
             self._shared_play_tag_read_effect(gcmd)
             return
-        if gcmd.get_int('CLEAR_CACHE', 0):
+        if _flag_param(gcmd, 'CLEAR_CACHE'):
             self._shared_clear_cache(gcmd)
             return
         self._shared_help(gcmd)
@@ -2261,12 +2276,12 @@ class NFCGate:
             "NFC_SHARED commands:\n"
             "  NFC_SHARED READ=1          - start polling (rejected while printing)\n"
             "  NFC_SHARED READ=0          - stop polling (keeps pending spool)\n"
-            "  NFC_SHARED STATUS=1        - show detailed shared reader state\n"
-            "  NFC_SHARED SUMMARY=1       - show one-line shared reader state\n"
-            "  NFC_SHARED HELP=1          - show this help\n"
-            "  NFC_SHARED CANCEL=1        - cancel pending spool and stop polling\n"
-            "  NFC_SHARED REPLACE=1       - discard pending spool and scan another\n"
-            "  NFC_SHARED LED_TEST=1      - test configured shared tag-read LED effect\n"
+            "  NFC_SHARED STATUS          - show detailed shared reader state\n"
+            "  NFC_SHARED SUMMARY         - show one-line shared reader state\n"
+            "  NFC_SHARED HELP            - show this help\n"
+            "  NFC_SHARED CANCEL          - cancel pending spool and stop polling\n"
+            "  NFC_SHARED REPLACE         - discard pending spool and scan another\n"
+            "  NFC_SHARED LED_TEST        - test configured shared tag-read LED effect\n"
             "\n"
             "Advanced shared-reader commands:\n"
             "  NFC_SHARED CLEAR=1         - clear pending state and stop polling\n"

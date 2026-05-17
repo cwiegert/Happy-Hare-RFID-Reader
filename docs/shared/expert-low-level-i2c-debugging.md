@@ -37,7 +37,7 @@ init: gate 0 (PN532) low_level_debug enabled — skipping wake and SAMConfigurat
 You must run the manual init sequence (Phase 1 + Phase 2 below) before any tag read commands will work. Then ask for the command list:
 
 ```gcode
-NFC GATE=0 HELP=1
+NFC GATE=0 HELP
 ```
 
 This prints the full manual init sequence with the exact commands to paste, in order.

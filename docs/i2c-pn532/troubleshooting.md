@@ -188,7 +188,7 @@ Common macro issues:
 
 ```gcode
 NFC_STATUS                    ; all gates — current state
-NFC GATE=0 STATUS=1       ; one gate
+NFC GATE=0 STATUS         ; one gate
 NFC GATE=0 INIT=1         ; re-initialize the PN532
 NFC GATE=0 SCAN=1         ; one raw read, no state machine or Spoolman
 NFC GATE=0 POLL=1         ; one complete cycle, watch for console output
@@ -205,7 +205,7 @@ console_log_level: info
 
 Then:
 ```gcode
-NFC GATE=0 HELP=1    ; lists all available debug commands
+NFC GATE=0 HELP      ; lists all available debug commands
 ```
 
 See [Expert: Low-Level I2C Debugging](../shared/expert-low-level-i2c-debugging.md) for the complete step-by-step manual sequence.

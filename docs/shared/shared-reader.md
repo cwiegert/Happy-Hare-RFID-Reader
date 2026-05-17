@@ -88,7 +88,7 @@ use MMU_PRELOAD to load without spool assignment
 ```
 
 The counter resets on a successful read, `NFC_SHARED CLEAR=1`,
-`NFC_SHARED READ=1`, or `NFC_SHARED REPLACE=1`.
+`NFC_SHARED READ=1`, or `NFC_SHARED REPLACE`.
 
 ---
 
@@ -209,14 +209,14 @@ Set `shared_tag_read_effect: mmu_RFID_read`, `shared_spool_ready_effect: mmu_RFI
 
 | Command | What it does |
 |---|---|
-| `NFC_SHARED READ=1` | Start polling. Refuses to overwrite a pending spool; use `REPLACE=1` or `CANCEL=1` first. Rejected while printing. |
+| `NFC_SHARED READ=1` | Start polling. Refuses to overwrite a pending spool; use `REPLACE` or `CANCEL` first. Rejected while printing. |
 | `NFC_SHARED READ=0` | Stop polling. Keeps any pending spool. |
-| `NFC_SHARED STATUS=1` | Show detailed state — summary, polling flags, deadlines, pending spool, miss counter, LED effect, last action, next action, and last error. |
-| `NFC_SHARED SUMMARY=1` | Show one compact state line and next suggested action. |
-| `NFC_SHARED HELP=1` | Show shared reader command help. |
-| `NFC_SHARED CANCEL=1` | Cancel a staged spool and stop polling. |
-| `NFC_SHARED REPLACE=1` | Discard a staged spool and start scanning another. |
-| `NFC_SHARED LED_TEST=1` | Test the configured shared tag-read LED effect. |
+| `NFC_SHARED STATUS` | Show detailed state — summary, polling flags, deadlines, pending spool, miss counter, LED effect, last action, next action, and last error. |
+| `NFC_SHARED SUMMARY` | Show one compact state line and next suggested action. |
+| `NFC_SHARED HELP` | Show shared reader command help. |
+| `NFC_SHARED CANCEL` | Cancel a staged spool and stop polling. |
+| `NFC_SHARED REPLACE` | Discard a staged spool and start scanning another. |
+| `NFC_SHARED LED_TEST` | Test the configured shared tag-read LED effect. |
 
 Advanced shared-reader commands:
 
@@ -235,7 +235,7 @@ Full command reference: [Commands & Macros](klipper-functions.md#shared-reader).
 
 If another valid tag is read while a spool is already pending, the shared
 reader keeps the original pending spool. The new read is reported as ignored,
-and the console points you to `NFC_SHARED REPLACE=1` if you meant to swap
+and the console points you to `NFC_SHARED REPLACE` if you meant to swap
 spools.
 
 ---

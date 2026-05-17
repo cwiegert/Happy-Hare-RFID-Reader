@@ -1055,6 +1055,8 @@ class NFCGate:
     def _handle_connect(self):
         global _shared_instance
         self._gcode = self.printer.lookup_object('gcode')
+        if self._shared:
+            _shared_instance = self
 
         if not self._commands_registered:
             # Register the status command once when there is no base [nfc_gate]
@@ -1081,7 +1083,15 @@ class NFCGate:
 
             # Shared reader has no mmu_gate — all interaction goes through
             # NFC_SHARED.  Lane readers register the GATE mux command.
-            if not self._shared:
+            if self._shared:
+                self._gcode.register_command(
+                    'NFC_SHARED',
+                    self.cmd_NFC_SHARED,
+                    desc=("Control shared NFC reader: READ, POLL, SCAN, "
+                          "STATUS, HELP, CANCEL, REPLACE")
+                )
+                self._shared_cmd_registered = True
+            else:
                 self._gcode.register_mux_command(
                     cmd='NFC',
                     key='GATE',

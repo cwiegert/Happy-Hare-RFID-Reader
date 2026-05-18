@@ -589,7 +589,7 @@ class NFCGate:
             self._shared_auto_create_effect = config.get(
                 'shared_auto_create_effect', '')
             self._shared_force_spool_id  = config.getboolean(
-                'force_spool_id', False)
+                'force_spool_id', True)
             self._shared_missed_limit    = config.getint(
                 'shared_missed_limit', _SHARED_MISSED_RESOLUTION_LIMIT,
                 minval=1)
@@ -778,6 +778,18 @@ class NFCGate:
         if not self._shared_auto_create_effect:
             return
         gate_effect = self._shared_gate_effect_name(self._shared_auto_create_effect)
+        try:
+            self._gcode.run_script(
+                "_MMU_STOP_LED_EFFECTS EFFECTS=%s" % gate_effect)
+        except Exception as e:
+            logger.debug(
+                "nfc_gate: [%s] _MMU_STOP_LED_EFFECTS %s failed: %s",
+                self._name, gate_effect, e)
+
+    def _shared_stop_tag_read_effect(self):
+        if not self._shared_tag_read_effect:
+            return
+        gate_effect = self._shared_gate_effect_name(self._shared_tag_read_effect)
         try:
             self._gcode.run_script(
                 "_MMU_STOP_LED_EFFECTS EFFECTS=%s" % gate_effect)
@@ -1462,7 +1474,8 @@ class NFCGate:
         self._check_hh_cleared()
         uid_hex  = self._read_current_tag()
         if (self._shared and uid_hex is not None
-                and self._shared_tag_read_effect):
+                and self._shared_tag_read_effect
+                and self._shared_missed_resolutions < self._shared_missed_limit):
             self._shared_play_tag_read_effect()
         spool_id = self._resolve_spool(uid_hex)
         event    = self._state.process_read(uid_hex, spool_id,
@@ -1470,6 +1483,26 @@ class NFCGate:
         self._poll_debug_trace(uid_hex, event)
         if event is not None:
             self._poll_dispatch_event(event)
+        elif (self._shared and uid_hex is not None
+                and self._state.current_spool is None):
+            self._shared_missed_resolutions += 1
+            if (self._shared_tag_unresolved_effect
+                    and self._shared_missed_resolutions <= self._shared_missed_limit):
+                self._shared_play_tag_unresolved_effect()
+            if self._shared_missed_resolutions == self._shared_missed_limit:
+                logger.info(
+                    "nfc_gate: [%s] shared tag uid=%s — resolution limit "
+                    "reached, LED suppressed after this flash",
+                    self._name, uid_hex)
+                try:
+                    self._gcode.run_script(
+                        "RESPOND TYPE=error MSG=\"NFC[%s]: tag uid=%s not found "
+                        "in Spoolman after %d attempts — use MMU_PRELOAD "
+                        "to load without spool assignment\""
+                        % (self._name, uid_hex, self._shared_missed_limit))
+                except Exception as e:
+                    logger.debug(
+                        "nfc_gate: [%s] RESPOND failed: %s", self._name, e)
         return uid_hex is not None
 
     def _poll_hh_pause_check(self):
@@ -1845,17 +1878,19 @@ class NFCGate:
                 "(%d/%d)",
                 self._name, uid,
                 self._shared_missed_resolutions, self._shared_missed_limit)
-            if self._shared_missed_resolutions >= self._shared_missed_limit:
+            if self._shared_missed_resolutions == self._shared_missed_limit:
                 try:
                     self._gcode.run_script(
-                        "RESPOND MSG=\"[WARN] NFC[%s]: rich tag uid=%s has no Spoolman "
-                        "spool ID after %d attempts — enable spoolman_auto_create "
-                        "or use MMU_PRELOAD to load without spool assignment\""
+                        "RESPOND TYPE=error MSG=\"NFC[%s]: rich tag uid=%s has no "
+                        "Spoolman spool ID after %d attempts — enable "
+                        "spoolman_auto_create or use MMU_PRELOAD to load without "
+                        "spool assignment\""
                         % (self._name, uid, self._shared_missed_limit))
                 except Exception as e:
                     logger.debug(
                         "nfc_gate: [%s] RESPOND failed: %s", self._name, e)
-            if self._shared_tag_unresolved_effect:
+            if (self._shared_tag_unresolved_effect
+                    and self._shared_missed_resolutions <= self._shared_missed_limit):
                 self._shared_play_tag_unresolved_effect()
             return
 
@@ -1944,15 +1979,15 @@ class NFCGate:
                     self._name, self._shared_last_error,
                     self._shared_missed_resolutions,
                     self._shared_missed_limit)
-                if self._shared_missed_resolutions >= self._shared_missed_limit:
+                if self._shared_missed_resolutions == self._shared_missed_limit:
                     logger.info(
                         "nfc_gate: [%s] missed resolution limit reached — "
                         "advising manual preload",
                         self._name)
                     try:
                         self._gcode.run_script(
-                            "RESPOND MSG=\"[WARN] NFC[%s]: tag uid=%s not found in "
-                            "Spoolman after %d attempts — use MMU_PRELOAD "
+                            "RESPOND TYPE=error MSG=\"NFC[%s]: tag uid=%s not found "
+                            "in Spoolman after %d attempts — use MMU_PRELOAD "
                             "to load without spool assignment\""
                             % (self._name, uid,
                                self._shared_missed_limit))
@@ -1960,8 +1995,16 @@ class NFCGate:
                         logger.debug(
                             "nfc_gate: [%s] RESPOND failed: %s",
                             self._name, e)
-                if self._shared_tag_unresolved_effect:
+                if (self._shared_tag_unresolved_effect
+                        and self._shared_missed_resolutions <= self._shared_missed_limit):
                     self._shared_play_tag_unresolved_effect()
+                tag  = self._state.current_tag
+                meta = (tag.meta
+                        if tag is not None and isinstance(tag.meta, dict)
+                        else {})
+                if not any(k not in ('uid',) for k in meta):
+                    self._state.current_uid   = None
+                    self._state.current_spool = None
             elif self._debug >= 3:
                 logger.info(
                     "nfc_gate: [%s] shared UID-only ignored — pending "
@@ -1970,6 +2013,8 @@ class NFCGate:
                     self._shared_pending_uid, uid)
 
         elif event_type == EVENT_REMOVED:
+            self._shared_stop_tag_read_effect()
+            self._shared_missed_resolutions = 0
             if self._debug >= 3:
                 logger.info(
                     "nfc_gate: [%s] shared tag removed — "

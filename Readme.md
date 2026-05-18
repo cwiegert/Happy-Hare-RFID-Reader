@@ -119,9 +119,9 @@ Happy Hare already has the mechanism:
 MMU_GATE_MAP NEXT_SPOOLID=<spool_id>
 ```
 
-The shared reader issues this command at `variable_user_pre_load_extension` time — just before preload starts. Happy Hare assigns it to the loaded gate; NFC clears the pending state.
+The shared reader issues this command at `variable_user_post_preload_extension` time — just after preload starts. Happy Hare assigns it to the loaded gate; NFC clears the pending state.
 
-**Setup:** include `nfc_reader_shared.cfg` and wire the Happy Hare pre-load hook to `_NFC_SHARED_PRELOAD`. See [Shared Reader](docs/shared/shared-reader.md) for the full workflow, [Configuration Reference](docs/shared/configuration.md#shared-reader) for the config block, and [Commands & Macros](docs/shared/klipper-functions.md#shared-reader) for operation.
+**Setup:** include `nfc_reader_shared.cfg` and wire the Happy Hare post-preload hook to `_NFC_SHARED_PRELOAD`. See [Shared Reader](docs/shared/shared-reader.md) for the full workflow, [Configuration Reference](docs/shared/configuration.md#shared-reader) for the config block, and [Commands & Macros](docs/shared/klipper-functions.md#shared-reader) for operation.
 
 ---
 

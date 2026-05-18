@@ -100,6 +100,7 @@ class GateState:
                     old_spool          = self.current_spool
                     self.current_uid   = None
                     self.current_spool = None
+                    self.miss_count    = 0
                     return (EVENT_REMOVED, self.gate, None, old_spool)
             return None
 

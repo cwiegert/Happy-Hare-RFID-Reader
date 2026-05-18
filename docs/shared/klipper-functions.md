@@ -578,7 +578,7 @@ The shared reader is a single PN532 mounted inside the MMU body. Tap a spool tag
 1. Shared reader is polling. With `startup_polling: 1` it starts at boot and pauses automatically when printing starts, resuming when printing completes.
 2. Tap your spool tag on the shared reader — NFC resolves the spool in Spoolman and stores it as pending. LED effect fires if configured.
 3. Drop the spool into an MMU lane and push the filament tip into the pregate sensor.
-4. Happy Hare detects the pregate load and fires `variable_user_pre_load_extension` → `_NFC_SHARED_PRELOAD`.
+4. Happy Hare detects the pregate load and fires `variable_user_post_preload_extension` → `_NFC_SHARED_PRELOAD`.
 5. If HH already has the pending spool assigned, the macro calls `NFC_SHARED PRELOAD_CLEAR_ASSIGNED=1` and skips shared staging. Otherwise it runs `NFC_SHARED PRELOAD_CHECK=1` and issues `MMU_GATE_MAP NEXT_SPOOLID=<id>` — Happy Hare assigns the spool to the loaded gate.
 6. Pending state is cleared only after Happy Hare accepts the command. For auto-created Spoolman spools, NFC refreshes HH's Spoolman cache first. Polling restarts automatically for the next spool.
 
@@ -618,7 +618,7 @@ PN532 debug commands, and they do not require `low_level_debug: True`.
 
 **`NFC_SHARED CLEAR=1`** — Clear pending state, stop polling, reset the reader. Use this to cancel a staged spool before the preload fires.
 
-**`NFC_SHARED PRELOAD_CHECK=1`** — Called automatically by `variable_user_pre_load_extension`. Approves `MMU_GATE_MAP NEXT_SPOOLID=<id>` if a valid pending spool exists. Skips only while printing. If no spool is staged, a console message advises tapping a tag first or using `MMU_PRELOAD`. With `force_spool_id: true` the load is blocked entirely until a spool is staged.
+**`NFC_SHARED PRELOAD_CHECK=1`** — Called automatically by `variable_user_post_preload_extension`. Approves `MMU_GATE_MAP NEXT_SPOOLID=<id>` if a valid pending spool exists. Skips only while printing. If no spool is staged, a console message advises tapping a tag first or using `MMU_PRELOAD`. With `force_spool_id: true` the load is blocked entirely until a spool is staged.
 
 The default macro runs `MMU_SPOOLMAN REFRESH=1` when needed, then
 `MMU_GATE_MAP NEXT_SPOOLID=<id>`, then `NFC_SHARED PRELOAD_COMMIT=1`. If
@@ -647,7 +647,7 @@ spool.
 
 ### Unresolvable tags
 
-If the reader sees a UID that Spoolman cannot resolve, it increments a miss counter. After `shared_missed_limit` consecutive misses (default 3) a console message appears advising the user to use `MMU_PRELOAD` to load without spool assignment. The counter resets on a successful read, `CLEAR=1`, `READ=1`, or `REPLACE=1`.
+If the reader sees a UID that Spoolman cannot resolve, it increments a miss counter. After `shared_missed_limit` consecutive misses (default 3) a console error appears advising the user to use `MMU_PRELOAD` to load without spool assignment, and LED feedback stops so Happy Hare can resume normal LED control. The counter resets on a successful read, `CLEAR=1`, `READ=1`, or `REPLACE=1`.
 
 ### Re-scanning
 

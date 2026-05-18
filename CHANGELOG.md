@@ -13,7 +13,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Single PN532 mounted inside the MMU body for spool staging before loading
 - Tap a tagged spool; NFC stages the spool ID for the next pregate preload automatically
 - Separate `nfc_reader_shared.cfg` hardware config — can coexist with per-lane readers
-- `_NFC_SHARED_PRELOAD` Happy Hare pre-gate hook
+- `_NFC_SHARED_PRELOAD` Happy Hare post-preload hook
 - LED feedback states: tag read, spool ready, unresolved tag, auto-create in progress
 
 **Rich Tag Metadata**

@@ -728,8 +728,8 @@ fi
 # ── Sparse checkout — keep docs on remote only ───────────────────────────────
 # Always re-applies the exclusion patterns so that new entries added in future
 # versions of install.sh take effect on re-runs.  sparse-checkout set is idempotent.
-git -C "${REPO_DIR}" sparse-checkout init
-git -C "${REPO_DIR}" sparse-checkout set '/*' '!/docs/' '!/Readme.md' '!/VENDORED.md' '!/NFC Mounting Bracket/' '!/PR.md' '!/README-private.md' '!/.github/'
+git -C "${REPO_DIR}" sparse-checkout init --no-cone
+git -C "${REPO_DIR}" sparse-checkout set --no-cone '/*' '!/docs/' '!/Readme.md' '!/VENDORED.md' '!/NFC Mounting Bracket/' '!/PR.md' '!/README-private.md' '!/.github/'
 echo "  [ok]     sparse checkout configured — documentation excluded from this machine"
 echo ""
 

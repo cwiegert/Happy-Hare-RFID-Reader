@@ -611,6 +611,7 @@ class NFCGate:
         self._shared_last_action          = None
         self._shared_read_deadline        = 0.0
         self._shared_missed_resolutions   = 0
+        self._shared_effect_timer         = None
         self._shared_preload_spool        = None
         self._shared_preload_uid          = None
         self._shared_preload_auto_created = False
@@ -734,7 +735,7 @@ class NFCGate:
             return False
         gate_effect = self._shared_gate_effect_name(effect_name)
         try:
-            self._gcode.run_script("_MMU_SET_LED_EFFECT EFFECT=%s" % gate_effect)
+            self._gcode.run_script("_MMU_SET_LED_EFFECT EFFECT=%s REPLACE=1" % gate_effect)
             logger.info(
                 "nfc_gate: [%s] LED effect %s started",
                 self._name, gate_effect)
@@ -763,52 +764,59 @@ class NFCGate:
             return False
 
     def _shared_play_tag_read_effect(self, gcmd=None):
-        return self._shared_play_led_effect(self._shared_tag_read_effect, gcmd)
+        if self._shared_play_led_effect(self._shared_tag_read_effect, gcmd):
+            self._shared_schedule_effect_stop(3.0)
+        return True
 
     def _shared_play_spool_ready_effect(self):
         self._shared_play_led_effect(self._shared_spool_ready_effect)
 
     def _shared_play_tag_unresolved_effect(self):
-        self._shared_play_led_effect(self._shared_tag_unresolved_effect)
+        if self._shared_play_led_effect(self._shared_tag_unresolved_effect):
+            self._shared_schedule_effect_stop(4.0)
 
     def _shared_play_auto_create_effect(self):
         self._shared_play_led_effect(self._shared_auto_create_effect)
 
-    def _shared_stop_auto_create_effect(self):
-        if not self._shared_auto_create_effect:
+    def _shared_stop_led_effect(self, effect_name):
+        if not effect_name:
             return
-        gate_effect = self._shared_gate_effect_name(self._shared_auto_create_effect)
+        gate_effect = self._shared_gate_effect_name(effect_name)
         try:
             self._gcode.run_script(
-                "_MMU_STOP_LED_EFFECTS EFFECTS=%s" % gate_effect)
+                "_MMU_SET_LED_EFFECT EFFECT=%s STOP=1" % gate_effect)
         except Exception as e:
             logger.debug(
-                "nfc_gate: [%s] _MMU_STOP_LED_EFFECTS %s failed: %s",
+                "nfc_gate: [%s] STOP effect %s failed: %s",
                 self._name, gate_effect, e)
+
+    def _shared_stop_auto_create_effect(self):
+        self._shared_stop_led_effect(self._shared_auto_create_effect)
 
     def _shared_stop_tag_read_effect(self):
-        if not self._shared_tag_read_effect:
-            return
-        gate_effect = self._shared_gate_effect_name(self._shared_tag_read_effect)
-        try:
-            self._gcode.run_script(
-                "_MMU_STOP_LED_EFFECTS EFFECTS=%s" % gate_effect)
-        except Exception as e:
-            logger.debug(
-                "nfc_gate: [%s] _MMU_STOP_LED_EFFECTS %s failed: %s",
-                self._name, gate_effect, e)
+        self._shared_stop_led_effect(self._shared_tag_read_effect)
 
     def _shared_stop_tag_unresolved_effect(self):
-        if not self._shared_tag_unresolved_effect:
-            return
-        gate_effect = self._shared_gate_effect_name(self._shared_tag_unresolved_effect)
-        try:
-            self._gcode.run_script(
-                "_MMU_STOP_LED_EFFECTS EFFECTS=%s" % gate_effect)
-        except Exception as e:
-            logger.debug(
-                "nfc_gate: [%s] _MMU_STOP_LED_EFFECTS %s failed: %s",
-                self._name, gate_effect, e)
+        self._shared_stop_led_effect(self._shared_tag_unresolved_effect)
+
+    def _shared_stop_spool_ready_effect(self):
+        self._shared_stop_led_effect(self._shared_spool_ready_effect)
+
+    def _shared_stop_all_nfc_effects(self):
+        self._shared_stop_tag_read_effect()
+        self._shared_stop_tag_unresolved_effect()
+
+    def _shared_effect_timer_callback(self, eventtime):
+        self._shared_stop_all_nfc_effects()
+        return self.reactor.NEVER
+
+    def _shared_schedule_effect_stop(self, delay):
+        when = self.reactor.monotonic() + delay
+        if self._shared_effect_timer is None:
+            self._shared_effect_timer = self.reactor.register_timer(
+                self._shared_effect_timer_callback, when)
+        else:
+            self.reactor.update_timer(self._shared_effect_timer, when)
 
     def _set_reading(self, gcmd, enabled):
         if enabled:
@@ -1979,6 +1987,7 @@ class NFCGate:
                 logger.debug(
                     "nfc_gate: [%s] RESPOND failed after spool resolved: %s",
                     self._name, e)
+            self._shared_stop_tag_read_effect()
             if self._shared_spool_ready_effect:
                 self._shared_play_spool_ready_effect()
             self._shared_last_action = (
@@ -2029,8 +2038,10 @@ class NFCGate:
                     self._shared_pending_uid, uid)
 
         elif event_type == EVENT_REMOVED:
-            self._shared_stop_tag_read_effect()
-            self._shared_stop_tag_unresolved_effect()
+            if self._shared_effect_timer is not None:
+                self.reactor.update_timer(
+                    self._shared_effect_timer, self.reactor.NEVER)
+            self._shared_stop_all_nfc_effects()
             self._shared_missed_resolutions = 0
             if self._debug >= 3:
                 logger.info(
@@ -2060,6 +2071,7 @@ class NFCGate:
                 self._name,
                 self._shared_pending_spool,
                 self._shared_pending_uid)
+        self._shared_stop_spool_ready_effect()
         self._shared_pending_uid          = None
         self._shared_pending_spool        = None
         self._shared_pending_deadline     = 0.0

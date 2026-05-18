@@ -1485,8 +1485,7 @@ class NFCGate:
             return
         self._check_hh_cleared()
         uid_hex  = self._read_current_tag()
-        if (self._shared and uid_hex is not None
-                and self._shared_missed_resolutions == 1):
+        if self._shared and self._shared_missed_resolutions >= 1:
             self._shared_stop_tag_unresolved_effect()
         if (self._shared and uid_hex is not None
                 and self._shared_tag_read_effect

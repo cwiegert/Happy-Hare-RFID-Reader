@@ -798,6 +798,18 @@ class NFCGate:
                 "nfc_gate: [%s] _MMU_STOP_LED_EFFECTS %s failed: %s",
                 self._name, gate_effect, e)
 
+    def _shared_stop_tag_unresolved_effect(self):
+        if not self._shared_tag_unresolved_effect:
+            return
+        gate_effect = self._shared_gate_effect_name(self._shared_tag_unresolved_effect)
+        try:
+            self._gcode.run_script(
+                "_MMU_STOP_LED_EFFECTS EFFECTS=%s" % gate_effect)
+        except Exception as e:
+            logger.debug(
+                "nfc_gate: [%s] _MMU_STOP_LED_EFFECTS %s failed: %s",
+                self._name, gate_effect, e)
+
     def _set_reading(self, gcmd, enabled):
         if enabled:
             if self._failed:
@@ -1475,7 +1487,7 @@ class NFCGate:
         uid_hex  = self._read_current_tag()
         if (self._shared and uid_hex is not None
                 and self._shared_tag_read_effect
-                and self._shared_missed_resolutions < self._shared_missed_limit):
+                and self._shared_missed_resolutions == 0):
             self._shared_play_tag_read_effect()
         spool_id = self._resolve_spool(uid_hex)
         event    = self._state.process_read(uid_hex, spool_id,
@@ -1488,7 +1500,10 @@ class NFCGate:
             self._shared_missed_resolutions += 1
             if (self._shared_tag_unresolved_effect
                     and self._shared_missed_resolutions <= self._shared_missed_limit):
+                self._shared_stop_tag_read_effect()
                 self._shared_play_tag_unresolved_effect()
+            elif (self._shared_missed_resolutions == self._shared_missed_limit + 1):
+                self._shared_stop_tag_unresolved_effect()
             if self._shared_missed_resolutions == self._shared_missed_limit:
                 logger.info(
                     "nfc_gate: [%s] shared tag uid=%s — resolution limit "
@@ -1891,7 +1906,10 @@ class NFCGate:
                         "nfc_gate: [%s] RESPOND failed: %s", self._name, e)
             if (self._shared_tag_unresolved_effect
                     and self._shared_missed_resolutions <= self._shared_missed_limit):
+                self._shared_stop_tag_read_effect()
                 self._shared_play_tag_unresolved_effect()
+            elif (self._shared_missed_resolutions == self._shared_missed_limit + 1):
+                self._shared_stop_tag_unresolved_effect()
             return
 
         if event_type == EVENT_CHANGED and spool is not None:
@@ -1997,7 +2015,10 @@ class NFCGate:
                             self._name, e)
                 if (self._shared_tag_unresolved_effect
                         and self._shared_missed_resolutions <= self._shared_missed_limit):
+                    self._shared_stop_tag_read_effect()
                     self._shared_play_tag_unresolved_effect()
+                elif (self._shared_missed_resolutions == self._shared_missed_limit + 1):
+                    self._shared_stop_tag_unresolved_effect()
                 tag  = self._state.current_tag
                 meta = (tag.meta
                         if tag is not None and isinstance(tag.meta, dict)
@@ -2014,6 +2035,7 @@ class NFCGate:
 
         elif event_type == EVENT_REMOVED:
             self._shared_stop_tag_read_effect()
+            self._shared_stop_tag_unresolved_effect()
             self._shared_missed_resolutions = 0
             if self._debug >= 3:
                 logger.info(

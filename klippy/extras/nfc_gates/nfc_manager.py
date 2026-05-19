@@ -813,6 +813,15 @@ class NFCGate:
         self._shared_stop_tag_read_effect()
         self._shared_stop_tag_unresolved_effect()
 
+    def _shared_respond(self, msg, error=False):
+        respond_type = "TYPE=error " if error else ""
+        try:
+            self._gcode.run_script(
+                "RESPOND %sMSG=\"%s\"" % (respond_type, msg))
+        except Exception as e:
+            logger.debug(
+                "nfc_gate: [%s] RESPOND failed: %s", self._name, e)
+
     def _shared_restore_hh_leds(self):
         try:
             self._gcode.run_script("MMU_GATE_MAP QUIET=1")
@@ -1532,10 +1541,13 @@ class NFCGate:
             return
         self._check_hh_cleared()
         uid_hex  = self._read_current_tag()
-        if (self._shared and uid_hex is not None
-                and self._shared_tag_read_effect
-                and self._shared_missed_resolutions == 0):
-            self._shared_play_tag_read_effect()
+        if self._shared and uid_hex is not None and self._shared_missed_resolutions == 0:
+            if self._shared_tag_read_effect:
+                self._shared_play_tag_read_effect()
+            if self._debug >= 2:
+                self._shared_respond(
+                    "NFC[%s]: tag read uid=%s — resolving..."
+                    % (self._name, uid_hex))
         spool_id = self._resolve_spool(uid_hex)
         event    = self._state.process_read(uid_hex, spool_id,
                                             scan_mode=self._scan_mode)
@@ -1549,6 +1561,10 @@ class NFCGate:
                 if self._shared_tag_unresolved_effect:
                     self._shared_stop_tag_read_effect()
                     self._shared_play_tag_unresolved_effect()
+                if self._shared_missed_resolutions == 1 and self._debug >= 2:
+                    self._shared_respond(
+                        "NFC[%s]: uid=%s not in Spoolman"
+                        % (self._name, uid_hex), error=True)
                 if self._shared_missed_resolutions == self._shared_missed_limit:
                     self._shared_unresolved_limit_reached(uid_hex)
         return uid_hex is not None
@@ -2029,6 +2045,10 @@ class NFCGate:
                     if self._shared_tag_unresolved_effect:
                         self._shared_stop_tag_read_effect()
                         self._shared_play_tag_unresolved_effect()
+                    if self._shared_missed_resolutions == 1 and self._debug >= 2:
+                        self._shared_respond(
+                            "NFC[%s]: uid=%s not in Spoolman"
+                            % (self._name, uid), error=True)
                     if self._shared_missed_resolutions == self._shared_missed_limit:
                         self._shared_unresolved_limit_reached(uid)
                 tag  = self._state.current_tag
@@ -2066,14 +2086,11 @@ class NFCGate:
         self._state.current_uid   = None
         self._state.current_spool = None
         self._shared_read_deadline = 0.0
-        try:
-            self._gcode.run_script(
-                "RESPOND TYPE=error MSG=\"[ERROR] NFC[%s]: tag uid=%s "
-                "not in Spoolman — reader ready for next tag\""
-                % (self._name, uid))
-        except Exception as e:
-            logger.debug(
-                "nfc_gate: [%s] RESPOND failed: %s", self._name, e)
+        self._shared_respond(
+            "NFC[%s]: uid=%s not in Spoolman after %d attempts"
+            % (self._name, uid, self._shared_missed_limit), error=True)
+        self._shared_respond(
+            "[OK] NFC[%s]: reader ready for next tag" % self._name)
 
     def _shared_expire_pending_if_needed(self):
         if (self._shared_pending_spool is not None

@@ -710,7 +710,7 @@ with open(path, 'w') as f:
     f.write("# [mmu_led_effect] to flash bright green for 2s when a bypass spool resolves.\n")
     f.write("shared_bypass_spool_ready_effect: mmu_RFID_bypass_ready\n")
     f.write("\n")
-    f.write("# [mmu_led_effect] to flash bright red for 2s when a tag UID does not resolve.\n")
+    f.write("# [mmu_led_effect] to flash bright red 2x when a tag UID does not resolve.\n")
     f.write("shared_tag_unresolved_effect: mmu_RFID_unresolved\n")
     f.write("\n")
     f.write("# [mmu_led_effect] to run a bright yellow chase while Spoolman creates a missing spool.\n")

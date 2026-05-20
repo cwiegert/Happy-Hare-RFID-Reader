@@ -419,7 +419,7 @@ layers: strobe 1 2 top (0, 1, 0)
 
 [mmu_led_effect mmu_RFID_unresolved]
 define_on: gates
-layers: strobe 1 5 top (1, 0, 0)
+layers: strobe 2 2 top (1, 0, 0)
 ```
 
 The effect names must match `shared_tag_read_effect`, `shared_spool_ready_effect`, and `shared_tag_unresolved_effect` in the gate config.

@@ -1594,7 +1594,8 @@ class NFCGate:
                 and self._state.current_spool is None):
             if self._shared_missed_resolutions < self._shared_missed_limit:
                 self._shared_missed_resolutions += 1
-                if self._shared_tag_unresolved_effect:
+                if (self._shared_tag_unresolved_effect
+                        and self._shared_missed_resolutions == 1):
                     self._shared_stop_tag_read_effect()
                     self._shared_play_tag_unresolved_effect()
                 if self._shared_missed_resolutions == 1 and self._debug >= 2:
@@ -2055,7 +2056,8 @@ class NFCGate:
                     "(attempt %d/%d)",
                     self._name, uid,
                     self._shared_missed_resolutions, self._shared_missed_limit)
-                if self._shared_tag_unresolved_effect:
+                if (self._shared_tag_unresolved_effect
+                        and self._shared_missed_resolutions == 1):
                     self._shared_stop_tag_read_effect()
                     self._shared_play_tag_unresolved_effect()
                 if self._shared_missed_resolutions == self._shared_missed_limit:
@@ -2142,7 +2144,8 @@ class NFCGate:
                         self._name, self._shared_last_error,
                         self._shared_missed_resolutions,
                         self._shared_missed_limit)
-                    if self._shared_tag_unresolved_effect:
+                    if (self._shared_tag_unresolved_effect
+                            and self._shared_missed_resolutions == 1):
                         self._shared_stop_tag_read_effect()
                         self._shared_play_tag_unresolved_effect()
                     if self._shared_missed_resolutions == 1 and self._debug >= 2:

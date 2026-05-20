@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [05/20/2026] - WoodWorker
+
+### Shared Reader LEDs
+
+- Fixed bypass unresolved-tag feedback replaying across the shared reader's missed-resolution retries. The unresolved red LED effect now starts only once for an unresolved tag sequence, so bypass mode no longer appears to flash 6 times from three repeated attempts.
+- Changed `mmu_RFID_unresolved` to exactly 2 red flashes (`strobe 2 2`) and updated shared-reader config comments, installer text, and docs to match.
+- Kept bypass-ready confirmation bounded at 2 seconds and ensured scheduled LED timers stop the exact effect that was started.
+
+### Tests
+
+- Added regression coverage proving repeated unresolved shared-reader events only start the red unresolved LED effect once.
+
+---
+
 ## [0.9.15] - 05/19/2026 - WoodWorker
 
 ### Pending Spool Timeout Now Sourced from Happy Hare

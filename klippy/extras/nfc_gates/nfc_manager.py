@@ -1749,8 +1749,7 @@ class NFCGate:
                     msg = ("[SCAN] NFC[%d]: starting scan-jog "
                            "(max=%.0fmm  poll=%.2fs)"
                            % (self._gate, max_mm, self._scan_poll_interval))
-                    if self._debug >= 3:
-                        logger.info("[%s]: %s", self._name, msg)
+                    logger.warning("[%s]: %s", self._name, msg)
                     self._console(msg)
                     self._start_scan_mode(max_mm=max_mm)
                     return self.reactor.NEVER

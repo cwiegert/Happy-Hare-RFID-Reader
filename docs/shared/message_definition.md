@@ -35,7 +35,8 @@ at the corresponding level:
 | `[ERROR]` | `ERROR` | `debug: 1` (or higher) |
 | `[WARN]` | `WARNING` | `debug: 2` (or higher, default) |
 | `[OK]`, informational, `[CONNECTED]` | `INFO` | `debug: 3` (or higher) |
-| `[SCAN]`, `[MOVE]`, `[REWIND]` | `INFO` | `debug: 3` (or higher) |
+| `[SCAN]` started, `[REWIND]`, `[OK]` scan result | `WARNING` | `debug: 2` (or higher, default) |
+| `[SCAN]` move steps, position detail | `INFO` | `debug: 3` (or higher) |
 
 When `console_output: true`, logger messages at or above `console_log_level` may
 also appear on screen with the same bracketed prefix style; messages logged as
@@ -99,10 +100,10 @@ JOG_SCAN=1` or by the automatic scan-jog trigger.
 | Another gate scanning | `[WARN] NFC[laneN]: gate <n> is already scanning — only one gate may scan at a time` | `WARNING  [WARN] NFC[laneN]: gate <n> is already scanning — only one gate may scan at a time` |
 | Same gate already scanning | `[WARN] NFC[laneN]: scan-jog already in progress for this gate` | `WARNING  [WARN] NFC[laneN]: scan-jog already in progress for this gate` |
 | Preflight failed | `[WARN] NFC[laneN]: scan-jog not available while <reason>` | `WARNING  [WARN] NFC[laneN]: scan-jog not available while <reason>` |
-| Scan-jog started | `[SCAN] NFC[laneN]: scan-jog started for gate <n> (max=<mm>mm  poll=<seconds>s)` | `INFO     nfc_gate: [laneN] gate <n> scan mode started — chunk=<mm>mm max=<mm>mm speed=<mm/s> chunk_interval=<seconds>s dwell=<seconds>s poll=<seconds>s` at `debug: 3` |
+| Scan-jog started | `[SCAN] NFC[laneN]: scan-jog started for gate <n> (max=<mm>mm  poll=<seconds>s)` | `WARNING  [SCAN] NFC[laneN]: scan-jog started for gate <n> ...` plus `INFO     nfc_gate: [laneN] gate <n> scan mode started — chunk=...` at `debug: 3` |
 | Auto scan-jog waiting | `[SCAN] NFC[<n>]: scan-jog waiting — gate <other> is already scanning` | `INFO     nfc_gate: [laneN] [SCAN] NFC[<n>]: scan-jog waiting — gate <other> is already scanning` |
 | Auto scan-jog unavailable | `[WARN] NFC[<n>]: scan-jog not available while <reason>` | `WARNING  nfc_gate: [laneN] NFC[<n>]: scan-jog not available while <reason>` |
-| Auto scan-jog started | `[SCAN] NFC[<n>]: starting scan-jog (max=<mm>mm  poll=<seconds>s)` | `INFO     nfc_gate: [laneN] [SCAN] NFC[<n>]: starting scan-jog (max=<mm>mm  poll=<seconds>s)` at `debug: 3` |
+| Auto scan-jog started | `[SCAN] NFC[<n>]: starting scan-jog (max=<mm>mm  poll=<seconds>s)` | `WARNING  nfc_gate: [laneN] [SCAN] NFC[<n>]: starting scan-jog (max=<mm>mm  poll=<seconds>s)` |
 | Move step queued | `[SCAN] NFC[<n>]: moving <mm>mm  scan position <mm> / <mm>mm` | `INFO     [SCAN] NFC[<n>]: moving <mm>mm  scan position <mm> / <mm>mm` and `INFO     NFC[<n>]: move queued <mm>mm  scan position <mm> / <mm>mm` |
 | Scan poll failed | `[ERROR] NFC[<n>]: scan poll failed` | `ERROR    [ERROR] NFC[<n>]: scan poll failed` |
 | Decode retry queued | `[WARN] NFC[<n>]: tag decode incomplete; retry <try>/<max> after <mm>mm jog` | `INFO     [WARN] NFC[<n>]: tag decode incomplete; retry <try>/<max> after <mm>mm jog (uid=<uid> reason=<reason>)` |
@@ -113,17 +114,17 @@ JOG_SCAN=1` or by the automatic scan-jog trigger.
 | Left-neighbor clearance failed | `[WARN] NFC[<n>]: failed to clear left neighbor gate <gate>; aborting scan to avoid assigning the neighbor spool` | Same message at `INFO` |
 | Left-neighbor still interfering | `[ERROR] NFC[<n>]: left lane gate <gate> is interfering with the current lane read after <count> clearance moves (<mm>mm); check reader position, tag placement, or lane spacing` | Same message at `ERROR` |
 | Left-neighbor re-poll | `[SCAN] NFC[<n>]: re-polling at position <mm>mm after left lane clearance` | Same message at `INFO` |
-| Left-neighbor parking | `[REWIND] NFC[Lane<n>]: parking at gate sensor` | Same message at `INFO` |
+| Left-neighbor parking | `[REWIND] NFC[Lane<n>]: parking at gate sensor` | Same message at `WARNING` |
 | Left-neighbor parking failed | `[WARN] NFC[Lane<n>]: failed to park at gate sensor — move it back manually` | `WARNING  nfc_gate: [laneN] gate <n> scan mode — failed to restore left neighbor gate <gate>: <error>` |
-| Tag found | `[OK] NFC[<n>]: tag found` | `INFO     [OK] NFC[<n>]: tag found` and mirrored to `klippy.log` |
-| Rewinding after tag found | `[REWIND] NFC[<n>]: rewinding <mm>mm` | `INFO     [REWIND] NFC[<n>]: rewinding <mm>mm` |
-| Rewind skipped | `[REWIND] NFC[<n>]: rewind fast move skipped (scan=<mm>mm buffer=<mm>mm)` | Same message at `INFO` |
-| Rewind complete | `[REWIND] NFC[<n>]: rewind complete; gate parking handed to Happy Hare (rewound=<mm>mm scan=<mm>mm buffer=<mm>mm)` | Same message at `INFO` |
-| Spool assigned | `[OK] NFC[<n>]: spool <spool> assigned` | `INFO     [OK] NFC[<n>]: spool <spool> assigned` and mirrored to `klippy.log` |
-| Metadata assigned | `[OK] NFC[<n>]: tag metadata assigned` | `INFO     [OK] NFC[<n>]: tag metadata assigned` and mirrored to `klippy.log` |
+| Tag found | `[OK] NFC[<n>]: tag found` | `WARNING  [OK] NFC[<n>]: tag found` |
+| Rewinding after tag found | `[REWIND] NFC[<n>]: rewinding <mm>mm` | `WARNING  [REWIND] NFC[<n>]: rewinding <mm>mm` |
+| Rewind skipped | `[REWIND] NFC[<n>]: rewind fast move skipped (scan=<mm>mm buffer=<mm>mm)` | Same message at `WARNING` |
+| Rewind complete | `[REWIND] NFC[<n>]: rewind complete; gate parking handed to Happy Hare (rewound=<mm>mm scan=<mm>mm buffer=<mm>mm)` | Same message at `WARNING` |
+| Spool assigned | `[OK] NFC[<n>]: spool <spool> assigned` | `WARNING  [OK] NFC[<n>]: spool <spool> assigned` |
+| Metadata assigned | `[OK] NFC[<n>]: tag metadata assigned` | `WARNING  [OK] NFC[<n>]: tag metadata assigned` |
 | Tag has no Spoolman match | `[WARN] NFC[<n>]: tag has no Spoolman match` | `WARNING  [WARN] NFC[<n>]: tag has no Spoolman match` |
-| No tag found | `[WARN] NFC[<n>]: no tag found; rewinding <mm>mm (scan=<mm>mm buffer=<mm>mm)` | Same message at `INFO` |
-| No tag found, rewind skipped | `[WARN] NFC[<n>]: no tag found; rewind fast move skipped (scan=<mm>mm buffer=<mm>mm)` | Same message at `INFO` |
+| No tag found | `[WARN] NFC[<n>]: no tag found; rewinding <mm>mm (scan=<mm>mm buffer=<mm>mm)` | Same message at `WARNING` |
+| No tag found, rewind skipped | `[WARN] NFC[<n>]: no tag found; rewind fast move skipped (scan=<mm>mm buffer=<mm>mm)` | Same message at `WARNING` |
 | Print starts during scan | No direct console message unless a rewind/no-tag message follows. | `WARNING  nfc_gate: [laneN] scan mode: print started — aborting` |
 
 ## Shared Reader Messages

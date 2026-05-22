@@ -76,11 +76,12 @@ def manual_jog_scan(gate, gcmd):
 
     gate.reactor.update_timer(gate._poll_timer, gate.reactor.NEVER)
     start(gate, max_mm=max_mm)
-    gcmd.respond_info(_color_tags(
-        "[SCAN] NFC[%s]: scan-jog started for gate %d"
-        " (max=%.0fmm  poll=%.2fs)"
-        % (gate._name, gate._gate,
-           gate._scan_max_mm, gate._scan_poll_interval)))
+    msg = ("[SCAN] NFC[%s]: scan-jog started for gate %d"
+           " (max=%.0fmm  poll=%.2fs)"
+           % (gate._name, gate._gate,
+              gate._scan_max_mm, gate._scan_poll_interval))
+    logger.warning(msg)
+    gcmd.respond_info(_color_tags(msg))
 
 
 def is_printing(gate):
@@ -549,7 +550,7 @@ def restore_left_neighbor(gate):
         return
     msg = ("[REWIND] NFC[Lane%d]: parking at gate sensor"
            % left_gate)
-    logger.info(msg)
+    logger.warning(msg)
     try:
         gcode.run_script("MMU_SELECT GATE=%d" % left_gate)
         gate._console(msg)
@@ -887,14 +888,14 @@ def finish(gate):
     gate._scan_mode = False
     gate._state.miss_count = 0
     found_msg = "[OK] NFC[%s]: tag found" % gate._name.capitalize()
-    info_both(found_msg)
+    logger.warning(found_msg)
     gate._console(found_msg)
     msg = _rewind_message(gate, "[REWIND]")
-    logger.info(msg)
+    logger.warning(msg)
     gate._console(msg)
     gate._run_rewind()
     msg = _rewind_complete_message(gate)
-    logger.info(msg)
+    logger.warning(msg)
     gate._console(msg)
     restore_left_neighbor(gate)
     gate.__class__._active_scan_gate = None
@@ -918,11 +919,11 @@ def finish(gate):
             gate._state.miss_count = 0
         if event_type == 'changed' and spool is not None:
             msg = "[OK] NFC[%s]: spool %s assigned" % (gate._name.capitalize(), spool)
-            info_both(msg)
+            logger.warning(msg)
             gate._console(msg)
         elif event_type == 'changed' and meta is not None:
             msg = "[OK] NFC[%s]: tag metadata assigned" % gate._name.capitalize()
-            info_both(msg)
+            logger.warning(msg)
             gate._console(msg)
         elif event_type == 'uid_only':
             msg = "[WARN] NFC[%s]: tag has no Spoolman match" % gate._name.capitalize()
@@ -945,11 +946,11 @@ def rewind_and_exit(gate):
     gate._scan_mode = False
     gate._state.miss_count = 0
     msg = _rewind_message(gate, "[WARN]", prefix="no tag found; ")
-    logger.info(msg)
+    logger.warning(msg)
     gate._console(msg)
     gate._run_rewind()
     msg = _rewind_complete_message(gate)
-    logger.info(msg)
+    logger.warning(msg)
     gate._console(msg)
     restore_left_neighbor(gate)
     clear_unresolved_scan(gate)

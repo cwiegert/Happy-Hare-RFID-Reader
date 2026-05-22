@@ -46,7 +46,7 @@ Before installing, rebuild and flash Klipper firmware on every MCU that will hos
 
 ```bash
 cd ~
-git clone https://github.com/cwiegert/HH-RFID-Reader.git
+git clone https://github.com/cwiegert/HH-RFID-Reader.git emu-nfc-reader
 cd ~/emu-nfc-reader
 bash install.sh
 ```

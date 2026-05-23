@@ -16,7 +16,7 @@ The shared reader can stage only a real Spoolman spool ID. UID lookup, embedded 
 
 ## Requirements
 
-- Voron/EMU setup running the Happy Hare branch that provides `variable_user_post_preload_extension`
+- Voron/EMU setup running the [igiannakas IG-dev branch of Happy Hare](https://github.com/igiannakas/Happy-Hare/tree/IG-dev), which provides `variable_user_post_preload_extension`
 - One Klipper MCU per filament lane for per-lane reader installs, or one MCU hosting the shared PN532
 - PN532 NFC reader modules configured for I2C mode
 - Hardware I2C bus on the MCU; software I2C is not supported

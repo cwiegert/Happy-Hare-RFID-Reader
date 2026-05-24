@@ -9,12 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Scan-Jog LED Reliability
 
+- Added `_NFC_SCAN_JOG_PRELOAD`, a per-lane Happy Hare post-preload hook macro that starts `mmu_clockwise_slow_exit_<gate>` immediately before launching `NFC GATE=<gate> JOG_SCAN=1`.
 - Added a delayed scan LED reassert timer so the per-gate clockwise search effect is reapplied after Happy Hare's own LED refreshes from `MMU_GATE_MAP`, `MMU_SELECT`, and `MMU_TEST_MOVE`.
 - Reasserted the searching effect after scan prep, each scan step, each jog move, and decode-retry moves so the NFC scan state keeps visible control of the active gate while scan-jog is running.
 - Cancelled pending LED reassert timers when scan-jog exits, rewinds, disconnects, or intentionally hands LED control back to Happy Hare.
 - Added a short visible tag-read hold before rewind so `mmu_RFID_read_exit_N` can play before the rewind effect starts.
 - Kept rewind LED feedback active through the rewind move and released back to Happy Hare only after parking/polling cleanup completes.
-- Added regression coverage for the delayed search-effect reassert and updated scan-jog timing expectations around the tag-read hold.
+- Updated per-lane hook documentation to wire `variable_user_post_preload_extension: '_NFC_SCAN_JOG_PRELOAD'` instead of calling `NFC JOG_SCAN=1` directly.
+- Added regression coverage for the hook wrapper ordering, delayed search-effect reassert, and updated scan-jog timing expectations around the tag-read hold.
 
 ### Config Defaults
 

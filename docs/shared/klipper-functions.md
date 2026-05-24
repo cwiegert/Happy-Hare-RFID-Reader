@@ -250,13 +250,13 @@ The [igiannakas IG-dev branch](https://github.com/igiannakas/Happy-Hare/tree/IG-
 [gcode_macro _MMU_SEQUENCE_VARS]
 description: Happy Hare sequence macro configuration variables
 gcode: # Leave empty
-variable_user_post_preload_extension: 'NFC JOG_SCAN=1'
+variable_user_post_preload_extension: '_NFC_SCAN_JOG_PRELOAD'
 ```
 
-Happy Hare appends `GATE=<n>` automatically after a successful preload, so the final command becomes:
+Happy Hare appends `GATE=<n>` automatically after a successful preload. `_NFC_SCAN_JOG_PRELOAD` starts `mmu_clockwise_slow_exit_<n>` and then starts scan-jog with:
 
 ```gcode
-NFC JOG_SCAN=1 GATE=<n>
+NFC GATE=<n> JOG_SCAN=1
 ```
 
 Recommended NFC config when using the hook — disables gate-status polling so HH is the sole trigger:

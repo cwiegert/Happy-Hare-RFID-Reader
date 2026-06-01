@@ -125,6 +125,12 @@ def manual_jog_scan(gate, gcmd):
         logger.warning(msg)
         gcmd.respond_info(_color_tags(msg))
         return
+    if hh.present and hh.status == hh_status.GATE_EMPTY:
+        msg = ("[ERROR] NFC[%s]: jog_scan is not enabled for an empty gate"
+               % gate._name)
+        logger.error(msg, extra={'nfc_no_console': True})
+        gcmd.respond_info(_color_tags(msg))
+        return
     if gate.__class__._active_scan_gate is not None:
         msg = ("[WARN] NFC[%s]: gate %d is already scanning — "
                "only one gate may scan at a time"

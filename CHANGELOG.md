@@ -16,6 +16,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added an installer warning when software-I2C sensor config is detected in printer config files, with the hardware `i2c_bus` line users should apply to sensor sections such as `emu_macros.cfg`.
 - Added optional `scan_jog_max` for scan-jog. When set, NFC uses that fixed maximum travel distance instead of reading Happy Hare Bowden calibration. The installer now asks lane-reader users whether to set `scan_jog_max` with a default of `480.0mm` or keep using per-lane Bowden lengths.
 
+### Scan-Jog Safety
+
+- Blocked manual `NFC GATE=<gate> JOG_SCAN=1` when Happy Hare reports the selected gate as empty (`gate_status=0`). NFC now returns a single console error that `jog_scan` is not enabled for an empty gate and does not start motion.
+- Changed normal scan-jog rewind/no-tag status messages back to `[REWIND]`/`[OK]` severity so ordinary rewind flow is not reported as `[WARN]`.
+
 ---
 
 ## [0.9.24] - 05/27/2026 - WoodWorker

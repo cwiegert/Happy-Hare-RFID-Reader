@@ -311,7 +311,7 @@ Starts the scan-and-jog sequence on demand, identical to the automatic pre-load 
 NFC GATE=0 JOG_SCAN=1
 ```
 
-**What it does:** Selects the gate, then jogs the filament forward in `scan_jog_mm` increments, reading the NFC tag after each step. When the tag is found it rewinds toward the parked position, leaves `scan_rewind_buffer_mm` for Happy Hare's final gate parking step, and runs `_MMU_STEP_UNLOAD_GATE`. If the lane's Happy Hare Bowden calibration length is reached without a read, it follows the same rewind-and-park path and exits scan mode.
+**What it does:** Selects the gate, then jogs the filament forward in `scan_jog_mm` increments, reading the NFC tag after each step. When the tag is found it rewinds toward the parked position, leaves `scan_rewind_buffer_mm` for Happy Hare's final gate parking step, and runs `_MMU_STEP_UNLOAD_GATE`. If `scan_jog_max` is set, that distance is the scan limit; otherwise the lane's Happy Hare Bowden calibration length is used. When the limit is reached without a read, NFC follows the same rewind-and-park path and exits scan mode.
 
 Scan-jog always clears the Happy Hare gate cache and runs the pre-scan
 `MMU_SPOOLMAN SYNC=1` before moving filament. When launched from a Happy Hare

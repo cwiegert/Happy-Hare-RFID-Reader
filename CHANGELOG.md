@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.9.23] - 06/01/2026 - WoodWorker
+
+### Installer Prompt Cleanup
+
+- Removed the installer terminal theme/profile prompt and the `-p` profile color option.
+- Simplified installer prompt emphasis to default terminal color with bold text only; no custom cyan/green/yellow/magenta highlight colors are used.
+- Added a per-lane reader I2C bus prompt. The installer now writes the selected bus to the base `[nfc_gate]`, comments/uncomments the SLB and EBB preset lines, and uses a custom active bus line when the user enters a different hardware bus.
+- Added a per-lane reader MCU prefix prompt. The installer defaults to `mmu` and writes lane hardware sections as `mmu0`, `mmu1`, etc.; entering `lane` writes `lane0`, `lane1`, etc.
+- Added an installer warning when software-I2C sensor config is detected in printer config files, with the hardware `i2c_bus` line users should apply to sensor sections such as `emu_macros.cfg`.
+- Added optional `scan_jog_max` for scan-jog. When set, NFC uses that fixed maximum travel distance instead of reading Happy Hare Bowden calibration. The installer now asks lane-reader users whether to set `scan_jog_max` with a default of `480.0mm` or keep using per-lane Bowden lengths.
+
+---
+
 ## [0.9.24] - 05/27/2026 - WoodWorker
 
 ### Shared Reader LED Target Guard

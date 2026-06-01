@@ -24,15 +24,6 @@
 
 set -e
 
-# ── CLI arguments ─────────────────────────────────────────────────────────────
-_CLI_PROFILE=""
-while getopts "p:" _opt; do
-    case "$_opt" in
-        p) _CLI_PROFILE="$OPTARG" ;;
-    esac
-done
-shift $(( OPTIND - 1 ))
-
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KLIPPER_EXTRAS="${HOME}/klipper/klippy/extras"
 PRINTER_CONFIG="${HOME}/printer_data/config"
@@ -47,72 +38,24 @@ MMU_HW_CFG="${PRINTER_CONFIG}/mmu/base/mmu_hardware.cfg"
 if [ -t 1 ]; then
     BOLD="$(printf '\033[1m')"
     RESET="$(printf '\033[0m')"
-    GREEN="$(printf '\033[32m')"
-    CYAN="$(printf '\033[1;96m')"
-    BRIGHT_GREEN="$(printf '\033[1;32m')"
-    YELLOW="$(printf '\033[1;33m')"
-    MAGENTA="$(printf '\033[1;35m')"
-    WHITE="$(printf '\033[1;37m')"
-    ORANGE="$(printf '\033[38;5;214m')"
-    DEFAULT="${CYAN}"   # interim default until profile is resolved
 else
-    BOLD="" RESET="" GREEN="" CYAN="" BRIGHT_GREEN="" YELLOW="" MAGENTA="" WHITE="" ORANGE="" DEFAULT=""
+    BOLD="" RESET=""
 fi
-
-# ── Terminal profile → highlight color map ──────────────────────────────────
-# Called once after _CLI_PROFILE is known (from -p or the interactive prompt).
-# Sets DEFAULT to the best-contrast color for the named profile.
-apply_profile_color() {
-    local _color
-    case "$1" in
-        # ── macOS Terminal.app ─────────────────────────────────────────
-        "Homebrew")         _color="$(printf '\033[1;96m')"  ;;  # bright cyan   — green text bg, cyan contrasts
-        "Ocean")            _color="$(printf '\033[1;32m')"  ;;  # bright green  — pops on dark blue background
-        "Grass")            _color="$(printf '\033[1;33m')"  ;;  # bright yellow — readable on green bg
-        "Novel")            _color="$(printf '\033[0;34m')"  ;;  # dark blue     — light tan background
-        "Pro")              _color="$(printf '\033[1;36m')"  ;;  # bright cyan   — dark background
-        "Basic")            _color="$(printf '\033[0;34m')"  ;;  # dark blue     — white background
-        "Manuscript")       _color="$(printf '\033[0;34m')"  ;;  # dark blue     — cream background
-        "Red Sands")        _color="$(printf '\033[1;33m')"  ;;  # bright yellow — dark red background
-        "Silver Aerogel")   _color="$(printf '\033[0;36m')"  ;;  # dark cyan     — grey background
-        "Solid Colors")     _color="$(printf '\033[1;37m')"  ;;  # bright white  — unknown bg
-
-        # ── iTerm2 built-in ────────────────────────────────────────────
-        "Default")          _color="$(printf '\033[1;96m')"  ;;  # bright cyan
-        "Dark Background")  _color="$(printf '\033[1;96m')"  ;;  # bright cyan
-        "Light Background") _color="$(printf '\033[0;34m')"  ;;  # dark blue
-        "Pastel"*)          _color="$(printf '\033[1;96m')"  ;;  # bright cyan   — dark pastel bg
-        "Solarized Dark")   _color="$(printf '\033[1;33m')"  ;;  # bright yellow — solarized accent
-        "Solarized Light")  _color="$(printf '\033[0;34m')"  ;;  # dark blue
-        "Tango Dark")       _color="$(printf '\033[1;96m')"  ;;  # bright cyan
-        "Tango Light")      _color="$(printf '\033[0;34m')"  ;;  # dark blue
-        "Smoooooth")        _color="$(printf '\033[1;96m')"  ;;  # bright cyan
-
-        # ── Popular community themes (iTerm2) ─────────────────────────
-        "Dracula")          _color="$(printf '\033[1;35m')"  ;;  # bright magenta — matches Dracula purple
-        "Monokai"*)         _color="$(printf '\033[1;33m')"  ;;  # bright yellow  — matches Monokai
-        "Gruvbox Dark")     _color="$(printf '\033[1;33m')"  ;;  # bright yellow/orange
-        "Gruvbox Light")    _color="$(printf '\033[0;31m')"  ;;  # dark red
-        "Nord")             _color="$(printf '\033[1;96m')"  ;;  # bright cyan    — Nord frost palette, contrasts on dark blue-grey
-        "One Dark")         _color="$(printf '\033[1;96m')"  ;;  # bright cyan    — Atom One Dark
-        "Cobalt2")          _color="$(printf '\033[1;33m')"  ;;  # bright yellow
-        "Catppuccin"*)      _color="$(printf '\033[1;35m')"  ;;  # bright magenta — matches Catppuccin mauve
-
-        *)                  _color="$(printf '\033[1;96m')"  ;;  # bright cyan fallback
-    esac
-    DEFAULT="${_color}"
-}
 
 choice_style() {
     if [ "$1" = "$2" ]; then
-        printf '%s%s%s%s' "${DEFAULT}" "${BOLD}" "$1" "${RESET}"
+        printf '%s%s%s' "${BOLD}" "$1" "${RESET}"
     else
         printf '%s' "$1"
     fi
 }
 
+prompt_style() {
+    printf '%s%s%s' "${BOLD}" "$1" "${RESET}"
+}
+
 print_banner() {
-    printf '%s' "${DEFAULT}${BOLD}"
+    printf '%s' "${BOLD}"
     cat <<'EOF'
 ███╗   ██╗███████╗ ██████╗
 ████╗  ██║██╔════╝██╔════╝
@@ -136,7 +79,7 @@ prompt_with_default() {
     local prompt_text="$2"
     local default_value="$3"
     local reply
-    read -r -p "${prompt_text} [${DEFAULT}${BOLD}${default_value}${RESET}]: " reply
+    read -r -p "$(prompt_style "${prompt_text}") [${BOLD}${default_value}${RESET}]: " reply
     if [ -z "${reply}" ]; then
         reply="${default_value}"
     fi
@@ -151,13 +94,13 @@ prompt_yes_no() {
     local reply
 
     if [ "${default_value}" = "yes" ]; then
-        default_hint="${DEFAULT}${BOLD}Y${RESET}/n"
+        default_hint="${BOLD}Y${RESET}/n"
     else
-        default_hint="y/${DEFAULT}${BOLD}N${RESET}"
+        default_hint="y/${BOLD}N${RESET}"
     fi
 
     while true; do
-        read -r -p "${prompt_text} [${default_hint}]: " reply
+        read -r -p "$(prompt_style "${prompt_text}") [${default_hint}]: " reply
         if [ -z "${reply}" ]; then
             reply="${default_value}"
         fi
@@ -196,7 +139,7 @@ prompt_choice() {
     done
 
     while true; do
-        read -r -p "${prompt_text} [${choices_label}]: " reply
+        read -r -p "$(prompt_style "${prompt_text}") [${choices_label}]: " reply
         if [ -z "${reply}" ]; then
             reply="${default_value}"
         fi
@@ -369,6 +312,192 @@ with open(path, 'w') as f:
 PYEOF
 }
 
+set_lane_i2c_bus() {
+    local file_path="$1"
+    local bus_value="$2"
+    local bus_label="$3"
+
+    python3 - "${file_path}" "${bus_value}" "${bus_label}" <<'PYEOF'
+import sys
+
+path, bus, label = sys.argv[1:4]
+slb = 'i2c2_PB10_PB11'
+ebb = 'i2c3_PB3_PB4'
+
+try:
+    lines = open(path, 'r').read().splitlines(True)
+except FileNotFoundError:
+    lines = []
+
+section_start = None
+section_end = len(lines)
+for idx, line in enumerate(lines):
+    if line.strip() == '[nfc_gate]':
+        section_start = idx
+        break
+
+if section_start is None:
+    if lines and not lines[-1].endswith('\n'):
+        lines[-1] += '\n'
+    if lines and lines[-1].strip():
+        lines.append('\n')
+    lines.append('[nfc_gate]\n')
+    section_start = len(lines) - 1
+else:
+    for idx in range(section_start + 1, len(lines)):
+        stripped = lines[idx].strip()
+        if stripped.startswith('[') and stripped.endswith(']'):
+            section_end = idx
+            break
+
+before = lines[:section_start + 1]
+section = lines[section_start + 1:section_end]
+after = lines[section_end:]
+
+filtered = []
+insert_at = None
+for line in section:
+    stripped = line.strip()
+    uncommented = stripped.startswith('i2c_bus:')
+    commented = stripped.startswith('#i2c_bus:')
+    is_preset = (slb in stripped or ebb in stripped)
+    if uncommented or (commented and is_preset):
+        continue
+    filtered.append(line)
+    if stripped.startswith('i2c_address:'):
+        insert_at = len(filtered)
+
+if label == 'SLB':
+    bus_lines = [
+        f'i2c_bus:                 {slb}          # SLB configuration\n',
+        f'#i2c_bus:                {ebb}           # EBB42 configuration\n',
+    ]
+elif label == 'EBB':
+    bus_lines = [
+        f'#i2c_bus:                {slb}          # SLB configuration\n',
+        f'i2c_bus:                 {ebb}           # EBB42 configuration\n',
+    ]
+else:
+    bus_lines = [
+        f'#i2c_bus:                {slb}          # SLB configuration\n',
+        f'#i2c_bus:                {ebb}           # EBB42 configuration\n',
+        f'i2c_bus:                 {bus}          # custom lane hardware bus\n',
+    ]
+
+if insert_at is None:
+    insert_at = 0
+filtered[insert_at:insert_at] = bus_lines
+
+with open(path, 'w') as f:
+    f.writelines(before + filtered + after)
+PYEOF
+}
+
+set_scan_jog_max_config() {
+    local file_path="$1"
+    local mode="$2"
+    local distance="$3"
+
+    python3 - "${file_path}" "${mode}" "${distance}" <<'PYEOF'
+import sys
+
+path, mode, distance = sys.argv[1:4]
+key = 'scan_jog_max'
+old_key = 'jog_scan_distance'
+
+try:
+    lines = open(path, 'r').read().splitlines(True)
+except FileNotFoundError:
+    lines = []
+
+section_start = None
+section_end = len(lines)
+for idx, line in enumerate(lines):
+    if line.strip() == '[nfc_gate]':
+        section_start = idx
+        break
+
+if section_start is None:
+    if lines and not lines[-1].endswith('\n'):
+        lines[-1] += '\n'
+    if lines and lines[-1].strip():
+        lines.append('\n')
+    lines.append('[nfc_gate]\n')
+    section_start = len(lines) - 1
+else:
+    for idx in range(section_start + 1, len(lines)):
+        stripped = lines[idx].strip()
+        if stripped.startswith('[') and stripped.endswith(']'):
+            section_end = idx
+            break
+
+found = False
+insert_at = section_end
+for idx in range(section_start + 1, section_end):
+    stripped = lines[idx].strip()
+    active = stripped.startswith(key + ':')
+    commented = stripped.startswith('#' + key + ':')
+    old_active = stripped.startswith(old_key + ':')
+    old_commented = stripped.startswith('#' + old_key + ':')
+    if old_active or old_commented:
+        current = stripped.split(':', 1)[1].strip() if ':' in stripped else distance
+        if not found:
+            found = True
+            if mode == 'fixed':
+                lines[idx] = f'{key}:      {distance}\n'
+            else:
+                lines[idx] = f'#{key}:     {current}\n'
+        else:
+            lines[idx] = ''
+        continue
+    if not active and not commented:
+        continue
+    found = True
+    if mode == 'fixed':
+        lines[idx] = f'{key}:      {distance}\n'
+    else:
+        current = stripped.split(':', 1)[1].strip() if ':' in stripped else distance
+        lines[idx] = f'#{key}:     {current}\n'
+
+if not found and mode == 'fixed':
+    for idx in range(section_start + 1, section_end):
+        if lines[idx].strip().startswith('scan_jog_mm:'):
+            insert_at = idx + 1
+            break
+    if insert_at > 0 and lines[insert_at - 1].strip():
+        lines.insert(insert_at, '\n')
+        insert_at += 1
+    lines.insert(insert_at, f'{key}:      {distance}\n')
+
+with open(path, 'w') as f:
+    f.writelines(lines)
+PYEOF
+}
+
+warn_software_i2c_sensors() {
+    local hardware_bus="$1"
+    local found=0
+    local file
+    local match
+
+    while IFS= read -r file; do
+        [ -f "${file}" ] || continue
+        match="$(grep -nEi '^[[:space:]]*([^#].*)?(i2c_software|i2c_bus[[:space:]]*:[[:space:]]*i2c_software)' "${file}" || true)"
+        if [ -n "${match}" ]; then
+            if [ "${found}" -eq 0 ]; then
+                echo ""
+                echo "WARNING: software I2C sensor config detected."
+                echo "         PN532 uses hardware I2C. Any sensor on the same lane MCU should use:"
+                echo "         i2c_bus: ${hardware_bus}"
+                echo "         Check these file(s), commonly emu_macros.cfg:"
+            fi
+            found=1
+            echo "         ${file}"
+            printf '%s\n' "${match}" | sed 's/^/           /'
+        fi
+    done < <(find "${PRINTER_CONFIG}" -type f \( -iname '*emu*macro*.cfg' -o -iname '*sensor*.cfg' -o -iname '*.cfg' \) 2>/dev/null)
+}
+
 count_lane_sections() {
     local file_path="$1"
     python3 - "${file_path}" <<'PYEOF'
@@ -390,13 +519,15 @@ PYEOF
 write_lane_config() {
     local file_path="$1"
     local lane_count="$2"
+    local lane_mcu_prefix="$3"
 
-    python3 - "${file_path}" "${lane_count}" <<'PYEOF'
+    python3 - "${file_path}" "${lane_count}" "${lane_mcu_prefix}" <<'PYEOF'
 import re
 import sys
 
 path = sys.argv[1]
 lane_count = int(sys.argv[2])
+lane_mcu_prefix = sys.argv[3]
 existing = {}
 current_lane = None
 
@@ -438,7 +569,8 @@ with open(path, 'w') as f:
     f.write("#\n")
     f.write("# i2c_mcu: is consumed by Klipper's I2C bus layer (MCU_I2C_from_config),\n")
     f.write("# not read explicitly by the plugin.  The MCU name must already exist in\n")
-    f.write("# Klipper / Happy Hare config.  Example: [mcu lane0], [mcu lane1], etc.\n")
+    f.write("# Klipper / Happy Hare config.  The installer writes this from the selected\n")
+    f.write("# MCU prefix, for example prefix 'lane' -> [mcu lane0], [mcu lane1], etc.\n")
     f.write("#\n")
     f.write("# [WARN] After updating Klipper, rebuild and flash the lane MCU / EBB42 firmware.\n")
     f.write("# Updating the host alone is not enough for PN532 I2C troubleshooting.\n")
@@ -446,7 +578,7 @@ with open(path, 'w') as f:
 
     for lane in range(lane_count):
         lane_existing = existing.get(lane, {})
-        mcu = lane_existing.get('i2c_mcu', f'mmu{lane}')
+        mcu = f'{lane_mcu_prefix}{lane}'
         startup_delay = lane_existing.get('startup_poll_delay',
                                           f'{lane * 0.5:.1f}')
         f.write("# =============================================================================\n")
@@ -465,7 +597,7 @@ with open(path, 'w') as f:
     f.write(f"# [nfc_gate lane{example_lane}]\n")
     f.write("# enabled:                False\n")
     f.write(f"# mmu_gate:                {example_lane}\n")
-    f.write(f"# i2c_mcu:                 mmu{example_lane}\n")
+    f.write(f"# i2c_mcu:                 {lane_mcu_prefix}{example_lane}\n")
     f.write(f"# startup_poll_delay:      {example_lane * 0.5:.1f}\n")
 PYEOF
 }
@@ -555,6 +687,122 @@ for line in text.splitlines():
             raise SystemExit
 print('i2c1')
 PYEOF
+}
+
+detect_lane_i2c_bus() {
+    local lane_cfg="$1"
+    python3 - "${lane_cfg}" <<'PYEOF'
+import re
+import sys
+
+try:
+    text = open(sys.argv[1], 'r').read()
+except FileNotFoundError:
+    print('i2c2_PB10_PB11')
+    raise SystemExit
+
+in_base = False
+for line in text.splitlines():
+    stripped = line.strip()
+    if stripped == '[nfc_gate]':
+        in_base = True
+        continue
+    if in_base:
+        if stripped.startswith('['):
+            break
+        m = re.match(r'^i2c_bus\s*:\s*(\S+)', stripped)
+        if m:
+            print(m.group(1))
+            raise SystemExit
+print('i2c2_PB10_PB11')
+PYEOF
+}
+
+lane_bus_label() {
+    case "$1" in
+        i2c2_PB10_PB11) printf '%s' "SLB" ;;
+        i2c3_PB3_PB4)   printf '%s' "EBB" ;;
+        *)              printf '%s' "$1" ;;
+    esac
+}
+
+prompt_lane_i2c_bus() {
+    local __bus_var="$1"
+    local __label_var="$2"
+    local default_bus="$3"
+    local default_label
+    local reply
+
+    default_label="$(lane_bus_label "${default_bus}")"
+    echo "7. Per-lane reader I2C bus"
+    echo "   $(choice_style SLB "${default_label}") = i2c2_PB10_PB11"
+    echo "   $(choice_style EBB "${default_label}") = i2c3_PB3_PB4"
+    echo "   Enter a bus name directly if your lane MCUs use different pins."
+    while true; do
+        read -r -p "$(prompt_style "   Select lane reader bus") [${BOLD}${default_label}${RESET}]: " reply
+        if [ -z "${reply}" ]; then
+            reply="${default_label}"
+        fi
+        case "$(printf '%s' "${reply}" | tr '[:lower:]' '[:upper:]')" in
+            SLB)
+                printf -v "${__bus_var}" '%s' "i2c2_PB10_PB11"
+                printf -v "${__label_var}" '%s' "SLB"
+                return
+                ;;
+            EBB|EBB42)
+                printf -v "${__bus_var}" '%s' "i2c3_PB3_PB4"
+                printf -v "${__label_var}" '%s' "EBB"
+                return
+                ;;
+        esac
+        if printf '%s' "${reply}" | grep -Eq '^i2c[[:alnum:]_]+$'; then
+            printf -v "${__bus_var}" '%s' "${reply}"
+            printf -v "${__label_var}" '%s' "custom"
+            return
+        fi
+        echo "Please enter SLB, EBB, or a Klipper I2C bus name such as i2c3_PB3_PB4."
+    done
+}
+
+prompt_scan_jog_max_mode() {
+    local __mode_var="$1"
+    local __distance_var="$2"
+    local reply
+    local default_mode="fixed"
+    local default_distance="480.0"
+
+    echo "8. Scan-jog max travel"
+    echo "   $(choice_style fixed "${default_mode}")  = use scan_jog_max, default 480mm"
+    echo "   $(choice_style bowden "${default_mode}") = keep trying until the lane Bowden length is reached"
+    while true; do
+        read -r -p "$(prompt_style "   Select scan-jog max travel") [${BOLD}${default_mode}${RESET}]: " reply
+        if [ -z "${reply}" ]; then
+            reply="${default_mode}"
+        fi
+        reply="$(printf '%s' "${reply}" | tr '[:upper:]' '[:lower:]')"
+        case "${reply}" in
+            fixed|rotation|spool|one|480|480.0)
+                local distance_reply
+                read -r -p "$(prompt_style "   Enter scan_jog_max in mm") [${BOLD}${default_distance}${RESET}]: " distance_reply
+                if [ -z "${distance_reply}" ]; then
+                    distance_reply="${default_distance}"
+                fi
+                if ! printf '%s' "${distance_reply}" | grep -Eq '^[0-9]+([.][0-9]+)?$'; then
+                    echo "Please enter a numeric scan_jog_max value in mm."
+                    continue
+                fi
+                printf -v "${__mode_var}" '%s' "fixed"
+                printf -v "${__distance_var}" '%s' "${distance_reply}"
+                return
+                ;;
+            bowden|calibration|calibrated)
+                printf -v "${__mode_var}" '%s' "bowden"
+                printf -v "${__distance_var}" '%s' ""
+                return
+                ;;
+        esac
+        echo "Please choose fixed or bowden."
+    done
 }
 
 detect_mmu_led_unit() {
@@ -661,13 +909,13 @@ prompt_i2c_bus_select() {
     echo ""
 
     local choice=""
-    read -r -p "   Select I2C bus [0-${#buses[@]}]: " choice
+    read -r -p "$(prompt_style "   Select I2C bus") [${BOLD}0-${#buses[@]}${RESET}]: " choice
 
     if [[ "$choice" =~ ^[1-9][0-9]*$ ]] && [ "$choice" -le "${#buses[@]}" ]; then
         eval "${varname}='${buses[$((choice-1))]}'"
     else
         local custom=""
-        read -r -p "   Enter I2C bus name [${default_val}]: " custom
+        read -r -p "$(prompt_style "   Enter I2C bus name") [${BOLD}${default_val}${RESET}]: " custom
         eval "${varname}='${custom:-${default_val}}'"
     fi
 }
@@ -781,71 +1029,12 @@ git -C "${REPO_DIR}" sparse-checkout set --no-cone '/*' '!/docs/' '!/Readme.md' 
 echo "  [ok]     sparse checkout configured — documentation excluded from this machine"
 echo ""
 
-# ── Profile color setup ───────────────────────────────────────────────────────
-if [ -n "${_CLI_PROFILE}" ]; then
-    apply_profile_color "${_CLI_PROFILE}"
-elif [ -t 0 ] && [ -t 1 ]; then
-    echo ""
-    echo "Terminal profile — pick your theme so highlights render correctly:"
-    echo ""
-    echo "  macOS Terminal.app"
-    echo "   1) Homebrew          → bright cyan"
-    echo "   2) Ocean             → bright green"
-    echo "   3) Grass             → bright yellow"
-    echo "   4) Novel             → dark blue"
-    echo "   5) Pro               → bright cyan"
-    echo "   6) Basic             → dark blue  [default]"
-    echo "   7) Manuscript        → dark blue"
-    echo "   8) Red Sands         → bright yellow"
-    echo "   9) Silver Aerogel    → dark cyan"
-    echo ""
-    echo "  iTerm2 / community"
-    echo "  10) Default / Dark Background  → bright cyan"
-    echo "  11) Solarized Dark             → bright yellow"
-    echo "  12) Solarized Light            → dark blue"
-    echo "  13) Tango Dark                 → bright cyan"
-    echo "  14) Tango Light                → dark blue"
-    echo "  15) Dracula                    → bright magenta"
-    echo "  16) Monokai                    → bright yellow"
-    echo "  17) Gruvbox Dark               → bright yellow"
-    echo "  18) Nord                       → bright cyan"
-    echo "  19) One Dark                   → bright cyan"
-    echo "  20) Catppuccin                 → bright magenta"
-    echo ""
-    _profile_reply=""
-    read -r -p "  Profile number or exact name [default=6]: " _profile_reply
-    case "${_profile_reply}" in
-        1|Homebrew|homebrew)             _CLI_PROFILE="Homebrew" ;;
-        2|Ocean|ocean)                   _CLI_PROFILE="Ocean" ;;
-        3|Grass|grass)                   _CLI_PROFILE="Grass" ;;
-        4|Novel|novel)                   _CLI_PROFILE="Novel" ;;
-        5|Pro|pro)                       _CLI_PROFILE="Pro" ;;
-        6|Basic|basic)                   _CLI_PROFILE="Basic" ;;
-        7|Manuscript|manuscript)         _CLI_PROFILE="Manuscript" ;;
-        8|"Red Sands"|"red sands"|redsands) _CLI_PROFILE="Red Sands" ;;
-        9|"Silver Aerogel"|"silver aerogel") _CLI_PROFILE="Silver Aerogel" ;;
-        10|Default|default|"Dark Background") _CLI_PROFILE="Default" ;;
-        11|"Solarized Dark"|"solarized dark")  _CLI_PROFILE="Solarized Dark" ;;
-        12|"Solarized Light"|"solarized light") _CLI_PROFILE="Solarized Light" ;;
-        13|"Tango Dark"|"tango dark"|tangodark) _CLI_PROFILE="Tango Dark" ;;
-        14|"Tango Light"|"tango light"|tangolight) _CLI_PROFILE="Tango Light" ;;
-        15|Dracula|dracula)              _CLI_PROFILE="Dracula" ;;
-        16|Monokai|monokai)              _CLI_PROFILE="Monokai" ;;
-        17|"Gruvbox Dark"|"gruvbox dark") _CLI_PROFILE="Gruvbox Dark" ;;
-        18|Nord|nord)                    _CLI_PROFILE="Nord" ;;
-        19|"One Dark"|"one dark")        _CLI_PROFILE="One Dark" ;;
-        20|Catppuccin|catppuccin)        _CLI_PROFILE="Catppuccin" ;;
-        *)                               _CLI_PROFILE="Basic" ;;   # 6, blank, or unknown
-    esac
-    apply_profile_color "${_CLI_PROFILE}"
-fi
-
 print_banner
 echo "Interactive setup"
 echo ""
 
 if [ -f "${NFC_READER_CFG}" ]; then
-    echo "${DEFAULT}${BOLD}  Existing install detected — updating.${RESET}"
+    echo "${BOLD}  Existing install detected — updating.${RESET}"
     echo "  Your current configuration will be preserved; only changed values will be written."
     echo ""
 fi
@@ -897,7 +1086,20 @@ if [ "${READER_TYPE}" = "lane" ]; then
         "5. Enable scan-jog when a loaded tag is out of read range?" \
         "yes"
 
-    echo "6. Tag read mode"
+    prompt_with_default LANE_MCU_PREFIX \
+        "6. Lane reader MCU name prefix" \
+        "mmu"
+    echo "   This writes i2c_mcu values as ${LANE_MCU_PREFIX}0, ${LANE_MCU_PREFIX}1, etc."
+    echo ""
+
+    DEFAULT_LANE_I2C_BUS="$(detect_lane_i2c_bus "${NFC_READER_CFG}")"
+    prompt_lane_i2c_bus LANE_I2C_BUS LANE_BUS_LABEL "${DEFAULT_LANE_I2C_BUS}"
+    echo ""
+
+    prompt_scan_jog_max_mode SCAN_JOG_MAX_MODE SCAN_JOG_MAX
+    echo ""
+
+    echo "9. Tag read mode"
     echo "   $(choice_style spoolman spoolman) = UID-only lookup in Spoolman's extra field (default)"
     echo "   $(choice_style rich spoolman)     = read tag metadata, then resolve/create Spoolman records"
     prompt_choice TAG_MODE \
@@ -914,10 +1116,10 @@ if [ "${READER_TYPE}" = "lane" ]; then
         echo "   Factory-tagged Bambu spools are MIFARE Classic and require"
         echo "   authenticated reads plus the pycryptodome HKDF dependency."
         prompt_yes_no BAMBU_READS \
-            "7. Will you read factory-tagged Bambu spools with rich metadata?" \
+            "10. Will you read factory-tagged Bambu spools with rich metadata?" \
             "no"
         prompt_yes_no SPOOLMAN_AUTO_CREATE \
-            "8. Auto-create missing Spoolman spools from rich tag metadata?" \
+            "11. Auto-create missing Spoolman spools from rich tag metadata?" \
             "yes"
     fi
 
@@ -927,6 +1129,11 @@ if [ "${READER_TYPE}" = "lane" ]; then
 else
 
     LANE_COUNT="0"
+    LANE_MCU_PREFIX=""
+    LANE_I2C_BUS=""
+    LANE_BUS_LABEL=""
+    SCAN_JOG_MAX_MODE="bowden"
+    SCAN_JOG_MAX=""
     SCAN_ENABLED="no"   # always disabled for shared reader
 
     echo "2. Spoolman connection"
@@ -984,9 +1191,9 @@ fi
 
 # ── Summary + confirm before any writes ──────────────────────────────────────
 echo ""
-echo "${DEFAULT}${BOLD}════════════════════════════════════════════════════════════════${RESET}"
-echo "${DEFAULT}${BOLD}  Install summary — review before writing${RESET}"
-echo "${DEFAULT}${BOLD}════════════════════════════════════════════════════════════════${RESET}"
+echo "${BOLD}════════════════════════════════════════════════════════════════${RESET}"
+echo "${BOLD}  Install summary — review before writing${RESET}"
+echo "${BOLD}════════════════════════════════════════════════════════════════${RESET}"
 echo "  Reader type:       ${READER_TYPE}"
 echo "  Spoolman:          ${SPOOLMAN_URL}"
 echo "  Startup polling:   ${STARTUP_POLLING}"
@@ -994,21 +1201,30 @@ if [ "${READER_TYPE}" = "shared" ]; then
     echo "  i2c_mcu:           ${I2C_MCU}"
     echo "  i2c_bus:           ${I2C_BUS}"
     echo "  LED effects:       (whole-chain — all gate exit LEDs flash simultaneously)"
-    echo "    tag detected:    ${DEFAULT}${MMU_LED_UNIT}_mmu_RFID_read_exit${RESET}"
-    echo "    spool ready:     ${DEFAULT}${MMU_LED_UNIT}_mmu_RFID_ready_exit${RESET}"
-    echo "    unresolved:      ${DEFAULT}${MMU_LED_UNIT}_mmu_RFID_unresolved_exit${RESET}"
-    echo "    auto-create:     ${DEFAULT}${MMU_LED_UNIT}_mmu_RFID_creating_exit${RESET}"
-    echo "    bypass read:     ${DEFAULT}${MMU_LED_UNIT}_mmu_RFID_bypass_read_exit${RESET}"
-    echo "    bypass ready:    ${DEFAULT}${MMU_LED_UNIT}_mmu_RFID_bypass_ready_exit${RESET}"
+    echo "    tag detected:    ${BOLD}${MMU_LED_UNIT}_mmu_RFID_read_exit${RESET}"
+    echo "    spool ready:     ${BOLD}${MMU_LED_UNIT}_mmu_RFID_ready_exit${RESET}"
+    echo "    unresolved:      ${BOLD}${MMU_LED_UNIT}_mmu_RFID_unresolved_exit${RESET}"
+    echo "    auto-create:     ${BOLD}${MMU_LED_UNIT}_mmu_RFID_creating_exit${RESET}"
+    echo "    bypass read:     ${BOLD}${MMU_LED_UNIT}_mmu_RFID_bypass_read_exit${RESET}"
+    echo "    bypass ready:    ${BOLD}${MMU_LED_UNIT}_mmu_RFID_bypass_ready_exit${RESET}"
 else
     echo "  Lane count:        ${LANE_COUNT}"
+    echo "  Lane MCU prefix:   ${LANE_MCU_PREFIX}  (${LANE_MCU_PREFIX}0, ${LANE_MCU_PREFIX}1, ...)"
+    echo "  Lane I2C bus:      ${LANE_I2C_BUS} (${LANE_BUS_LABEL})"
     echo "  Scan-jog:          ${SCAN_ENABLED}"
+    if [ "${SCAN_JOG_MAX_MODE}" = "fixed" ]; then
+        echo "  Scan max travel:   ${SCAN_JOG_MAX}mm (scan_jog_max)"
+    else
+        echo "  Scan max travel:   Happy Hare Bowden calibration per lane"
+    fi
+    echo "  Note: one bus question assumes homogeneous lane MCUs; edit nfc_reader.cfg or"
+    echo "        add per-lane overrides in nfc_reader_hw.cfg for mixed MCU setups."
     echo "  LED effects:       (per active gate — _exit_N suffix applied automatically)"
-    echo "    searching:       ${DEFAULT}mmu_clockwise_slow${RESET}"
-    echo "    tag read:        ${DEFAULT}mmu_RFID_read${RESET}"
-    echo "    rewinding:       ${DEFAULT}mmu_anticlock_fast${RESET}"
-    echo "    auto-create:     ${DEFAULT}mmu_RFID_creating${RESET}"
-    echo "    unresolved:      ${DEFAULT}mmu_RFID_unresolved${RESET}"
+    echo "    searching:       ${BOLD}mmu_clockwise_slow${RESET}"
+    echo "    tag read:        ${BOLD}mmu_RFID_read${RESET}"
+    echo "    rewinding:       ${BOLD}mmu_anticlock_fast${RESET}"
+    echo "    auto-create:     ${BOLD}mmu_RFID_creating${RESET}"
+    echo "    unresolved:      ${BOLD}mmu_RFID_unresolved${RESET}"
 fi
 echo "  Tag mode:          ${TAG_MODE}"
 if [ "${TAG_MODE}" = "rich" ]; then
@@ -1017,14 +1233,14 @@ if [ "${TAG_MODE}" = "rich" ]; then
 fi
 echo ""
 echo "  Files that will be written / merged:"
-echo "    ${DEFAULT}${NFC_READER_CFG}${RESET}"
-echo "    ${DEFAULT}${NFC_CONFIG_DIR}/nfc_macros.cfg${RESET}"
+echo "    ${BOLD}${NFC_READER_CFG}${RESET}"
+echo "    ${BOLD}${NFC_CONFIG_DIR}/nfc_macros.cfg${RESET}"
 if [ "${READER_TYPE}" = "shared" ]; then
-    echo "    ${DEFAULT}${NFC_READER_SHARED_CFG}${RESET}  (settings applied)"
+    echo "    ${BOLD}${NFC_READER_SHARED_CFG}${RESET}  (settings applied)"
 else
-    echo "    ${DEFAULT}${NFC_READER_HW_CFG}${RESET}  (settings applied)"
+    echo "    ${BOLD}${NFC_READER_HW_CFG}${RESET}  (settings applied)"
 fi
-echo "${DEFAULT}${BOLD}════════════════════════════════════════════════════════════════${RESET}"
+echo "${BOLD}════════════════════════════════════════════════════════════════${RESET}"
 echo ""
 prompt_yes_no _CONFIRM_INSTALL \
     "  Start the install with these settings?" \
@@ -1201,11 +1417,15 @@ if [ "${READER_TYPE}" = "shared" ]; then
     set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "startup_polling" \
         "$( [ "${STARTUP_POLLING}" = "yes" ] && echo "1" || echo "0" )"
 else
+    set_lane_i2c_bus "${NFC_READER_CFG}" "${LANE_I2C_BUS}" "${LANE_BUS_LABEL}"
+    set_scan_jog_max_config "${NFC_READER_CFG}" \
+        "${SCAN_JOG_MAX_MODE}" "${SCAN_JOG_MAX:-480.0}"
     set_config_value "${NFC_READER_CFG}" "nfc_gate" "startup_polling" \
         "$( [ "${STARTUP_POLLING}" = "yes" ] && echo "1" || echo "-1" )"
     set_config_value "${NFC_READER_CFG}" "nfc_gate" "scan_enabled" \
         "$( [ "${SCAN_ENABLED}" = "yes" ] && echo "True" || echo "False" )"
-    write_lane_config "${NFC_READER_HW_CFG}" "${LANE_COUNT}"
+    write_lane_config "${NFC_READER_HW_CFG}" "${LANE_COUNT}" "${LANE_MCU_PREFIX}"
+    warn_software_i2c_sensors "${LANE_I2C_BUS}"
 fi
 
 CBOR_STATUS="not needed in UID-only mode"
@@ -1263,12 +1483,19 @@ fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
-echo "${DEFAULT}${BOLD}Install complete.${RESET}"
+echo "${BOLD}Install complete.${RESET}"
 echo ""
 echo "  Selected options:"
-echo "    reader type:        ${READER_TYPE}"
+    echo "    reader type:        ${READER_TYPE}"
 if [ "${READER_TYPE}" = "lane" ]; then
     echo "    lanes:              ${LANE_COUNT}"
+    echo "    lane_mcu_prefix:    ${LANE_MCU_PREFIX}"
+    echo "    lane_i2c_bus:       ${LANE_I2C_BUS} (${LANE_BUS_LABEL})"
+    if [ "${SCAN_JOG_MAX_MODE}" = "fixed" ]; then
+        echo "    scan_max_travel:    ${SCAN_JOG_MAX}mm"
+    else
+        echo "    scan_max_travel:    Bowden calibration"
+    fi
 else
     echo "    i2c_mcu:            ${I2C_MCU}"
     echo "    i2c_bus:            ${I2C_BUS}"
@@ -1337,6 +1564,15 @@ if [ "${READER_TYPE}" = "shared" ]; then
 else
     echo "  1. Review ~/printer_data/config/nfc/nfc_reader.cfg"
     echo "     The installer has applied your selected settings."
+    echo "     The installer wrote i2c_bus: ${LANE_I2C_BUS} in the base [nfc_gate]."
+    echo "     The installer wrote lane i2c_mcu values as ${LANE_MCU_PREFIX}0, ${LANE_MCU_PREFIX}1, etc."
+    if [ "${SCAN_JOG_MAX_MODE}" = "fixed" ]; then
+        echo "     The installer wrote scan_jog_max: ${SCAN_JOG_MAX} for scan-jog."
+    else
+        echo "     scan_jog_max is commented; scan-jog uses Happy Hare Bowden lengths."
+    fi
+    echo "     If your lane MCUs are not homogeneous, add per-lane i2c_bus overrides"
+    echo "     in ~/printer_data/config/nfc/nfc_reader_hw.cfg."
     echo "     Also review ~/printer_data/config/nfc/nfc_reader_hw.cfg"
     echo "     and confirm each lane's i2c_mcu name matches your Klipper config."
     echo ""

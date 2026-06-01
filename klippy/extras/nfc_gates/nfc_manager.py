@@ -338,6 +338,21 @@ def _lookup_objects_safe(printer, name):
         return []
 
 
+def _optional_float_config(config, key, default=None, minval=None, maxval=None):
+    raw = config.get(key, None)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except Exception:
+        raise config.error("Option '%s' must be a number" % key)
+    if minval is not None and value < minval:
+        raise config.error("Option '%s' must be at least %.3f" % (key, minval))
+    if maxval is not None and value > maxval:
+        raise config.error("Option '%s' must be at most %.3f" % (key, maxval))
+    return value
+
+
 def _raw_klipper_config(printer):
     try:
         configfile = printer.lookup_object('configfile', None)
@@ -606,6 +621,8 @@ class NFCGateDefaults:
         self.i2c_bus            = config.get('i2c_bus', None)
         self.scan_jog_mm        = config.getfloat('scan_jog_mm', 50.0,
                                                    minval=1.0, maxval=500.0)
+        self.scan_jog_max       = _optional_float_config(
+            config, 'scan_jog_max', None, minval=1.0, maxval=5000.0)
         self.scan_rewind_buffer_mm = config.getfloat(
             'scan_rewind_buffer_mm', 30.0,
             minval=0.0, maxval=500.0)
@@ -880,6 +897,10 @@ class NFCGate:
         self._scan_jog_mm   = config.getfloat('scan_jog_mm',
                                                d.scan_jog_mm if d else 50.0,
                                                minval=1.0, maxval=500.0)
+        self._scan_jog_max = _optional_float_config(
+            config, 'scan_jog_max',
+            d.scan_jog_max if d else None,
+            minval=1.0, maxval=5000.0)
         self._scan_rewind_buffer_mm = config.getfloat(
             'scan_rewind_buffer_mm',
             d.scan_rewind_buffer_mm if d else 30.0,
@@ -2531,6 +2552,8 @@ class NFCGate:
         return None
 
     def _get_lane_scan_max_mm(self):
+        if self._scan_jog_max is not None:
+            return float(self._scan_jog_max)
         lengths = self._load_bowden_lengths()
         if lengths is None:
             return None

@@ -159,7 +159,7 @@ Wire the Happy Hare post-preload hook so scan-jog triggers automatically after e
 variable_user_post_preload_extension: '_NFC_SCAN_JOG_PRELOAD'
 ```
 
-Happy Hare appends `GATE=<n>` automatically. `_NFC_SCAN_JOG_PRELOAD` starts the per-gate clockwise LED effect, then calls `NFC GATE=<n> JOG_SCAN=1`. With this wired, set `scan_enabled: False` so Happy Hare is the sole scan-jog trigger:
+Happy Hare appends `GATE=<n>` automatically. `_NFC_SCAN_JOG_PRELOAD` calls `NFC GATE=<n> JOG_SCAN=1`; NFC starts the configured scan-jog LED effect from the Python scan timer before motion begins. With this wired, set `scan_enabled: False` so Happy Hare is the sole scan-jog trigger:
 
 ```ini
 [nfc_gate]

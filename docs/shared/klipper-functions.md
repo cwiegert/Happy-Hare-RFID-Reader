@@ -330,11 +330,13 @@ gcode: # Leave empty
 variable_user_post_preload_extension: '_NFC_SCAN_JOG_PRELOAD'
 ```
 
-Happy Hare appends `GATE=<n>` automatically after a successful preload. `_NFC_SCAN_JOG_PRELOAD` starts `mmu_clockwise_slow_exit_<n>` and then starts scan-jog with:
+Happy Hare appends `GATE=<n>` automatically after a successful preload. `_NFC_SCAN_JOG_PRELOAD` starts scan-jog with:
 
 ```gcode
 NFC GATE=<n> JOG_SCAN=1
 ```
+
+NFC starts the configured scan-jog LED effect from the Python scan timer before motion begins.
 
 Recommended NFC config when using the hook — disables gate-status polling so HH is the sole trigger:
 
@@ -395,7 +397,7 @@ NFC gate 0: spool 42 detected (UID 04AABBCCDD). Sending to Happy Hare.
 
 Expected output (unregistered tag):
 ```
-NFC gate 0: tag UID 04AABBCCDD is not registered in Spoolman.
+[ERROR] NFC gate 0: tag UID 04AABBCCDD is not registered in Spoolman.
 Open the spool record in Spoolman, set the 'rfid_tag' extra field to: 04AABBCCDD
 ```
 

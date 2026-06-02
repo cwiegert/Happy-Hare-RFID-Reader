@@ -20,6 +20,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Blocked manual `NFC GATE=<gate> JOG_SCAN=1` when Happy Hare reports the selected gate as empty (`gate_status=0`). NFC now returns a single console error that `jog_scan` is not enabled for an empty gate and does not start motion.
 - Changed normal scan-jog rewind/no-tag status messages back to `[REWIND]`/`[OK]` severity so ordinary rewind flow is not reported as `[WARN]`.
+- Changed `_NFC_TAG_NO_SPOOL` console guidance to use a red `[ERROR]` heading while keeping the message in the macro alongside the Happy Hare gate-map cleanup.
+
+### Shared Reader Bypass
+
+- Moved the bypass active-spool console confirmation out of `_NFC_SHARED_BYPASS_SPOOL_CHANGED` and into the Python shared-reader path next to the matching `nfc_reader.log` entry. The macro now only calls Moonraker's `spoolman_set_active_spool`.
 
 ---
 

@@ -2293,6 +2293,8 @@ class NFCGate:
             "[%s]: shared tag resolved while bypass selected — "
             "setting active spool=%d uid=%s auto_created=%s",
             self._name, spool, uid, auto_created)
+        self._console("[OK] NFC[shared]: bypass active spool set to %d (UID %s)"
+                      % (spool, uid or ""))
         return True
 
     def _shared_stage_next_spool_id(self, spool, auto_created=False):

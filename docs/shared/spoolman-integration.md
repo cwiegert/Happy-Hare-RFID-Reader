@@ -82,7 +82,7 @@ NFC gate 0: spool 42 detected (UID 04AABBCCDD). Sending to Happy Hare.
 
 **Tag found, but not registered:**
 ```
-NFC gate 0: tag UID 04AABBCCDD is not registered in Spoolman.
+[ERROR] NFC gate 0: tag UID 04AABBCCDD is not registered in Spoolman.
 Open the spool record in Spoolman, set the 'rfid_tag' extra field to: 04AABBCCDD
 ```
 

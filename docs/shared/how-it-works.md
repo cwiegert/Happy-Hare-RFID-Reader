@@ -102,7 +102,7 @@ _scan_step_event  (after each jog chunk completes)
             └─ dispatch spool to Happy Hare (already done inside _poll)
             └─ MMU_SELECT_GATE GATE=N + MMU_UNLOAD restore=0  (rewind to parked)
             └─ resume poll timer
-  └─ scan_mm_total >= lane Bowden length?  →  rewind and exit (no tag found)
+  └─ scan_mm_total >= scan_jog_max or lane Bowden length?  →  rewind and exit (no tag found)
   └─ MMU_SELECT_GATE GATE=N + MMU_TEST_MOVE MOVE=scan_jog_mm  (advance one step)
   └─ reschedule after scan_jog_mm / gear_short_move_speed
 ```

@@ -157,7 +157,7 @@ gcode: # Leave empty
 variable_user_post_preload_extension: '_NFC_SCAN_JOG_PRELOAD'
 ```
 
-Happy Hare appends `GATE=<n>` automatically. `_NFC_SCAN_JOG_PRELOAD` starts `mmu_clockwise_slow_exit_<n>`, then calls `NFC GATE=<n> JOG_SCAN=1`. NFC always clears the Happy Hare gate cache, explicitly unsets the old Spoolman gate assignment with `MMU_SPOOLMAN GATE=<n>`, and runs the pre-scan `MMU_SPOOLMAN SYNC=1`; when launched from this hook, those calls are deferred to the scan timer so the hook can return first.
+Happy Hare appends `GATE=<n>` automatically. `_NFC_SCAN_JOG_PRELOAD` calls `NFC GATE=<n> JOG_SCAN=1`; NFC starts the configured scan-jog LED effect from the Python scan timer before motion begins. NFC always clears the Happy Hare gate cache, explicitly unsets the old Spoolman gate assignment with `MMU_SPOOLMAN GATE=<n>`, and runs the pre-scan `MMU_SPOOLMAN SYNC=1`; when launched from this hook, those calls are deferred to the scan timer so the hook can return first.
 
 Recommended NFC config when using the hook:
 

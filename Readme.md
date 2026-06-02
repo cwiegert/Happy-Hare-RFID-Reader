@@ -117,7 +117,7 @@ NFC GATE=0 INIT=1                            ; re-run PN532 init on one lane rea
 NFC GATE=0 SCAN=1                            ; raw UID scan, no Spoolman/HH dispatch
 NFC GATE=0 LED_TEST=1 CYCLES=2               ; test lane tag-read LED on one gate
 NFC GATE=0 POLL=1                            ; read, resolve, and dispatch once
-NFC GATE=0 JOG_SCAN=1                        ; run scan-jog manually
+NFC GATE=0 JOG_SCAN=1                        ; run scan-jog manually; blocked if HH gate is empty
 NFC GATE=0 READ=1                            ; start lane background polling
 NFC GATE=0 READ=0                            ; stop lane background polling
 NFC_SHARED STATUS=1                          ; show shared-reader state
@@ -137,6 +137,7 @@ These are the defaults shipped in `config/nfc_reader.cfg`:
 | `absent_threshold` | `3` | Missed polls before a removal event |
 | `scan_enabled` | `False` | Disables automatic gate-status scan-jog trigger; manual/hook `JOG_SCAN` still works |
 | `scan_jog_mm` | `150.0` | Logical scan chunk divided into three stopped-position substeps |
+| `scan_jog_max` | unset | Optional fixed scan-jog travel limit; leave unset to use the lane Bowden length |
 | `scan_reads_per_position` | `1` | Reads per stopped scan position |
 | `scan_poll_interval` | `0.25` | Read spacing during scan-jog and shared-reader polling cadence |
 | `debug` | `2` | Warnings and errors in `nfc_reader.log` |

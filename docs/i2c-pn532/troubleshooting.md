@@ -28,7 +28,7 @@ ls -la ~/klipper/klippy/extras/nfc_gates/
 
 If missing, run the installer again:
 ```bash
-cd ~/emu-nfc-reader && bash install.sh
+cd ~/rfid-reader && bash install.sh
 ```
 
 ---

@@ -12,7 +12,7 @@ assignees: ''
 - **MCU type:** EBB42 / SHT / other:
 - **Klipper version:** *(run `klipper --version` or check Mainsail/Fluidd)*
 - **Happy Hare version:**
-- **NFC Reader commit:** *(run `git -C ~/emu-nfc-reader rev-parse --short HEAD`)*
+- **NFC Reader commit:** *(run `git -C ~/rfid-reader rev-parse --short HEAD`)*
 
 ## Spoolman
 - **Spoolman version:**

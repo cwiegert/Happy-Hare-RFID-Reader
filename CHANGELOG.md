@@ -16,6 +16,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added an installer warning when software-I2C sensor config is detected in printer config files, with the hardware `i2c_bus` line users should apply to sensor sections such as `emu_macros.cfg`.
 - Added optional `scan_jog_max` for scan-jog. When set, NFC uses that fixed maximum travel distance instead of reading Happy Hare Bowden calibration. The installer now asks lane-reader users whether to set `scan_jog_max` with a default of `480.0mm` or keep using per-lane Bowden lengths.
 
+### Install / Uninstall Cutover
+
+- Changed the public install target to `Happy-Hare-RFID-Reader` cloned into `~/rfid-reader`.
+- Updated Moonraker update-manager generation to use `[update_manager Happy-Hare-RFID-Reader]`, matching the public repo name exactly.
+- Added cleanup for old beta Moonraker sections: `[update_manager emu_nfc_reader]`, `[update_manager happy_hare_rfid_reader]`, and `[update_manager Happy-Hare-rfid-reader]`.
+- Added beta cutover handling for legacy `~/emu-nfc-reader` installs. The installer now prompts before cleanup, backs up `~/printer_data/config/nfc/`, backs up `moonraker.conf`, removes old Klipper symlinks, removes the legacy repo, and continues with a fresh `~/rfid-reader` install.
+- Removed installer-driven update behavior for existing checkouts. Users update with `git pull` before rerunning `bash install.sh`; the installer no longer runs `git pull`, `git fetch`, or sparse-checkout updates during normal installs.
+- Updated uninstall behavior to prompt for local repo checkout removal at the end of `bash uninstall.sh`. The default answer is yes; answering `n` keeps `~/rfid-reader`.
+- Kept uninstall repo removal guarded so it only removes the expected `~/rfid-reader` git checkout.
+- Added local simulation scripts for install and uninstall testing without touching the real repo or public GitHub: `tests/simulate_rfid_reader_install.sh` and `tests/simulate_rfid_reader_uninstall.sh`.
+- Updated public README, private README, install/uninstall docs, design notes, and regression tests for the new install path, uninstall prompt, Moonraker section, and public sync target.
+
 ### Scan-Jog Safety
 
 - Blocked manual `NFC GATE=<gate> JOG_SCAN=1` when Happy Hare reports the selected gate as empty (`gate_status=0`). NFC now returns a single console error that `jog_scan` is not enabled for an empty gate and does not start motion.

@@ -46,10 +46,12 @@ Before installing, rebuild and flash Klipper firmware on every MCU that will hos
 
 ```bash
 cd ~
-git clone https://github.com/cwiegert/HH-RFID-Reader.git emu-nfc-reader
-cd ~/emu-nfc-reader
+git clone https://github.com/cwiegert/Happy-Hare-RFID-Reader.git rfid-reader
+cd ~/rfid-reader
 bash install.sh
 ```
+
+Beta cutover note: if an old `~/emu-nfc-reader` install exists, the installer prompts before backing it up/removing it and continuing with a fresh `~/rfid-reader` install.
 
 Add the includes to `printer.cfg` in this order.
 

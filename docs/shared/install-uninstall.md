@@ -42,11 +42,14 @@ SSH to the Pi:
 
 ```bash
 cd ~
-git clone https://github.com/cwiegert/HH-RFID-Reader.git emu-nfc-reader
-cd ~/emu-nfc-reader
+git clone https://github.com/cwiegert/Happy-Hare-RFID-Reader.git rfid-reader
+cd ~/rfid-reader
 ```
 
 The installer configures a sparse checkout automatically — documentation and other non-runtime files are excluded from the Pi.
+
+> [!IMPORTANT]
+> Beta cutover: old `~/emu-nfc-reader` installs are not migrated in place. Clone this repo into `~/rfid-reader` and run `bash install.sh`. If the installer finds `~/emu-nfc-reader`, it prompts before backing up `~/printer_data/config/nfc/`, backing up `moonraker.conf`, removing the old Moonraker update-manager block, removing the old clone, and continuing with a fresh install.
 
 ### Step 3 — Run the Installer
 
@@ -200,10 +203,10 @@ NFC reads this value automatically at connect time (falls back to 30 s if not se
 The installer adds this block to `~/printer_data/config/moonraker.conf` automatically. If it was not found or you need to add it manually:
 
 ```ini
-[update_manager emu_nfc_reader]
+[update_manager Happy-Hare-RFID-Reader]
 type:             git_repo
-path:             ~/emu-nfc-reader
-origin:           https://github.com/cwiegert/HH-RFID-Reader.git
+path:             ~/rfid-reader
+origin:           https://github.com/cwiegert/Happy-Hare-RFID-Reader.git
 primary_branch:   main
 managed_services: klipper
 install_script:   install.sh
@@ -223,7 +226,7 @@ sudo systemctl restart moonraker
 ## Updating
 
 ```bash
-cd ~/emu-nfc-reader
+cd ~/rfid-reader
 git pull
 bash install.sh
 sudo systemctl restart klipper
@@ -236,7 +239,7 @@ If the update notes mention a Klipper MCU protocol change, rebuild and flash eac
 ## Uninstall
 
 ```bash
-cd ~/emu-nfc-reader
+cd ~/rfid-reader
 bash uninstall.sh
 ```
 
@@ -248,6 +251,9 @@ The uninstaller:
 4. Moves `~/printer_data/config/nfc/` to `nfc_removed_<timestamp>/` (your config is preserved, not deleted)
 5. Restarts Klipper
 
+At the end, it prompts whether to remove the local repo checkout at
+`~/rfid-reader`. The default answer is yes. Answer `n` to keep the checkout.
+
 **Manual steps after uninstalling** — the uninstaller cannot edit your config files:
 
 Remove these three lines from `printer.cfg`:
@@ -258,6 +264,19 @@ Remove these three lines from `printer.cfg`:
 ```
 
 Remove the update manager block from `moonraker.conf`, then restart Moonraker:
+
+```ini
+[update_manager Happy-Hare-RFID-Reader]
+```
+
+If you are cleaning up an earlier beta, also remove either old block if present:
+
+```ini
+[update_manager emu_nfc_reader]
+[update_manager happy_hare_rfid_reader]
+[update_manager Happy-Hare-rfid-reader]
+```
+
 ```bash
 sudo systemctl restart moonraker
 ```

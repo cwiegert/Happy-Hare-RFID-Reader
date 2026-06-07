@@ -25,8 +25,11 @@
 set -e
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KLIPPER_EXTRAS="${HOME}/klipper/klippy/extras"
-PRINTER_CONFIG="${HOME}/printer_data/config"
+RFID_READER_REPO_URL="${RFID_READER_REPO_URL:-https://github.com/cwiegert/Happy-Hare-RFID-Reader.git}"
+RFID_READER_INSTALL_DIR="${RFID_READER_INSTALL_DIR:-${HOME}/rfid-reader}"
+RFID_READER_LEGACY_DIR="${RFID_READER_LEGACY_DIR:-${HOME}/emu-nfc-reader}"
+KLIPPER_EXTRAS="${RFID_READER_KLIPPER_EXTRAS:-${HOME}/klipper/klippy/extras}"
+PRINTER_CONFIG="${RFID_READER_PRINTER_CONFIG:-${HOME}/printer_data/config}"
 PRINTER_CFG="${PRINTER_CONFIG}/printer.cfg"
 NFC_CONFIG_DIR="${PRINTER_CONFIG}/nfc"
 NFC_READER_CFG="${NFC_CONFIG_DIR}/nfc_reader.cfg"
@@ -116,6 +119,237 @@ prompt_yes_no() {
         esac
         echo "Please answer yes or no."
     done
+}
+
+next_available_path() {
+    local base="$1"
+    local candidate="${base}"
+    local i=1
+    while [ -e "${candidate}" ]; do
+        candidate="${base}_${i}"
+        i=$((i + 1))
+    done
+    printf '%s\n' "${candidate}"
+}
+
+backup_nfc_config_for_cutover() {
+    LEGACY_NFC_BACKUP=""
+    if [ ! -e "${NFC_CONFIG_DIR}" ]; then
+        echo "  [skip]   no NFC config directory found at ${NFC_CONFIG_DIR}"
+        return 0
+    fi
+    if [ ! -d "${NFC_CONFIG_DIR}" ]; then
+        echo "  [skip]   ${NFC_CONFIG_DIR} exists but is not a directory; leaving it untouched"
+        return 0
+    fi
+    local backup_base backup_dir
+    backup_base="${PRINTER_CONFIG}/nfc_beta_cutover_$(date +%Y%m%d_%H%M%S)"
+    backup_dir="$(next_available_path "${backup_base}")"
+    mv "${NFC_CONFIG_DIR}" "${backup_dir}"
+    LEGACY_NFC_BACKUP="${backup_dir}"
+    echo "  [backup] NFC config saved to ${LEGACY_NFC_BACKUP}"
+}
+
+remove_moonraker_section() {
+    local conf_path="$1"
+    local section="$2"
+    [ -f "${conf_path}" ] || return 1
+    python3 - "${conf_path}" "${section}" <<'PYEOF'
+import sys
+
+path, section = sys.argv[1:3]
+with open(path) as f:
+    lines = f.readlines()
+
+out = []
+skip = False
+changed = False
+for line in lines:
+    stripped = line.strip()
+    if stripped == section:
+        skip = True
+        changed = True
+        continue
+    if skip and stripped.startswith('[') and stripped.endswith(']'):
+        skip = False
+    if not skip:
+        out.append(line)
+
+if changed:
+    while out and out[-1].strip() == '':
+        out.pop()
+    out.append('\n')
+    with open(path, 'w') as f:
+        f.writelines(out)
+
+sys.exit(0 if changed else 1)
+PYEOF
+}
+
+backup_and_remove_legacy_moonraker_section() {
+    local section="${1:-[update_manager emu_nfc_reader]}"
+    LEGACY_MOONRAKER_BACKUP=""
+    if [ ! -f "${MOONRAKER_CONF}" ]; then
+        echo "  [skip]   moonraker.conf not found at ${MOONRAKER_CONF}"
+        return 0
+    fi
+    if ! grep -qF "${section}" "${MOONRAKER_CONF}"; then
+        return 0
+    fi
+    local backup_base backup_file
+    backup_base="${MOONRAKER_CONF}.nfc_beta_cutover_$(date +%Y%m%d_%H%M%S)"
+    backup_file="$(next_available_path "${backup_base}")"
+    cp "${MOONRAKER_CONF}" "${backup_file}"
+    LEGACY_MOONRAKER_BACKUP="${backup_file}"
+    if remove_moonraker_section "${MOONRAKER_CONF}" "${section}"; then
+        echo "  [removed] legacy ${section} from ${MOONRAKER_CONF}"
+        echo "  [backup]  moonraker.conf saved to ${LEGACY_MOONRAKER_BACKUP}"
+    else
+        echo "  WARNING: failed to remove legacy ${section}; backup saved to ${LEGACY_MOONRAKER_BACKUP}"
+    fi
+}
+
+remove_legacy_klipper_symlinks() {
+    local target
+    for target in \
+        "${KLIPPER_EXTRAS}/nfc_gate.py" \
+        "${KLIPPER_EXTRAS}/nfc_gates" \
+        "${KLIPPER_EXTRAS}/nfc_gates.py"
+    do
+        if [ -L "${target}" ]; then
+            rm "${target}"
+            echo "  [removed] legacy symlink ${target}"
+        fi
+    done
+}
+
+ensure_rfid_reader_repo() {
+    if [ -d "${RFID_READER_INSTALL_DIR}/.git" ]; then
+        local origin
+        origin="$(git -C "${RFID_READER_INSTALL_DIR}" remote get-url origin 2>/dev/null || true)"
+        if [ "${origin}" != "${RFID_READER_REPO_URL}" ]; then
+            echo "ERROR: ${RFID_READER_INSTALL_DIR} already exists but origin is:"
+            echo "       ${origin:-<none>}"
+            echo "       Expected:"
+            echo "       ${RFID_READER_REPO_URL}"
+            echo "       Move that directory or fix its origin, then rerun install.sh."
+            exit 1
+        fi
+        echo "  [ok]     ${RFID_READER_INSTALL_DIR} already points at ${RFID_READER_REPO_URL}"
+        return 0
+    fi
+    if [ -e "${RFID_READER_INSTALL_DIR}" ]; then
+        echo "ERROR: ${RFID_READER_INSTALL_DIR} exists but is not a git checkout."
+        echo "       Move it out of the way, then rerun install.sh."
+        exit 1
+    fi
+    echo "  [clone]  ${RFID_READER_REPO_URL} -> ${RFID_READER_INSTALL_DIR}"
+    git clone "${RFID_READER_REPO_URL}" "${RFID_READER_INSTALL_DIR}"
+}
+
+confirm_legacy_cutover() {
+    if [ "${RFID_READER_LEGACY_CLEANUP_CONFIRMED:-}" = "yes" ]; then
+        return 0
+    fi
+    echo ""
+    echo "${BOLD}Legacy beta install found at ${RFID_READER_LEGACY_DIR}.${RESET}"
+    echo "This release uses ${RFID_READER_INSTALL_DIR} and does not migrate old installs in place."
+    echo ""
+    echo "If you continue, the installer will:"
+    echo "  - back up ${NFC_CONFIG_DIR}"
+    echo "  - back up moonraker.conf before editing it"
+    echo "  - remove old Klipper NFC symlinks"
+    echo "  - remove [update_manager emu_nfc_reader] from moonraker.conf"
+    echo "  - remove ${RFID_READER_LEGACY_DIR}"
+    echo "  - clone or verify ${RFID_READER_INSTALL_DIR}"
+    echo "  - continue with a fresh install"
+    echo ""
+    local answer
+    read -r -p "$(prompt_style "Continue with legacy cleanup and fresh install?") [y/${BOLD}N${RESET}]: " answer
+    case "${answer}" in
+        [yY][eE][sS]|[yY]) ;;
+        *)
+            echo "Aborted. Clone ${RFID_READER_REPO_URL} into ${RFID_READER_INSTALL_DIR},"
+            echo "then rerun install.sh when you are ready for the beta cutover."
+            exit 0
+            ;;
+    esac
+}
+
+handle_legacy_beta_cutover() {
+    LEGACY_CUTOVER_PERFORMED="${RFID_READER_CUTOVER_PERFORMED:-no}"
+    LEGACY_NFC_BACKUP="${RFID_READER_NFC_BACKUP:-}"
+    LEGACY_MOONRAKER_BACKUP="${RFID_READER_MOONRAKER_BACKUP:-}"
+    MOONRAKER_CONF="${PRINTER_CONFIG}/moonraker.conf"
+
+    if [ ! -d "${RFID_READER_LEGACY_DIR}" ]; then
+        return 0
+    fi
+
+    confirm_legacy_cutover
+
+    if [ "${REPO_DIR}" = "${RFID_READER_LEGACY_DIR}" ]; then
+        echo ""
+        echo "Bootstrapping fresh repo before removing the legacy checkout..."
+        ensure_rfid_reader_repo
+        echo "Re-running installer from ${RFID_READER_INSTALL_DIR}..."
+        RFID_READER_LEGACY_CLEANUP_CONFIRMED=yes \
+        RFID_READER_REPO_URL="${RFID_READER_REPO_URL}" \
+        RFID_READER_INSTALL_DIR="${RFID_READER_INSTALL_DIR}" \
+        RFID_READER_LEGACY_DIR="${RFID_READER_LEGACY_DIR}" \
+        RFID_READER_KLIPPER_EXTRAS="${KLIPPER_EXTRAS}" \
+        RFID_READER_PRINTER_CONFIG="${PRINTER_CONFIG}" \
+        RFID_READER_CUTOVER_PERFORMED=yes \
+        RFID_READER_NFC_BACKUP="${LEGACY_NFC_BACKUP}" \
+        RFID_READER_MOONRAKER_BACKUP="${LEGACY_MOONRAKER_BACKUP}" \
+        exec "${RFID_READER_INSTALL_DIR}/install.sh"
+    fi
+
+    echo ""
+    echo "Legacy beta cleanup:"
+    backup_nfc_config_for_cutover
+    backup_and_remove_legacy_moonraker_section
+    remove_legacy_klipper_symlinks
+    rm -rf "${RFID_READER_LEGACY_DIR}"
+    echo "  [removed] legacy repo ${RFID_READER_LEGACY_DIR}"
+    ensure_rfid_reader_repo
+    if [ "${REPO_DIR}" != "${RFID_READER_INSTALL_DIR}" ]; then
+        echo "Re-running installer from ${RFID_READER_INSTALL_DIR}..."
+        RFID_READER_REPO_URL="${RFID_READER_REPO_URL}" \
+        RFID_READER_INSTALL_DIR="${RFID_READER_INSTALL_DIR}" \
+        RFID_READER_LEGACY_DIR="${RFID_READER_LEGACY_DIR}" \
+        RFID_READER_KLIPPER_EXTRAS="${KLIPPER_EXTRAS}" \
+        RFID_READER_PRINTER_CONFIG="${PRINTER_CONFIG}" \
+        RFID_READER_CUTOVER_PERFORMED=yes \
+        RFID_READER_NFC_BACKUP="${LEGACY_NFC_BACKUP}" \
+        RFID_READER_MOONRAKER_BACKUP="${LEGACY_MOONRAKER_BACKUP}" \
+        exec "${RFID_READER_INSTALL_DIR}/install.sh"
+    fi
+    LEGACY_CUTOVER_PERFORMED="yes"
+    echo ""
+}
+
+enforce_supported_install_dir() {
+    if [ "${REPO_DIR}" = "${RFID_READER_INSTALL_DIR}" ]; then
+        return 0
+    fi
+    if [ "${RFID_READER_ALLOW_DEV_PATH:-}" = "yes" ]; then
+        echo "  [dev]    running from ${REPO_DIR}; supported install dir is ${RFID_READER_INSTALL_DIR}"
+        return 0
+    fi
+    echo ""
+    echo "WARNING: supported beta install path is ${RFID_READER_INSTALL_DIR}"
+    echo "         current installer path is ${REPO_DIR}"
+    echo ""
+    local answer
+    read -r -p "$(prompt_style "Continue from this developer/private path?") [y/${BOLD}N${RESET}]: " answer
+    case "${answer}" in
+        [yY][eE][sS]|[yY]) ;;
+        *)
+            echo "Aborted. Clone ${RFID_READER_REPO_URL} into ${RFID_READER_INSTALL_DIR}, then rerun install.sh."
+            exit 0
+            ;;
+    esac
 }
 
 prompt_choice() {
@@ -1021,13 +1255,8 @@ if [ ! -d "${PRINTER_CONFIG}" ]; then
     exit 1
 fi
 
-# ── Sparse checkout — keep docs on remote only ───────────────────────────────
-# Always re-applies the exclusion patterns so that new entries added in future
-# versions of install.sh take effect on re-runs.  sparse-checkout set is idempotent.
-git -C "${REPO_DIR}" sparse-checkout init --no-cone
-git -C "${REPO_DIR}" sparse-checkout set --no-cone '/*' '!/docs/' '!/Readme.md' '!/VENDORED.md' '!/NFC Mounting Bracket/' '!/PR.md' '!/README-private.md' '!/.github/'
-echo "  [ok]     sparse checkout configured — documentation excluded from this machine"
-echo ""
+handle_legacy_beta_cutover
+enforce_supported_install_dir
 
 print_banner
 echo "Interactive setup"
@@ -1456,23 +1685,42 @@ fi
 
 # ── Moonraker update_manager ──────────────────────────────────────────────────
 #
-# Append [update_manager emu_nfc_reader] to moonraker.conf if not already present.
+# Append [update_manager Happy-Hare-RFID-Reader] to moonraker.conf if not already present.
 # The section is identical every install so idempotency is a simple grep check.
 #
 MOONRAKER_CONF="${PRINTER_CONFIG}/moonraker.conf"
-MOONRAKER_SECTION="[update_manager emu_nfc_reader]"
+MOONRAKER_SECTION="[update_manager Happy-Hare-RFID-Reader]"
+LEGACY_MOONRAKER_SECTION="[update_manager emu_nfc_reader]"
+PREVIOUS_MOONRAKER_SECTION="[update_manager happy_hare_rfid_reader]"
+PREVIOUS_MOONRAKER_SECTION_MIXED="[update_manager Happy-Hare-rfid-reader]"
 
 if [ ! -f "${MOONRAKER_CONF}" ]; then
     echo "  [skip]   moonraker.conf not found at ${MOONRAKER_CONF} — add update_manager manually"
+    echo "           ${MOONRAKER_SECTION}"
+    echo "           type:             git_repo"
+    echo "           path:             ${REPO_DIR}"
+    echo "           origin:           ${RFID_READER_REPO_URL}"
+    echo "           primary_branch:   main"
+    echo "           managed_services: klipper"
+    echo "           install_script:   install.sh"
 elif grep -qF "${MOONRAKER_SECTION}" "${MOONRAKER_CONF}"; then
     echo "  [skip]   moonraker.conf already has ${MOONRAKER_SECTION}"
 else
+    if grep -qF "${LEGACY_MOONRAKER_SECTION}" "${MOONRAKER_CONF}"; then
+        backup_and_remove_legacy_moonraker_section "${LEGACY_MOONRAKER_SECTION}"
+    fi
+    if grep -qF "${PREVIOUS_MOONRAKER_SECTION}" "${MOONRAKER_CONF}"; then
+        backup_and_remove_legacy_moonraker_section "${PREVIOUS_MOONRAKER_SECTION}"
+    fi
+    if grep -qF "${PREVIOUS_MOONRAKER_SECTION_MIXED}" "${MOONRAKER_CONF}"; then
+        backup_and_remove_legacy_moonraker_section "${PREVIOUS_MOONRAKER_SECTION_MIXED}"
+    fi
     cat >> "${MOONRAKER_CONF}" <<MOONRAKER
 
 ${MOONRAKER_SECTION}
 type:             git_repo
 path:             ${REPO_DIR}
-origin:           https://github.com/cwiegert/HH-RFID-Reader.git
+origin:           ${RFID_READER_REPO_URL}
 primary_branch:   main
 managed_services: klipper
 install_script:   install.sh
@@ -1485,6 +1733,22 @@ fi
 echo ""
 echo "${BOLD}Install complete.${RESET}"
 echo ""
+if [ "${LEGACY_CUTOVER_PERFORMED:-no}" = "yes" ]; then
+    echo "  Legacy beta cutover:"
+    echo "    old repo removed:   ${RFID_READER_LEGACY_DIR}"
+    echo "    fresh repo:         ${RFID_READER_INSTALL_DIR}"
+    if [ -n "${LEGACY_NFC_BACKUP:-}" ]; then
+        echo "    config backup:      ${LEGACY_NFC_BACKUP}"
+    else
+        echo "    config backup:      no previous NFC config directory found"
+    fi
+    if [ -n "${LEGACY_MOONRAKER_BACKUP:-}" ]; then
+        echo "    moonraker backup:   ${LEGACY_MOONRAKER_BACKUP}"
+    else
+        echo "    moonraker backup:   no legacy Moonraker block found"
+    fi
+    echo ""
+fi
 echo "  Selected options:"
     echo "    reader type:        ${READER_TYPE}"
 if [ "${READER_TYPE}" = "lane" ]; then
@@ -1559,7 +1823,7 @@ if [ "${READER_TYPE}" = "shared" ]; then
     echo "     the post-unload hook is no longer needed."
     echo ""
     echo "  6. Moonraker update_manager — added automatically by this script."
-    echo "     If moonraker.conf was not found, add [update_manager emu_nfc_reader] manually."
+    echo "     If moonraker.conf was not found, add [update_manager Happy-Hare-RFID-Reader] manually."
     echo ""
 else
     echo "  1. Review ~/printer_data/config/nfc/nfc_reader.cfg"
@@ -1587,6 +1851,6 @@ else
     echo "  4. Update and flash Klipper on each lane MCU / EBB42 board used by NFC."
     echo ""
     echo "  5. Moonraker update_manager — added automatically by this script."
-    echo "     If moonraker.conf was not found, add [update_manager emu_nfc_reader] manually."
+    echo "     If moonraker.conf was not found, add [update_manager Happy-Hare-RFID-Reader] manually."
     echo ""
 fi

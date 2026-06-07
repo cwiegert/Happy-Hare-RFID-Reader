@@ -12,9 +12,9 @@
 #
 # What you must do manually afterward:
 #   - Remove the [include nfc/...] lines from printer.cfg
-#   - Remove the [update_manager emu_nfc_reader] block from moonraker.conf
+#   - Remove the [update_manager Happy-Hare-RFID-Reader] block from moonraker.conf
+#     (or older beta section names if present)
 #     and restart Moonraker: sudo systemctl restart moonraker
-#   - Optionally delete the repo: rm -rf ~/emu-nfc-reader
 #
 # Usage:
 #   bash uninstall.sh
@@ -22,7 +22,22 @@
 
 set -e
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -h|--help)
+            echo "Usage: bash uninstall.sh"
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            echo "Usage: bash uninstall.sh"
+            exit 2
+            ;;
+    esac
+    shift
+done
 
 detect_klipper_python() {
     local candidate home_dir
@@ -80,9 +95,10 @@ detect_klipper_python() {
 
     return 1
 }
-KLIPPER_EXTRAS="${HOME}/klipper/klippy/extras"
-PRINTER_CONFIG="${HOME}/printer_data/config"
+KLIPPER_EXTRAS="${RFID_READER_KLIPPER_EXTRAS:-${HOME}/klipper/klippy/extras}"
+PRINTER_CONFIG="${RFID_READER_PRINTER_CONFIG:-${HOME}/printer_data/config}"
 NFC_CONFIG_DIR="${PRINTER_CONFIG}/nfc"
+RFID_READER_INSTALL_DIR="${RFID_READER_INSTALL_DIR:-${HOME}/rfid-reader}"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 
 echo ""
@@ -198,7 +214,9 @@ fi
 # ── Restart Klipper ───────────────────────────────────────────────────────────
 echo ""
 echo "Restarting Klipper..."
-if sudo systemctl restart klipper; then
+if [ "${RFID_READER_SKIP_SERVICE_RESTART:-0}" = "1" ]; then
+    echo "  Skipped Klipper restart."
+elif sudo systemctl restart klipper; then
     echo "  Klipper restarted."
 else
     echo "  WARNING: Klipper restart failed — restart manually:"
@@ -216,21 +234,42 @@ echo "       [include nfc/nfc_reader_hw.cfg]"
 echo "     If you have older experimental SPI/Pico include lines, remove those too."
 echo ""
 echo "  2. Remove the update manager block from moonraker.conf:"
+echo "       [update_manager Happy-Hare-RFID-Reader]"
+echo "       ..."
+echo "     If you are cleaning up an old beta install, also remove:"
 echo "       [update_manager emu_nfc_reader]"
+echo "       ..."
+echo "       [update_manager happy_hare_rfid_reader]"
+echo "       ..."
+echo "       [update_manager Happy-Hare-rfid-reader]"
 echo "       ..."
 echo "     Then restart Moonraker:"
 echo "       sudo systemctl restart moonraker"
 echo ""
 
-# ── Optional: remove the repo clone ──────────────────────────────────────────
-read -r -p "Remove the repo clone at ${REPO_DIR}? [y/N] " remove_repo
-case "$remove_repo" in
-    [yY][eE][sS]|[yY])
-        rm -rf "${REPO_DIR}"
-        echo "  Repo removed."
+# ── Optional repo checkout removal ────────────────────────────────────────────
+echo ""
+read -r -p "Remove the local repo checkout at ${REPO_DIR}? [Y/n] " remove_repo
+case "${remove_repo}" in
+    ""|[yY]|[yY][eE][sS])
+    if [ "${REPO_DIR}" != "${RFID_READER_INSTALL_DIR}" ]; then
+        echo "WARNING: refusing to remove repo checkout from unexpected path:"
+        echo "  ${REPO_DIR}"
+        echo "Expected:"
+        echo "  ${RFID_READER_INSTALL_DIR}"
+        echo "Move/remove it manually if this is intentional."
+    elif git -C "${REPO_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "Removing repo checkout:"
+        echo "  ${REPO_DIR}"
+        rm -rf -- "${REPO_DIR}"
+        echo "  Repo checkout removed."
+        echo "  If your shell was inside that directory, run: cd ~"
+    else
+        echo "WARNING: refusing to remove ${REPO_DIR}; it is not a git checkout."
+    fi
         ;;
     *)
-        echo "  Repo kept at ${REPO_DIR}"
+        echo "The local repo checkout was not changed."
         ;;
 esac
 

@@ -1449,11 +1449,11 @@ else
     echo "  Note: one bus question assumes homogeneous lane MCUs; edit nfc_reader.cfg or"
     echo "        add per-lane overrides in nfc_reader_hw.cfg for mixed MCU setups."
     echo "  LED effects:       (per active gate — _exit_N suffix applied automatically)"
-    echo "    searching:       ${BOLD}mmu_clockwise_slow${RESET}"
-    echo "    tag read:        ${BOLD}mmu_RFID_read${RESET}"
-    echo "    rewinding:       ${BOLD}mmu_anticlock_fast${RESET}"
-    echo "    auto-create:     ${BOLD}mmu_RFID_creating${RESET}"
-    echo "    unresolved:      ${BOLD}mmu_RFID_unresolved${RESET}"
+    echo "    searching:       ${DEFAULT}mmu_RFID_searching${RESET}"
+    echo "    tag read:        ${DEFAULT}mmu_RFID_read${RESET}"
+    echo "    rewinding:       ${DEFAULT}mmu_RFID_rewinding${RESET}"
+    echo "    auto-create:     ${DEFAULT}mmu_RFID_creating${RESET}"
+    echo "    unresolved:      ${DEFAULT}mmu_RFID_unresolved${RESET}"
 fi
 echo "  Tag mode:          ${TAG_MODE}"
 if [ "${TAG_MODE}" = "rich" ]; then

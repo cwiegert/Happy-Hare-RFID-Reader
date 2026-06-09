@@ -209,6 +209,21 @@ A "rich" tag carries NDEF metadata the vendored parser understands (OpenSpool/Op
 - `diameter` (float, e.g. `1.75`) — optional
 - `spoolman_id` (integer) — optional embedded Spoolman ID; if present the resolver will try this first
 
+### Supported Rich Manufacturer Tags
+
+The bundled rich-tag parser currently recognizes these manufacturer spool tag formats:
+
+| Manufacturer / ecosystem | Tag format |
+|---|---|
+| Bambu Lab | Factory MIFARE Classic 1K spool tags; requires `bambu_reads: True` and `pycryptodome` |
+| ELEGOO | EPC-256 binary tags on NTAG213 |
+| Anycubic | ACE binary tags on NTAG213/215 |
+| Creality | CFS / K1 / K2 MIFARE Classic tags |
+| QIDI | QIDI Box MIFARE Classic tags |
+| SimplyPrint / QIDI standard URL | NDEF URI/Text tags with supported filament query fields |
+
+It also recognizes open rich-tag formats: OpenTag3D, OpenSpool, OpenPrintTag, and generic NDEF JSON filament records.
+
 Example OpenSpool-like JSON payload (MIME `application/vnd.openspool` or generic NDEF JSON):
 
 ```json

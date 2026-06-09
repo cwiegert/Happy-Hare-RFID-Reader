@@ -1078,6 +1078,11 @@ class NFCGate:
                                             self._handle_connect)
         self.printer.register_event_handler('klippy:disconnect',
                                             self._handle_disconnect)
+        if self._shared and self._enabled:
+            self.printer.register_event_handler(
+                'idle_timeout:printing', self._handle_print_start)
+            self.printer.register_event_handler(
+                'idle_timeout:ready', self._handle_print_end)
 
     def _cmd_NFC_STATUS_fallback(self, gcmd):
         gcmd.respond_info('\n'.join(_lane_status_lines(self.printer)))
@@ -2091,7 +2096,7 @@ class NFCGate:
                             "waiting for HH idle before scan",
                             self._name, self._gate)
                 # Fire scan once HH is idle and gate is confirmed loaded
-                if (getattr(self, '_scan_pending', False) and curr == 1
+                if (getattr(self, '_scan_pending', False) and curr >= 1
                         and hh.idle
                         and not self._is_printing()):
                     now = self.reactor.monotonic()

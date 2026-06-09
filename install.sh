@@ -1237,7 +1237,7 @@ with open(path, 'w') as f:
     f.write("# shared_missed_limit: 3\n")
     f.write("\n")
     f.write("# Set to true to block pregate loads entirely when no spool is staged.\n")
-    f.write("# force_spool_id: false\n")
+    f.write("force_spool_id: true\n")
 PYEOF
 }
 

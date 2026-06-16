@@ -10,16 +10,16 @@
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 #
-# Gate coordination logic for the supported per-lane PN532/I2C path:
+# Gate coordination logic for per-lane and shared NFC Readers:
 #
 #   NFCGateDefaults  — shared config defaults from the base [nfc_gate] section
-#   NFCGate          — per-lane manager for [nfc_gate laneN] (one PN532 per EBB42)
+#   NFCGate          — per-lane manager for [nfc_gate laneN]
 #
 # Internal helpers (not imported externally):
 #   GateState        — per-gate debounce state machine; owns process_read(),
 #                      removal debounce, and event generation
 #   CurrentTag       — dataclass holding the full tag observation for one read
-#                      window: UID, PN532 target identity, raw NTAG pages,
+#                      window: UID, reader target identity, raw tag pages,
 #                      parsed metadata, parse errors, and resolution path;
 #                      stored on GateState.current_tag; populated by
 #                      _read_current_tag() and enriched by _resolve_spool()
@@ -33,7 +33,7 @@
 #
 # Ownership boundaries
 # ────────────────────
-# Reader drivers are hardware/protocol adapters only.  PN532Driver reads tag
+# Reader drivers are hardware/protocol adapters only.  They read tag
 # identity and returns UID values; it does not know about lanes, Spoolman
 # records, Happy Hare, or spool assignment policy.
 #
@@ -261,11 +261,11 @@ def _schedule_lane_led_test(gate, delay, cycles):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# NFCGateDefaults / NFCGate — per-lane I2C/PN532 path
+# NFCGateDefaults / NFCGate — per-lane/shared NFC Reader path
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # One NFCGate instance per [nfc_gate laneN] config section.
-# Each manages a single PN532 on one EBB42 lane board (I2C, per-lane MCU).
+# Each manages one configured NFC Reader.
 #
 # NFCGateDefaults holds shared values from the optional base [nfc_gate]
 # section.  Lane sections inherit these and can override any key locally.
@@ -279,7 +279,7 @@ _shared_configured = False
 
 # Internal gate number for the shared reader.  Not exposed to users — the shared
 # reader has no Happy Hare gate assignment and does not use this value for HH
-# orchestration.  It serves only as a unique key for PN532Driver / GateState
+# orchestration.  It serves only as a unique key for reader drivers / GateState
 # logging and (internally) as a guard against accidentally seeding from HH.
 _SHARED_GATE_SENTINEL            = 255
 _SHARED_MISSED_RESOLUTION_LIMIT  = 3
@@ -312,6 +312,10 @@ def _status_html_words(text):
     text = re.sub(r'\bassigned\b',
                   '<span style="color:#FFFF00">assigned</span>', text)
     return text
+
+
+def _reader_label(reader_type):
+    return "NFC Reader (%s)" % (reader_type,)
 
 
 def _lookup_objects_safe(printer, name):
@@ -544,7 +548,7 @@ def _nfc_help(gcmd=None):
                 "NFC_SHARED PRELOAD_CLEAR_ASSIGNED=1 SPOOL_ID=<n> GATE=<n> : HH hook command; clear already-assigned shared spool",
                 "NFC_SHARED POLL=1 : Run one full read/resolve cycle",
                 "NFC_SHARED SCAN=1 : Raw hardware scan only",
-                "NFC_SHARED INIT=1 : Re-run PN532 init",
+                "NFC_SHARED INIT=1 : Re-run NFC Reader init",
                 "NFC_SHARED CLEAR_CACHE=1 : Clear tag cache, keeping pending spool",
             ])
 
@@ -1140,15 +1144,16 @@ class NFCGate:
             self._reader.init()
             alive = self._reader.is_alive()
             self._failed = not alive
+            reader_label = _reader_label(self._reader_type)
             if alive:
-                logger.info("[%s]: PN532 reader OK", self._name)
+                logger.info("[%s]: %s OK", self._name, reader_label)
             else:
                 logger.error(
-                    "[%s]: PN532 did not respond — "
-                    "check wiring and I2C address (default 0x24)", self._name)
+                    "[%s]: %s did not respond — check wiring and I2C address",
+                    self._name, reader_label)
             gcmd.respond_info(color_console_tags(
-                "%s NFC[%s]: reader %s" %
-                ("[OK]" if alive else "[WARN]", self._name,
+                "%s NFC[%s]: %s %s" %
+                ("[OK]" if alive else "[WARN]", self._name, reader_label,
                  "OK" if alive else "not responding")))
             if (self._shared and alive and self._startup_polling == 1
                     and not self._is_printing()
@@ -1592,7 +1597,7 @@ class NFCGate:
     def _seed_cache_from_hh(self, eventtime):
         """Read Happy Hare's gate map and pre-seed this lane's spool cache.
 
-        Called once from _delayed_init() after the PN532 initialises
+        Called once from _delayed_init() after the NFC Reader initialises
         successfully.  Prevents a spurious _NFC_SPOOL_CHANGED dispatch on the
         very first poll after a Klipper restart — Happy Hare already knows
         which spool is in this gate, so we should not re-tell it.
@@ -1794,33 +1799,34 @@ class NFCGate:
         logger.info("[%s]: connected", self._name)
         self._gcode.respond_info(f"[CONNECTED] NFC Gate [{self._name}] connected")
 
-        # Schedule PN532 init after the rest of Klippy/I2C has settled
+        # Schedule NFC Reader init after the rest of Klippy/I2C has settled.
         self.reactor.register_timer(
             self._delayed_init,
             self.reactor.monotonic() + 2.0
         )
 
     def _delayed_init(self, eventtime):
-        """Initialise the PN532 after other I2C devices have had time to settle.
+        """Initialise the NFC Reader after other I2C devices have settled.
 
         Runs in the reactor thread 2 seconds after klippy:connect fires.
         Returns reactor.NEVER so the timer does not repeat.
         """
         if self._debug >= 4:
             logger.debug(
-                "[%s]: delayed init — wake + SAMConfiguration",
-                self._name)
+                "[%s]: delayed init — %s",
+                self._name, _reader_label(self._reader_type))
 
         try:
             self._reader.init()
+            reader_label = _reader_label(self._reader_type)
             if self._reader.is_alive():
                 self._failed = False
-                logger.info("[%s]: PN532 reader OK", self._name)
+                logger.info("[%s]: %s OK", self._name, reader_label)
             else:
                 self._failed = True
                 logger.error(
-                    "[%s]: PN532 did not respond — "
-                    "check wiring and I2C address (default 0x24)", self._name)
+                    "[%s]: %s did not respond — check wiring and I2C address",
+                    self._name, reader_label)
         except Exception as e:
             self._failed = True
             logger.error("[%s]: init error: %s", self._name, e)
@@ -3218,7 +3224,7 @@ class NFCGate:
             "  NFC_SHARED PRELOAD_CLEAR_ASSIGNED=1 SPOOL_ID=<n> GATE=<n> - HH hook command; clear already-assigned shared spool\n"
             "  NFC_SHARED POLL=1          - run one full read/resolve cycle (skips printing)\n"
             "  NFC_SHARED SCAN=1          - raw hardware scan only (skips printing)\n"
-            "  NFC_SHARED INIT=1          - re-run PN532 init; resumes startup polling if enabled\n"
+            "  NFC_SHARED INIT=1          - re-run NFC Reader init; resumes startup polling if enabled\n"
             "  NFC_SHARED CLEAR_CACHE=1   - clear tag cache (keeps pending spool)"
         )
 

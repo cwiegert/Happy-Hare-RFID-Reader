@@ -11,6 +11,7 @@ except ImportError:
     import bus as bus_module
 
 from .pn532_driver import PN532Driver
+from .pn7160_driver import PN7160Driver
 
 SUPPORTED_READER_TYPES = ('pn532', 'pn7160')
 DEFAULT_READER_TYPE = 'pn532'
@@ -26,14 +27,18 @@ DEFAULT_I2C_SPEED = {
 
 class BusDefaultConfig:
     """Wrap a Klipper ConfigWrapper to supply inherited bus defaults."""
-    def __init__(self, config, default_bus):
+    def __init__(self, config, default_bus, default_speed):
         self._cfg = config
         self._default_bus = default_bus
+        self._default_speed = default_speed
 
     def get(self, key, default=None):
         if key == 'i2c_bus':
             return self._cfg.get(
                 key, self._default_bus if default is None else default)
+        if key == 'i2c_speed':
+            return self._cfg.get(
+                key, self._default_speed if default is None else default)
         return self._cfg.get(key, default)
 
     def __getattr__(self, name):
@@ -61,22 +66,25 @@ def default_i2c_speed(reader_type):
 def create_reader(config, defaults, reader_type, gate, debug,
                   low_level_debug=False, sleep_fn=None,
                   transceive_delay=0.250, crc_delay=0.050):
-    if reader_type != 'pn532':
-        raise config.error(
-            "nfc_gate [%s]: reader_type '%s' is recognized, but its driver is "
-            "not integrated yet"
-            % (config.get_name().split()[-1], reader_type))
-
     default_addr = (defaults.i2c_address if defaults is not None
                     else default_i2c_address(reader_type))
     default_bus = defaults.i2c_bus if defaults is not None else None
+    default_speed = default_i2c_speed(reader_type)
     i2c = bus_module.MCU_I2C_from_config(
-        BusDefaultConfig(config, default_bus),
+        BusDefaultConfig(config, default_bus, default_speed),
         default_addr=default_addr,
-        default_speed=default_i2c_speed(reader_type))
+        default_speed=default_speed)
 
     if reader_type == 'pn532':
         return PN532Driver(
             i2c, gate, transceive_delay, crc_delay, debug,
             low_level_debug=low_level_debug,
             sleep_fn=sleep_fn)
+
+    if reader_type == 'pn7160':
+        return PN7160Driver(config, i2c, gate, debug=debug, sleep_fn=sleep_fn)
+
+    raise config.error(
+        "nfc_gate [%s]: reader_type '%s' is recognized, but its driver is "
+        "not integrated yet"
+        % (config.get_name().split()[-1], reader_type))

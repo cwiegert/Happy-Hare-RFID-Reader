@@ -90,6 +90,7 @@ LANE_LED_TEST_DURATION = 2.0
 LANE_LED_TEST_GAP = 0.15
 LANE_LED_TEST_DEFAULT_CYCLES = 2
 LANE_LED_TEST_MAX_CYCLES = 20
+_SUPPORTED_READER_TYPES = ('pn532', 'pn7160')
 
 
 def _spoolman_url_enabled(url):
@@ -353,6 +354,16 @@ def _optional_float_config(config, key, default=None, minval=None, maxval=None):
     return value
 
 
+def _reader_type_from_config(config, default='pn532'):
+    reader_type = str(config.get('reader_type', default)).strip().lower()
+    if reader_type not in _SUPPORTED_READER_TYPES:
+        raise config.error(
+            "Invalid reader_type '%s' in [%s]; supported values: %s"
+            % (reader_type, config.get_name(),
+               ', '.join(_SUPPORTED_READER_TYPES)))
+    return reader_type
+
+
 def _raw_klipper_config(printer):
     try:
         configfile = printer.lookup_object('configfile', None)
@@ -454,17 +465,18 @@ def _doctor_lines(printer):
                   len(enabled_lanes), len(disabled_lanes)))
     for gate in sorted(lane_readers, key=lambda g: g._gate):
         if not getattr(gate, '_enabled', True):
-            lines.append("    Gate %d [%s]: disabled by config" %
-                         (gate._gate, gate._name))
+            lines.append("    Gate %d [%s/%s]: disabled by config" %
+                         (gate._gate, gate._name, gate._reader_type))
         else:
             state = "failed" if gate._failed else "ready/pending init"
-            lines.append("    Gate %d [%s]: enabled, %s" %
-                         (gate._gate, gate._name, state))
+            lines.append("    Gate %d [%s/%s]: enabled, %s" %
+                         (gate._gate, gate._name, gate._reader_type, state))
 
     if enabled_shared:
         shared = enabled_shared[0]
-        lines.append("  %s shared reader: enabled [%s]" %
-                     (mark(not shared._failed), shared._name))
+        lines.append("  %s shared reader: enabled [%s/%s]" %
+                     (mark(not shared._failed), shared._name,
+                      shared._reader_type))
     elif shared_readers:
         lines.append("  [OK] shared reader: configured but disabled")
     else:
@@ -593,6 +605,7 @@ def _nfc_help(gcmd=None):
 
 class NFCGateDefaults:
     def __init__(self, config):
+        self.reader_type        = _reader_type_from_config(config)
         self.spoolman_url       = config.get('spoolman_url', '')
         self.moonraker_url      = config.get('moonraker_url',
                                              'http://127.0.0.1:7125')
@@ -739,6 +752,8 @@ class NFCGate:
         # Read shared first — it controls how subsequent params are parsed.
         self._shared = config.getboolean('shared', False)
         self._enabled = config.getboolean('enabled', True)
+        self._reader_type = _reader_type_from_config(
+            config, d.reader_type if d else 'pn532')
         if self._shared and self._enabled:
             global _shared_configured
             _shared_configured = True
@@ -768,6 +783,8 @@ class NFCGate:
             self._absent_threshold = 3
             self._debug = d.debug if d else 2
             self._low_level_debug = False
+            self._reader_type = _reader_type_from_config(
+                config, d.reader_type if d else 'pn532')
             self._console_output = d.console_output if d else False
             self._console_log_level = d.console_log_level if d else 'warning'
             self._spoolman = d._spoolman if d is not None else None
@@ -873,6 +890,11 @@ class NFCGate:
             default_addr=default_i2c_addr,
             default_speed=100000)
 
+        if self._reader_type != 'pn532':
+            raise config.error(
+                "nfc_gate [%s]: reader_type '%s' is recognized, but its "
+                "driver is not integrated yet"
+                % (self._name, self._reader_type))
         self._reader     = PN532Driver(i2c, self._gate,
                                        transceive_delay, crc_delay,
                                        self._debug,
@@ -2617,12 +2639,14 @@ class NFCGate:
         return nfc_gate_for_gate_number(gate_number)
 
     def status_line(self):
+        label = ("shared" if self._shared
+                 else "Gate %d" % self._gate)
+        label = "%s (%s)" % (label, self._reader_type)
         if not getattr(self, '_enabled', True):
-            label = "shared" if self._shared else "Gate %d" % self._gate
             return "  %s  [%s]:  disabled by config" % (label, self._name)
         if self._failed:
-            return ("  Gate %d  [%s]:  READER FAILED (check wiring, address 0x24)"
-                    % (self._gate, self._name))
+            return ("  %s  [%s]:  READER FAILED (check wiring, address 0x24)"
+                    % (label, self._name))
         if self._hh_load_paused:
             poll_state = "polling suspended"
         elif self._polling:
@@ -2651,8 +2675,8 @@ class NFCGate:
                 sync_note = "  [NFC has spool %s; HH empty]" % nfc_spool
         if hh_empty:
             return _status_html_words(
-                "  Gate %d:  empty   [%s]%s  [%s]"
-                % (self._gate, poll_state, sync_note, hh_label))
+                "  %s:  empty   [%s]%s  [%s]"
+                % (label, poll_state, sync_note, hh_label))
         if self._state.current_spool is DIRECT_METADATA_SPOOL:
             tag = self._state.current_tag
             meta = tag.meta if tag is not None else {}
@@ -2664,29 +2688,29 @@ class NFCGate:
             if not spool_identity:
                 spool_identity = (meta or {}).get('spool_identity') or 'None'
             return _status_html_words(
-                "  Gate %d:  tag %s  metadata material=%s color=%s "
+                "  %s:  tag %s  metadata material=%s color=%s "
                 "spool_identity=%s   [%s]%s  [%s]"
-                % (self._gate, self._state.current_uid,
+                % (label, self._state.current_uid,
                    material, color, spool_identity, poll_state, sync_note,
                    hh_label))
         if self._state.current_spool is not None:
             return _status_html_words(
-                "  Gate %d:  spool %-2d  UID %s   [%s]%s   [%s]"
-                % (self._gate,
+                "  %s:  spool %-2d  UID %s   [%s]%s   [%s]"
+                % (label,
                    self._state.current_spool, self._state.current_uid,
                    poll_state, sync_note, hh_label))
         if self._state.current_uid is not None:
             return _status_html_words(
-                "  Gate %d:  tag %s  (UID not in Spoolman)   [%s]%s  [%s]"
-                % (self._gate, self._state.current_uid, poll_state,
+                "  %s:  tag %s  (UID not in Spoolman)   [%s]%s  [%s]"
+                % (label, self._state.current_uid, poll_state,
                    sync_note, hh_label))
         if hh.present and hh.available:
             return _status_html_words(
-                "  Gate %d:  occupied   [%s]%s  [%s]"
-                % (self._gate, poll_state, sync_note, hh_label))
+                "  %s:  occupied   [%s]%s  [%s]"
+                % (label, poll_state, sync_note, hh_label))
         return _status_html_words(
-            "  Gate %d:  empty   [%s]%s  [%s]"
-            % (self._gate, poll_state, sync_note, hh_label))
+            "  %s:  empty   [%s]%s  [%s]"
+            % (label, poll_state, sync_note, hh_label))
 
     # ── Shared reader ────────────────────────────────────────────────────────
 
@@ -2968,7 +2992,8 @@ class NFCGate:
         return "idle"
 
     def shared_status_line(self):
-        return "  shared:  %s" % self._shared_state_text()
+        return "  shared (%s):  %s" % (
+            self._reader_type, self._shared_state_text())
 
     def shared_summary_line(self):
         return "[%s]: %s  next: %s" % (
@@ -3241,6 +3266,7 @@ class NFCGate:
             return {
                 'gate':                self._gate,
                 'enabled':             False,
+                'reader_type':         self._reader_type,
                 'tag_present':         False,
                 'spool_id':            -1,
                 'uid':                 '',
@@ -3274,6 +3300,7 @@ class NFCGate:
         return {
             'gate':                self._gate,
             'enabled':             True,
+            'reader_type':         self._reader_type,
             'tag_present':         tag_present,
             'spool_id':            (-1 if is_meta_direct
                                     else self._state.current_spool

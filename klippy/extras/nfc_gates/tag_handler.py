@@ -241,6 +241,10 @@ def _spool_identity_from_meta(meta):
 def classify_tag_target(gate, target_info):
     if not isinstance(target_info, dict):
         return 'uid_only'
+    protocol = str(target_info.get('protocol') or '').strip().lower()
+    protocol_name = str(target_info.get('protocol_name') or '').strip().lower()
+    if protocol == 'iso15693_type5' or protocol_name == 'iso15693':
+        return 'iso15693_type5'
     try:
         sak = int(target_info.get('sak', 0)) & 0xFF
         uid_length = int(target_info.get('uid_length', 0))
@@ -427,6 +431,68 @@ def capture_ntag_metadata(gate, tag):
     parse_current_tag(gate, tag)
 
 
+def _type5_parser_memory(raw):
+    """Return Type-5 memory in the Type-2-like shape expected by parse_tag().
+
+    ISO15693 / NFC Type 5 tags usually start with a 4-byte Capability
+    Container (0xE1 or 0xE2), followed by TLVs.  The shared parser expects the
+    byte stream to start at the TLV area, like NTAG page 4, so strip the CC only
+    when it is clearly present.
+    """
+    data = bytes(raw or b'')
+    if len(data) >= 5 and data[0] in (0xE1, 0xE2):
+        return bytearray(data[4:])
+    return bytearray(data)
+
+
+def capture_iso15693_metadata(gate, tag):
+    uid_hex = tag.uid
+    try:
+        read_type5 = getattr(gate._reader, 'iso15693_read_user_memory', None)
+        if read_type5 is None:
+            raise RuntimeError("reader does not support ISO15693 memory reads")
+        raw = read_type5(tag=tag.target_info)
+        parser_raw = _type5_parser_memory(raw)
+        tag.raw_tag_data = parser_raw
+        if gate._debug >= 3:
+            tlv = _find_ndef_tlv(parser_raw)
+            if tlv is not None:
+                logger.info(
+                    "[%s]: gate %d — uid=%s  ISO15693 read %d bytes "
+                    "(parser bytes=%d, NDEF length=%d, %s)",
+                    gate._name, gate._gate, uid_hex, len(raw),
+                    len(parser_raw), tlv['ndef_len'],
+                    'complete' if tlv['complete'] else 'partial')
+                for text in _decode_ndef_text_records(tlv['payload']):
+                    logger.info(
+                        "[%s]: gate %d — uid=%s  NDEF text: %s",
+                        gate._name, gate._gate, uid_hex,
+                        _single_line_preview(text))
+            else:
+                logger.info(
+                    "[%s]: gate %d — uid=%s  ISO15693 read %d bytes "
+                    "(parser bytes=%d)",
+                    gate._name, gate._gate, uid_hex, len(raw),
+                    len(parser_raw))
+    except Exception as e:
+        tag.parse_error = 'iso15693 read failed: {}'.format(e)
+        tag.meta = {'uid': uid_hex}
+        tag.read_incomplete = True
+        tag.read_retry_reason = tag.parse_error
+        logger.warning("[%s]: gate %d — uid=%s  ISO15693 read failed: %s",
+                       gate._name, gate._gate, uid_hex, e)
+        return
+    if not tag.raw_tag_data:
+        tag.parse_error = 'empty iso15693 read'
+        tag.meta = {'uid': uid_hex}
+        tag.read_incomplete = True
+        tag.read_retry_reason = tag.parse_error
+        logger.warning("[%s]: gate %d — uid=%s  ISO15693 read returned no data",
+                       gate._name, gate._gate, uid_hex)
+        return
+    parse_current_tag(gate, tag)
+
+
 def resolve_auth_keys(gate, tag):
     """Derive MIFARE sector Key-A values for a Bambu tag via HKDF.
 
@@ -535,6 +601,8 @@ def read_current_tag(gate):
 
     if strategy == 'ntag_type2':
         capture_ntag_metadata(gate, tag)
+    elif strategy == 'iso15693_type5':
+        capture_iso15693_metadata(gate, tag)
     elif strategy == 'mifare_classic':
         if not gate._bambu_reads:
             tag.parse_error = 'mifare_classic rich read disabled; uid-only fallback'

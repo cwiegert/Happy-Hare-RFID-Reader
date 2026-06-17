@@ -4,8 +4,9 @@
 # NCI controller flow to the small reader interface used by nfc_manager:
 # init(), is_alive(), read_target(), read_tag(), and target cleanup helpers.
 #
-# First integration stage: UID-only.  Rich reads for NTAG / ISO15693 Type 5 are
-# intentionally left for later so the NCI bring-up can be tested in isolation.
+# PN7160 uses the same reader-facing API as PN532 where possible.  The driver
+# owns NCI and raw tag commands; tag_handler owns retry windows, payload parsing,
+# Spoolman lookups, and Happy Hare side effects.
 
 from .log import logger
 
@@ -33,8 +34,10 @@ NCI_RF_DEACTIVATE_IDLE_CMD = [0x21, 0x06, 0x01, 0x00]
 
 NCI_GID_CORE = 0x00
 NCI_GID_RF = 0x01
+NCI_MT_DATA = 0x00
 NCI_MT_RSP = 0x02
 NCI_MT_NTF = 0x03
+NCI_CORE_CONN_CREDITS_OID = 0x06
 
 NCI_PROT_ISODEP = 0x04
 NCI_PROT_ISO15693 = 0x06
@@ -52,6 +55,16 @@ NCI_STATUS_OK = 0x00
 NCI_STATUS_DISCOVERY_ALREADY_STARTED = 0xA0
 NCI_STATUS_DISCOVERY_TARGET_ACTIVATION_FAILED = 0xA1
 NCI_STATUS_DISCOVERY_TEAR_DOWN = 0xA2
+
+MIFARE_CMD_READ = 0x30
+
+ISO15693_CMD_READ_SINGLE_BLOCK = 0x20
+ISO15693_CMD_READ_MULTIPLE_BLOCKS = 0x23
+ISO15693_FLAG_HIGH_DATA_RATE = 0x02
+ISO15693_FLAG_ADDRESS = 0x20
+ISO15693_DEFAULT_START_BLOCK = 0
+ISO15693_DEFAULT_END_BLOCK = 79
+ISO15693_DEFAULT_BLOCKS_PER_READ = 4
 
 
 class PN7160Error(Exception):
@@ -146,7 +159,10 @@ class PN7160Handler:
                  ven_pre_high_time=0.010,
                  ven_low_time=0.010, ven_post_high_time=0.100,
                  init_retries=3, init_retry_delay=0.500,
-                 no_irq_read_delay=0.100):
+                 no_irq_read_delay=0.100,
+                 ntag_data_delay=0.005,
+                 ntag_read_retries=2,
+                 ntag_retry_delay=0.025):
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
         self.i2c = i2c
@@ -165,6 +181,9 @@ class PN7160Handler:
         self.init_retries = init_retries
         self.init_retry_delay = init_retry_delay
         self.no_irq_read_delay = no_irq_read_delay
+        self.ntag_data_delay = ntag_data_delay
+        self.ntag_read_retries = ntag_read_retries
+        self.ntag_retry_delay = ntag_retry_delay
         self.initialized = False
         self.core_info_lines = []
         try:
@@ -193,9 +212,13 @@ class PN7160Handler:
             "handler ready: addr=0x%02X irq=%s ven=%s no_irq=%s"
             " response_delay=%.3f nci_poll_interval=%.3f"
             " read_timeout=%.3f no_irq_read_delay=%.3f"
+            " ntag_data_delay=%.3f ntag_read_retries=%d"
+            " ntag_retry_delay=%.3f"
             % (self.i2c_address, self.irq_enabled, self.ven is not None,
                self.no_irq_mode, self.response_delay, self.nci_poll_interval,
-               self.read_timeout, self.no_irq_read_delay))
+               self.read_timeout, self.no_irq_read_delay,
+               self.ntag_data_delay, self.ntag_read_retries,
+               self.ntag_retry_delay))
 
     @property
     def no_irq_mode(self):
@@ -392,6 +415,323 @@ class PN7160Handler:
             raise PN7160Error("unexpected NCI frame: %s"
                               % _frame_summary(rx))
         raise PN7160Error("timeout waiting for response: %s" % last_error)
+
+    def wait_data_frame(self, timeout=0.100, label=None):
+        """Wait for an NCI DATA frame after sending a tag command.
+
+        NTAG READ and ISO15693 block reads travel as data packets once an RF
+        interface is active.  CORE_CONN_CREDITS notifications are flow-control
+        bookkeeping and are ignored here.
+        """
+        end_time = self.reactor.monotonic() + timeout
+        last_error = None
+        while self.reactor.monotonic() < end_time:
+            try:
+                if self.no_irq_mode:
+                    delay = min(
+                        self.ntag_data_delay,
+                        max(0.0, end_time - self.reactor.monotonic()))
+                    if delay > 0.0:
+                        self._pause(delay)
+                    frame = self.read_frame_once()
+                else:
+                    frame = self.wait_frame(
+                        timeout=max(
+                            0.001, end_time - self.reactor.monotonic()),
+                        poll_interval=max(0.001, self.ntag_data_delay),
+                        label=label)
+            except Exception as e:
+                last_error = e
+                self._debug("data wait read failed: %s" % e)
+                continue
+            if _message_type(frame) == NCI_MT_DATA:
+                return frame
+            if (len(frame) >= 6
+                    and _message_type(frame) == NCI_MT_NTF
+                    and _gid(frame) == NCI_GID_CORE
+                    and _oid(frame) == NCI_CORE_CONN_CREDITS_OID):
+                self._debug("data credit notification: %s" % _hex(frame))
+                continue
+            self._debug("data wait ignored frame: %s"
+                        % _frame_summary(frame))
+        raise PN7160Error("timeout waiting for data frame: %s" % last_error)
+
+    def transceive_data(self, payload, timeout=0.100, label="DATA"):
+        frame = [0x00, 0x00, len(payload)] + list(payload)
+        self._debug("data transceive %s payload=%s"
+                    % (label, _hex(payload)))
+        self.write_frame(frame, label=label)
+        return self.wait_data_frame(timeout=timeout, label=label)
+
+    def ntag_read_page_once(self, page, timeout=0.100):
+        rx = self.transceive_data(
+            [MIFARE_CMD_READ, page & 0xff], timeout=timeout,
+            label="NTAG_READ_%02X" % (page & 0xff,))
+        payload = rx[3:]
+        if len(payload) < 16:
+            raise PN7160Error("short NTAG page response page=%d data=%s"
+                              % (page, _hex(payload)))
+        data = list(payload[:16])
+        self._debug("NTAG page %d data=%s" % (page, _hex(data)))
+        return data, rx
+
+    def ntag_read_page(self, page, timeout=0.100):
+        attempts = max(1, self.ntag_read_retries + 1)
+        last_error = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return self.ntag_read_page_once(page, timeout=timeout)
+            except Exception as e:
+                last_error = e
+                self._debug("NTAG page %d attempt %d/%d failed: %s"
+                            % (page, attempt, attempts, e))
+                if attempt < attempts and self.ntag_retry_delay > 0.0:
+                    self._pause(self.ntag_retry_delay)
+        raise PN7160Error("NTAG page %d failed after %d attempts: %s"
+                          % (page, attempts, last_error))
+
+    def ntag_read_user_memory(self, start_page=4, end_page=67,
+                              timeout=0.100):
+        data = bytearray()
+        current_page = start_page
+        while current_page <= end_page:
+            block, _frame = self.ntag_read_page(
+                current_page, timeout=timeout)
+            remaining_pages = end_page - current_page + 1
+            if remaining_pages >= 4:
+                data.extend(block)
+            else:
+                data.extend(block[:remaining_pages * 4])
+            if 0xFE in block:
+                self._debug("NTAG terminator found at page %d offset %d"
+                            % (current_page, block.index(0xFE)))
+                break
+            current_page += 4
+            if current_page <= end_page and self.ntag_data_delay > 0.0:
+                self._pause(self.ntag_data_delay)
+        return data
+
+    @staticmethod
+    def _ndef_tlv_extent(data):
+        i = 0
+        data_len = len(data)
+        while i < data_len:
+            tlv_type = data[i]
+            if tlv_type == 0x00:
+                i += 1
+                continue
+            if tlv_type == 0xFE:
+                return None
+            if i + 1 >= data_len:
+                return None
+            tlv_len = data[i + 1]
+            if tlv_len == 0xFF:
+                if i + 3 >= data_len:
+                    return None
+                tlv_len = (data[i + 2] << 8) | data[i + 3]
+                value_start = i + 4
+            else:
+                value_start = i + 2
+            value_end = value_start + tlv_len
+            if tlv_type == 0x03:
+                return value_end, tlv_len
+            i = value_end
+        return None
+
+    def ntag_read_ndef_user_memory(self, start_page=4, max_pages=16,
+                                   max_ndef_pages=135, timeout=0.100):
+        """Read enough Type-2 user memory for tag_handler to parse payloads."""
+        max_pages = max(4, int(max_pages))
+        max_ndef_pages = max(max_pages, int(max_ndef_pages))
+        fallback_bytes = max_pages * 4
+        max_ndef_bytes = max_ndef_pages * 4
+        target_bytes = min(16, fallback_bytes)
+        data = bytearray()
+        current_page = start_page
+        while len(data) < target_bytes:
+            block, _frame = self.ntag_read_page(
+                current_page, timeout=timeout)
+            data.extend(block)
+            extent = self._ndef_tlv_extent(data)
+            if extent is not None:
+                target_bytes, ndef_len = extent
+                if target_bytes > max_ndef_bytes:
+                    self._debug(
+                        "NTAG NDEF length %d capped to %d bytes"
+                        % (ndef_len, max_ndef_bytes))
+                    target_bytes = max_ndef_bytes
+            elif len(data) >= 16:
+                target_bytes = fallback_bytes
+            current_page += 4
+            if current_page > 255:
+                break
+            if len(data) < target_bytes and self.ntag_data_delay > 0.0:
+                self._pause(self.ntag_data_delay)
+        return data[:min(len(data), target_bytes)]
+
+    def iso15693_read_blocks_once(self, tag, start_block, block_count,
+                                  timeout=0.100):
+        if block_count == 1:
+            return self.iso15693_read_single_block_once(
+                start_block, timeout=timeout)
+        uid_lsb = tag.get('uid_lsb_first')
+        if not uid_lsb or len(uid_lsb) != 8:
+            raise PN7160Error("ISO15693 addressed read requires UID")
+        payload = (
+            [ISO15693_FLAG_HIGH_DATA_RATE | ISO15693_FLAG_ADDRESS,
+             ISO15693_CMD_READ_MULTIPLE_BLOCKS]
+            + list(uid_lsb)
+            + [start_block & 0xff, (block_count - 1) & 0xff])
+        rx = self.transceive_data(
+            payload, timeout=timeout,
+            label="ISO15693_READ_%02X_%02X"
+            % (start_block & 0xff, block_count & 0xff))
+        response = rx[3:]
+        expected_len = 1 + block_count * 4
+        expected_len_with_status = expected_len + 1
+        if len(response) not in (expected_len, expected_len_with_status):
+            raise PN7160Error(
+                "unexpected ISO15693 blocks %d-%d length %d data=%s"
+                % (start_block, start_block + block_count - 1,
+                   len(response), _hex(response)))
+        if response[0] & 0x01:
+            code = response[1] if len(response) > 1 else 0
+            raise PN7160Error(
+                "ISO15693 blocks %d-%d error response 0x%02X"
+                % (start_block, start_block + block_count - 1, code))
+        if len(response) == expected_len_with_status and response[-1] != 0x00:
+            raise PN7160Error(
+                "ISO15693 blocks %d-%d trailing status 0x%02X"
+                % (start_block, start_block + block_count - 1,
+                   response[-1]))
+        return list(response[1:expected_len]), rx
+
+    def iso15693_read_single_block_once(self, block, timeout=0.100):
+        payload = [
+            ISO15693_FLAG_HIGH_DATA_RATE,
+            ISO15693_CMD_READ_SINGLE_BLOCK,
+            block & 0xff,
+        ]
+        rx = self.transceive_data(
+            payload, timeout=timeout,
+            label="ISO15693_READ_%02X" % (block & 0xff,))
+        response = rx[3:]
+        if len(response) not in (5, 6):
+            raise PN7160Error(
+                "unexpected ISO15693 block %d length %d data=%s"
+                % (block, len(response), _hex(response)))
+        if response[0] & 0x01:
+            code = response[1] if len(response) > 1 else 0
+            raise PN7160Error(
+                "ISO15693 block %d error response 0x%02X" % (block, code))
+        if len(response) == 6 and response[-1] != 0x00:
+            raise PN7160Error(
+                "ISO15693 block %d trailing status 0x%02X"
+                % (block, response[-1]))
+        return list(response[1:5]), rx
+
+    def iso15693_read_blocks(self, tag, start_block, block_count,
+                             timeout=0.100):
+        attempts = max(1, self.ntag_read_retries + 1)
+        last_error = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return self.iso15693_read_blocks_once(
+                    tag, start_block, block_count, timeout=timeout)
+            except Exception as e:
+                last_error = e
+                self._debug("ISO15693 blocks %d-%d attempt %d/%d failed: %s"
+                            % (start_block, start_block + block_count - 1,
+                               attempt, attempts, e))
+                if attempt < attempts and self.ntag_retry_delay > 0.0:
+                    self._pause(self.ntag_retry_delay)
+        raise PN7160Error("ISO15693 blocks %d-%d failed after %d attempts: %s"
+                          % (start_block, start_block + block_count - 1,
+                             attempts, last_error))
+
+    def iso15693_read_blocks_with_fallback(self, tag, start_block,
+                                           block_count, timeout=0.100):
+        try:
+            return self.iso15693_read_blocks(
+                tag, start_block, block_count, timeout=timeout)
+        except Exception:
+            if block_count <= 1:
+                raise
+        data = []
+        frames = []
+        for block in range(start_block, start_block + block_count):
+            block_data, frame = self.iso15693_read_blocks(
+                tag, block, 1, timeout=timeout)
+            data += block_data
+            frames.append(frame)
+        return data, frames
+
+    def iso15693_read_user_memory(self, tag,
+                                  start_block=ISO15693_DEFAULT_START_BLOCK,
+                                  end_block=ISO15693_DEFAULT_END_BLOCK,
+                                  batch_size=ISO15693_DEFAULT_BLOCKS_PER_READ,
+                                  timeout=0.100):
+        data = bytearray()
+        block = start_block
+        batch_size = max(1, min(int(batch_size), 16))
+        while block <= end_block:
+            count = min(batch_size, end_block - block + 1)
+            block_data, _frame = self.iso15693_read_blocks_with_fallback(
+                tag, block, count, timeout=timeout)
+            data.extend(block_data)
+            expected_len = self._expected_tlv_total_length(data)
+            if expected_len and len(data) >= expected_len:
+                del data[expected_len:]
+                break
+            if expected_len is None and self._is_empty_data(block_data):
+                break
+            block += count
+            if block <= end_block and self.ntag_data_delay > 0.0:
+                self._pause(self.ntag_data_delay)
+        return data
+
+    @staticmethod
+    def _is_empty_data(data):
+        return bool(data) and all(b == 0x00 for b in data)
+
+    @staticmethod
+    def _expected_tlv_total_length(data):
+        data = bytes(data)
+        offsets = [0]
+        if len(data) >= 4 and data[0] in (0xE1, 0xE2):
+            offsets.insert(0, 4)
+        for offset in offsets:
+            total = PN7160Handler._expected_tlv_total_length_at(data, offset)
+            if total is not None:
+                return total
+        return None
+
+    @staticmethod
+    def _expected_tlv_total_length_at(data, offset):
+        pos = offset
+        while pos < len(data):
+            tlv_type = data[pos]
+            pos += 1
+            if tlv_type == 0x00:
+                continue
+            if tlv_type == 0xFE:
+                return pos
+            if pos >= len(data):
+                return None
+            tlv_len = data[pos]
+            pos += 1
+            if tlv_len == 0xFF:
+                if pos + 2 > len(data):
+                    return None
+                tlv_len = (data[pos] << 8) | data[pos + 1]
+                pos += 2
+            end = pos + tlv_len
+            if end > len(data):
+                return None
+            if tlv_type == 0x03:
+                return end
+            pos = end
+        return None
 
     def connect_nci(self, reset=True, keep_config=False):
         last_error = None
@@ -606,7 +946,12 @@ class PN7160Handler:
 
 
 class PN7160Driver:
-    """Happy Hare reader adapter for PN7160 UID-only reads."""
+    """Happy Hare reader adapter for PN7160.
+
+    The public methods intentionally mirror PN532Driver where the tag type
+    allows it.  More specialized capabilities, such as MIFARE Classic
+    authenticated sector reads, should be added as explicit methods later.
+    """
 
     def __init__(self, config, i2c, gate, debug=2, sleep_fn=None):
         self._gate = gate
@@ -642,7 +987,13 @@ class PN7160Driver:
             init_retry_delay=config.getfloat(
                 'init_retry_delay', 0.500, minval=0.0),
             no_irq_read_delay=config.getfloat(
-                'no_irq_read_delay', 0.100, minval=0.0))
+                'no_irq_read_delay', 0.100, minval=0.0),
+            ntag_data_delay=config.getfloat(
+                'ntag_data_delay', 0.005, minval=0.0),
+            ntag_read_retries=config.getint(
+                'ntag_read_retries', 2, minval=0),
+            ntag_retry_delay=config.getfloat(
+                'ntag_retry_delay', 0.025, minval=0.0))
 
     def _clear_current_card(self):
         self.current_target = None
@@ -691,7 +1042,7 @@ class PN7160Driver:
         if target_info is None:
             return None
         uid = target_info.get('uid')
-        self._clear_current_card()
+        self._release_current_target(reason="uid_read_complete")
         return uid
 
     def read_target(self, timeout=None):
@@ -716,7 +1067,8 @@ class PN7160Driver:
                            self._gate, e)
             return None
         finally:
-            self._stop_discovery()
+            if self.current_target_info is None:
+                self._stop_discovery()
 
     def _release_current_target(self, reason="manual"):
         self._stop_discovery(reason=reason)
@@ -733,6 +1085,53 @@ class PN7160Driver:
                              reason, e)
         finally:
             self._discovery_active = False
+
+    def _ensure_active_target(self, timeout=0.500):
+        if self.current_target_info is not None and self._discovery_active:
+            return self.current_target_info
+        target_info = self.read_target(timeout=timeout)
+        if target_info is None:
+            raise PN7160NoTag("no active PN7160 target")
+        return target_info
+
+    def ntag_read_user_memory(self, start_page=4, end_page=67,
+                              timeout=0.100):
+        """Read raw NTAG/Type-2 user memory like PN532Driver does.
+
+        The tag is already activated by read_target() in the normal
+        tag_handler flow.  If called directly, this method performs one
+        activation first, then releases RF state after the read.
+        """
+        try:
+            self._ensure_active_target()
+            return self._handler.ntag_read_user_memory(
+                start_page=start_page, end_page=end_page, timeout=timeout)
+        finally:
+            self._release_current_target(reason="user_memory_complete")
+
+    def ntag_read_ndef_user_memory(self, start_page=4, max_pages=16,
+                                   max_ndef_pages=135, timeout=0.100):
+        try:
+            self._ensure_active_target()
+            return self._handler.ntag_read_ndef_user_memory(
+                start_page=start_page, max_pages=max_pages,
+                max_ndef_pages=max_ndef_pages, timeout=timeout)
+        finally:
+            self._release_current_target(reason="ndef_user_memory_complete")
+
+    def iso15693_read_user_memory(self, tag=None,
+                                  start_block=ISO15693_DEFAULT_START_BLOCK,
+                                  end_block=ISO15693_DEFAULT_END_BLOCK,
+                                  batch_size=ISO15693_DEFAULT_BLOCKS_PER_READ,
+                                  timeout=0.100):
+        try:
+            target_info = self._ensure_active_target()
+            tag = target_info if tag is None else tag
+            return self._handler.iso15693_read_user_memory(
+                tag, start_block=start_block, end_block=end_block,
+                batch_size=batch_size, timeout=timeout)
+        finally:
+            self._release_current_target(reason="iso15693_user_memory_complete")
 
     def _target_info_from_tag(self, tag):
         uid_bytes = list(tag.get('uid') or [])

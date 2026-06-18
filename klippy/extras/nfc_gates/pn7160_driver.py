@@ -31,6 +31,7 @@ NCI_RF_DISCOVER_NFCA_NFCV_CMD = [
     0x06, 0x01,  # NFC-V / ISO15693 poll
 ]
 NCI_RF_DEACTIVATE_IDLE_CMD = [0x21, 0x06, 0x01, 0x00]
+PN7160_RF_DEACTIVATE_GUARD_TIME = 0.025
 
 NCI_GID_CORE = 0x00
 NCI_GID_RF = 0x01
@@ -926,6 +927,10 @@ class PN7160Handler:
         try:
             rsp, extra = self.command(
                 NCI_RF_DEACTIVATE_IDLE_CMD, NCI_GID_RF, 0x06, timeout=1.0)
+            # NXP PN716x firmware notes for 12.50.10/12.50.11 require at
+            # least 25 ms after RF_DEACTIVATE_RSP before a new
+            # RF_DISCOVER_CMD.  Without this guard, the NFCC may leave RF on.
+            self._pause(PN7160_RF_DEACTIVATE_GUARD_TIME)
             return [rsp] + extra
         except Exception as e:
             self._debug("stop discovery skipped/failed: %s" % e)

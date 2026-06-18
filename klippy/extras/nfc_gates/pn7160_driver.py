@@ -619,11 +619,19 @@ class PN7160Handler:
 
         Returns the same shape as PN532Driver so tag_handler and the Bambu
         parser stay reader-agnostic.
+
+        PN7160/NCI can leave the active RF/I2C session unhealthy after a failed
+        MIFARE Classic auth/read exchange.  Unlike PN532, do not keep probing
+        later sectors inside the same session after the first failure; return a
+        partial result and let scan-jog perform its bounded outer retry.
         """
         blocks = {}
         auth_failed_sectors = []
         read_failed_blocks = []
+        stop_after_failure = False
         for sector in sectors:
+            if stop_after_failure:
+                break
             trailer = sector * 4 + 3
             key = sector_keys[sector] if sector < len(sector_keys) else None
             if key is None:
@@ -631,7 +639,8 @@ class PN7160Handler:
             if not self.mifare_authenticate(
                     trailer, key, uid_bytes, timeout=timeout):
                 auth_failed_sectors.append(sector)
-                continue
+                stop_after_failure = True
+                break
             for blk_offset in range(3):
                 block_addr = sector * 4 + blk_offset
                 try:
@@ -641,6 +650,7 @@ class PN7160Handler:
                     read_failed_blocks.append(block_addr)
                     self._debug("MIFARE block %d read failed: %s"
                                 % (block_addr, e))
+                    stop_after_failure = True
                     break
         result = {"uid_bytes": bytes(uid_bytes or []), "blocks": blocks}
         if auth_failed_sectors:

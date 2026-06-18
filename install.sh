@@ -721,7 +721,9 @@ warn_software_i2c_sensors() {
             if [ "${found}" -eq 0 ]; then
                 echo ""
                 echo "WARNING: software I2C sensor config detected."
-                echo "         PN532 uses hardware I2C. Any sensor on the same lane MCU should use:"
+                echo "         PN532 should use hardware I2C. PN7160 supports software I2C,"
+                echo "         but hardware I2C is recommended because software I2C increases MCU load."
+                echo "         Any sensor on the same lane MCU should use:"
                 echo "         i2c_bus: ${hardware_bus}"
                 echo "         Check these file(s), commonly emu_macros.cfg:"
             fi
@@ -787,10 +789,12 @@ for line in lines:
 
 with open(path, 'w') as f:
     f.write("# =============================================================================\n")
-    f.write("# ================= EMU NFC GATE READER - PN532 I2C LANE HARDWARE ==============\n")
+    f.write("# ================= EMU NFC GATE READER - NFC I2C LANE HARDWARE ================\n")
     f.write("# =============================================================================\n")
     f.write("# Supported documented path:\n")
-    f.write("#   one PN532 module per lane MCU / EBB42 board.\n")
+    f.write("#   one NFC reader module per lane MCU / EBB42 board.\n")
+    f.write("#   PN532 is the default reader; PN7160 may be selected per lane with\n")
+    f.write("#   reader_type: pn7160.\n")
     f.write("#\n")
     f.write("# Include after nfc_reader.cfg and nfc_macros.cfg:\n")
     f.write("#   [include nfc/nfc_reader.cfg]\n")
@@ -807,7 +811,7 @@ with open(path, 'w') as f:
     f.write("# MCU prefix, for example prefix 'lane' -> [mcu lane0], [mcu lane1], etc.\n")
     f.write("#\n")
     f.write("# [WARN] After updating Klipper, rebuild and flash the lane MCU / EBB42 firmware.\n")
-    f.write("# Updating the host alone is not enough for PN532 I2C troubleshooting.\n")
+    f.write("# Updating the host alone is not enough for NFC reader I2C troubleshooting.\n")
     f.write("# =============================================================================\n\n")
 
     for lane in range(lane_count):
@@ -820,6 +824,8 @@ with open(path, 'w') as f:
         f.write("# =============================================================================\n")
         f.write(f"[nfc_gate lane{lane}]\n")
         f.write("enabled:                True\n")
+        f.write("# reader_type:            pn532  # For PN7160 hardware, use: pn7160\n")
+        f.write("# i2c_address:            36     # PN7160 valid addresses are 40-43 (0x28-0x2B)\n")
         f.write(f"mmu_gate:                {lane}\n")
         f.write(f"i2c_mcu:                 {mcu}\n")
         f.write(f"startup_poll_delay:      {startup_delay}\n\n")
@@ -830,6 +836,8 @@ with open(path, 'w') as f:
     f.write("# =============================================================================\n")
     f.write(f"# [nfc_gate lane{example_lane}]\n")
     f.write("# enabled:                False\n")
+    f.write("# reader_type:            pn532  # For PN7160 hardware, use: pn7160\n")
+    f.write("# i2c_address:            36     # PN7160 valid addresses are 40-43 (0x28-0x2B)\n")
     f.write(f"# mmu_gate:                {example_lane}\n")
     f.write(f"# i2c_mcu:                 {lane_mcu_prefix}{example_lane}\n")
     f.write(f"# startup_poll_delay:      {example_lane * 0.5:.1f}\n")
@@ -1126,12 +1134,12 @@ prompt_i2c_bus_select() {
 
     if [ ${#buses[@]} -eq 0 ]; then
         prompt_with_default "$varname" \
-            "5. I2C bus on MCU '${mcu}' for the shared PN532 (e.g. i2c3_PB3_PB4)" \
+            "5. I2C bus on MCU '${mcu}' for the shared NFC reader (e.g. i2c3_PB3_PB4)" \
             "$default_val"
         return
     fi
 
-    echo "5. I2C bus on MCU '${mcu}' for the shared PN532"
+    echo "5. I2C bus on MCU '${mcu}' for the shared NFC reader"
     echo "   Buses already used on '${mcu}' in your config files:"
     local i
     for i in "${!buses[@]}"; do
@@ -1168,7 +1176,7 @@ path, i2c_mcu, i2c_bus, startup_polling = sys.argv[1:5]
 
 with open(path, 'w') as f:
     f.write("# =============================================================================\n")
-    f.write("# =================== EMU NFC GATE READER - SHARED PN532 HARDWARE ==============\n")
+    f.write("# =================== EMU NFC GATE READER - SHARED NFC HARDWARE ================\n")
     f.write("# =============================================================================\n")
     f.write("# Single reader mounted inside the MMU body.  Tap a tagged spool before\n")
     f.write("# loading; NFC stages the spool ID for the next pregate preload automatically.\n")
@@ -1188,11 +1196,13 @@ with open(path, 'w') as f:
     f.write("#   [include nfc/nfc_reader_hw.cfg]\n")
     f.write("#   [include nfc/nfc_reader_shared.cfg]\n")
     f.write("#\n")
-    f.write("# [WARN] After updating Klipper, rebuild and flash the MCU hosting the PN532\n")
+    f.write("# [WARN] After updating Klipper, rebuild and flash the MCU hosting the NFC reader\n")
     f.write(f"#    ({i2c_mcu}).  The MCU must be on the same Klipper version as the host.\n")
     f.write("# =============================================================================\n\n")
     f.write("[nfc_gate shared]\n")
     f.write("enabled:                True\n")
+    f.write("# reader_type:            pn532  # For PN7160 hardware, use: pn7160\n")
+    f.write("# i2c_address:            36     # PN7160 valid addresses are 40-43 (0x28-0x2B)\n")
     f.write(f"i2c_mcu:                {i2c_mcu}\n")
     f.write(f"i2c_bus:                {i2c_bus}\n")
     f.write(f"shared:                 true\n")
@@ -1268,13 +1278,13 @@ if [ -f "${NFC_READER_CFG}" ]; then
     echo ""
 fi
 
-# ── Q1: Reader type ───────────────────────────────────────────────────────────
+# ── Q1: Reader layout ─────────────────────────────────────────────────────────
 DEFAULT_READER_TYPE="$(detect_reader_type "${PRINTER_CFG}" "${NFC_READER_HW_CFG}" "${NFC_READER_SHARED_CFG}" "${NFC_SHARED_READER_CFG}")"
-echo "1. Reader type"
-echo "   $(choice_style lane "${DEFAULT_READER_TYPE}")   = per-lane PN532, one per EBB42 board"
-echo "   $(choice_style shared "${DEFAULT_READER_TYPE}") = single reader inside the MMU body for staging spools"
+echo "1. Reader layout"
+echo "   $(choice_style lane "${DEFAULT_READER_TYPE}")   = per-lane NFC readers, one per EBB42 board"
+echo "   $(choice_style shared "${DEFAULT_READER_TYPE}") = single NFC reader inside the MMU body for staging spools"
 prompt_choice READER_TYPE \
-    "   Select reader type" \
+    "   Select reader layout" \
     "${DEFAULT_READER_TYPE}" \
     "lane" "shared"
 echo ""
@@ -1386,7 +1396,7 @@ else
     MMU_LED_UNIT="$(detect_mmu_led_unit "${MMU_HW_CFG}")"
     DEFAULT_I2C_MCU="$(detect_shared_mcu "${NFC_READER_SHARED_CFG}")"
     prompt_with_default I2C_MCU \
-        "4. Klipper MCU the shared PN532 is wired to (must match a [mcu ...] section)" \
+        "4. Klipper MCU the shared NFC reader is wired to (must match a [mcu ...] section)" \
         "${DEFAULT_I2C_MCU}"
 
     DEFAULT_I2C_BUS="$(detect_shared_i2c_bus "${NFC_READER_SHARED_CFG}")"
@@ -1423,7 +1433,7 @@ echo ""
 echo "${BOLD}════════════════════════════════════════════════════════════════${RESET}"
 echo "${BOLD}  Install summary — review before writing${RESET}"
 echo "${BOLD}════════════════════════════════════════════════════════════════${RESET}"
-echo "  Reader type:       ${READER_TYPE}"
+echo "  Reader layout:     ${READER_TYPE}"
 echo "  Spoolman:          ${SPOOLMAN_URL}"
 echo "  Startup polling:   ${STARTUP_POLLING}"
 if [ "${READER_TYPE}" = "shared" ]; then
@@ -1629,7 +1639,7 @@ fi
 echo ""
 echo "Applying selected settings..."
 
-# Settings common to both reader types
+# Settings common to both reader layouts
 set_config_value "${NFC_READER_CFG}" "nfc_gate" "spoolman_url" "${SPOOLMAN_URL}"
 set_config_value "${NFC_READER_CFG}" "nfc_gate" "tag_parsing" \
     "$( [ "${TAG_MODE}" = "rich" ] && echo "True" || echo "False" )"
@@ -1750,7 +1760,7 @@ if [ "${LEGACY_CUTOVER_PERFORMED:-no}" = "yes" ]; then
     echo ""
 fi
 echo "  Selected options:"
-    echo "    reader type:        ${READER_TYPE}"
+    echo "    reader layout:      ${READER_TYPE}"
 if [ "${READER_TYPE}" = "lane" ]; then
     echo "    lanes:              ${LANE_COUNT}"
     echo "    lane_mcu_prefix:    ${LANE_MCU_PREFIX}"
@@ -1797,7 +1807,7 @@ else
     echo "    nfc_reader_hw.cfg       ← [nfc_gate laneN] hardware layout   (settings applied)"
 fi
 echo "  To add the other hardware config later, re-run install.sh with the other"
-echo "  reader type selected."
+echo "  reader layout selected."
 echo ""
 echo "Next steps (first install only):"
 echo ""
@@ -1814,7 +1824,7 @@ if [ "${READER_TYPE}" = "shared" ]; then
     echo "  3. Restart Klipper:"
     echo "     sudo systemctl restart klipper"
     echo ""
-    echo "  4. Update and flash the MCU hosting the shared PN532 reader (${I2C_MCU})."
+    echo "  4. Update and flash the MCU hosting the shared NFC reader (${I2C_MCU})."
     echo "     The MCU must be on the same Klipper version as the host."
     echo ""
     echo "  5. Wire the Happy Hare post-preload hook in mmu_macro_vars.cfg:"
@@ -1824,6 +1834,12 @@ if [ "${READER_TYPE}" = "shared" ]; then
     echo ""
     echo "  6. Moonraker update_manager — added automatically by this script."
     echo "     If moonraker.conf was not found, add [update_manager Happy-Hare-RFID-Reader] manually."
+    echo ""
+    echo "  PN7160 note:"
+    echo "     For PN7160 hardware, edit [nfc_gate shared] in nfc_reader_shared.cfg:"
+    echo "       reader_type: pn7160"
+    echo "       i2c_address: 40   # 40-43 depending on address switches"
+    echo "     See docs/i2c-nfc/pn7160-wiring.md for VEN/IRQ and I2C bus notes."
     echo ""
 else
     echo "  1. Review ~/printer_data/config/nfc/nfc_reader.cfg"
@@ -1852,5 +1868,11 @@ else
     echo ""
     echo "  5. Moonraker update_manager — added automatically by this script."
     echo "     If moonraker.conf was not found, add [update_manager Happy-Hare-RFID-Reader] manually."
+    echo ""
+    echo "  PN7160 note:"
+    echo "     For each PN7160 lane, edit that [nfc_gate laneN] section in nfc_reader_hw.cfg:"
+    echo "       reader_type: pn7160"
+    echo "       i2c_address: 40   # 40-43 depending on address switches"
+    echo "     See docs/i2c-nfc/pn7160-wiring.md for VEN/IRQ and I2C bus notes."
     echo ""
 fi

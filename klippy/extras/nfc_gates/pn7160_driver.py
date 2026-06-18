@@ -57,8 +57,10 @@ NCI_STATUS_DISCOVERY_TARGET_ACTIVATION_FAILED = 0xA1
 NCI_STATUS_DISCOVERY_TEAR_DOWN = 0xA2
 
 MIFARE_CMD_READ = 0x30
-MIFARE_CMD_AUTH_A = 0x60
-MIFARE_CMD_AUTH_B = 0x61
+MIFARE_EXT_RAW_DATA = 0x10
+MIFARE_EXT_AUTH = 0x40
+MIFARE_EXT_AUTH_EMBEDDED_KEY = 0x10
+MIFARE_EXT_AUTH_KEY_B = 0x80
 
 ISO15693_CMD_READ_SINGLE_BLOCK = 0x20
 ISO15693_CMD_READ_MULTIPLE_BLOCKS = 0x23
@@ -496,14 +498,15 @@ class PN7160Handler:
                             use_key_b=False, timeout=0.500):
         """Authenticate a MIFARE Classic sector on the active TAGCMD session.
 
-        MIFARE Classic auth is a controller-side helper command, not the tag's
-        over-the-air auth exchange.  Keep this builder local to PN7160 because
-        PN532 wraps the same fields inside InDataExchange.
+        PN7160 exposes MIFARE Classic through NXP's proprietary TAGCMD
+        extension, not through the PN532-style over-the-air auth frame.  The
+        NFCC receives a compact auth request:
 
-        MIFARE Classic auth is unusual: successful auth may not return a tag
-        DATA frame.  PN7160 still returns a CORE_CONN_CREDITS notification when
-        it accepts the command, and the following READ command is the practical
-        confirmation that the sector is really authenticated.
+            40 <sector> <key flags> [six-byte key]
+
+        The UID is still accepted for interface compatibility with PN532 and
+        the key derivation code, but PN7160 does not send it in this helper
+        request.  For Bambu-derived keys we always use the embedded-key form.
         """
         uid = list(uid_bytes or [])[:4]
         key = list(key or [])[:6]
@@ -511,111 +514,57 @@ class PN7160Handler:
             raise PN7160Error("MIFARE auth requires 4-byte UID")
         if len(key) != 6:
             raise PN7160Error("MIFARE auth requires 6-byte key")
-        auth_cmd = MIFARE_CMD_AUTH_B if use_key_b else MIFARE_CMD_AUTH_A
-        # Key derivation uses the displayed activation UID.  The PN7160/NCI
-        # helper may expect the UID bytes in the lower-level MIFARE order, so
-        # keep this reversal scoped to the auth command payload only.
-        auth_uid = list(reversed(uid))
-        payload = [auth_cmd, block_addr & 0xff] + key + auth_uid
+        sector = self._mifare_sector_from_block(block_addr)
+        key_flags = MIFARE_EXT_AUTH_EMBEDDED_KEY
+        if use_key_b:
+            key_flags |= MIFARE_EXT_AUTH_KEY_B
+        payload = [MIFARE_EXT_AUTH, sector & 0xff, key_flags] + key
         label = "MIFARE_AUTH_%02X" % (block_addr & 0xff,)
-        frame = [0x00, 0x00, len(payload)] + payload
-        self._debug("data transceive %s payload=%s"
-                    % (label, _hex(payload)))
         try:
-            self.write_frame(frame, label=label)
+            rx = self.transceive_data(payload, timeout=timeout, label=label)
         except Exception as e:
             self._debug(
-                "MIFARE auth block=%d key_%s failed: %s"
-                % (block_addr, 'B' if use_key_b else 'A', e))
+                "MIFARE auth block=%d sector=%d key_%s failed: %s"
+                % (block_addr, sector, 'B' if use_key_b else 'A', e))
             return False
 
-        end_time = self.reactor.monotonic() + timeout
-        credit_seen = False
-        # If the controller accepts the auth command but does not produce a
-        # DATA frame, do not burn the full tag timeout.  READ will prove whether
-        # auth actually succeeded.
-        credit_grace_end = None
-        last_error = None
-        while self.reactor.monotonic() < end_time:
-            if credit_seen and credit_grace_end is not None:
-                if self.reactor.monotonic() >= credit_grace_end:
-                    self._debug(
-                        "MIFARE auth block=%d key_%s accepted with "
-                        "credit/no data frame"
-                        % (block_addr, 'B' if use_key_b else 'A'))
-                    return True
-            try:
-                if self.no_irq_mode:
-                    delay = min(
-                        self.ntag_data_delay,
-                        max(0.0, end_time - self.reactor.monotonic()))
-                    if delay > 0.0:
-                        self._pause(delay)
-                    rx = self.read_frame_once()
-                else:
-                    rx = self.wait_frame(
-                        timeout=max(
-                            0.001, end_time - self.reactor.monotonic()),
-                        poll_interval=max(0.001, self.ntag_data_delay),
-                        label=label)
-            except PN7160I2CStatusError as e:
-                last_error = e
-                if e.status == "START_READ_NACK":
-                    continue
-                self._debug(
-                    "MIFARE auth block=%d key_%s failed: %s"
-                    % (block_addr, 'B' if use_key_b else 'A', e))
-                return False
-            except Exception as e:
-                last_error = e
-                self._debug("MIFARE auth wait failed: %s" % e)
-                continue
-
-            if _message_type(rx) == NCI_MT_DATA:
-                rsp = rx[3:]
-                self._debug(
-                    "MIFARE auth block=%d key_%s response_len=%d data=%s"
-                    % (block_addr, 'B' if use_key_b else 'A',
-                       len(rsp), _hex(rsp)))
-                return True
-            if (len(rx) >= 6
-                    and _message_type(rx) == NCI_MT_NTF
-                    and _gid(rx) == NCI_GID_CORE
-                    and _oid(rx) == NCI_CORE_CONN_CREDITS_OID):
-                credit_seen = True
-                credit_grace_end = min(
-                    end_time, self.reactor.monotonic() + 0.030)
-                self._debug("MIFARE auth credit notification: %s"
-                            % _hex(rx))
-                continue
-            self._debug("MIFARE auth ignored frame: %s"
-                        % _frame_summary(rx))
-
-        if credit_seen:
+        rsp = rx[3:]
+        if (len(rsp) >= 2
+                and rsp[0] == MIFARE_EXT_AUTH
+                and rsp[1] == NCI_STATUS_OK):
             self._debug(
-                "MIFARE auth block=%d key_%s accepted with credit/no "
-                "data frame at timeout"
-                % (block_addr, 'B' if use_key_b else 'A'))
+                "MIFARE auth block=%d sector=%d key_%s ok rsp=%s"
+                % (block_addr, sector, 'B' if use_key_b else 'A',
+                   _hex(rsp)))
             return True
         self._debug(
-            "MIFARE auth block=%d key_%s failed: timeout waiting for "
-            "credit or data frame: %s"
-            % (block_addr, 'B' if use_key_b else 'A', last_error))
+            "MIFARE auth block=%d sector=%d key_%s rejected rsp=%s"
+            % (block_addr, sector, 'B' if use_key_b else 'A', _hex(rsp)))
         return False
 
     def mifare_read_block(self, block_addr, timeout=0.500):
         """Read one 16-byte MIFARE Classic block after sector auth."""
         rx = self.transceive_data(
-            [MIFARE_CMD_READ, block_addr & 0xff], timeout=timeout,
+            [MIFARE_EXT_RAW_DATA, MIFARE_CMD_READ, block_addr & 0xff],
+            timeout=timeout,
             label="MIFARE_READ_%02X" % (block_addr & 0xff,))
         payload = rx[3:]
-        if len(payload) < 16:
+        if not (len(payload) >= 18
+                and payload[0] == MIFARE_EXT_RAW_DATA
+                and payload[-1] == NCI_STATUS_OK):
             raise PN7160Error(
-                "short MIFARE block response block=%d data=%s"
+                "bad MIFARE block response block=%d data=%s"
                 % (block_addr, _hex(payload)))
-        data = bytes(payload[:16])
+        data = bytes(payload[1:17])
         self._debug("MIFARE block %d data=%s" % (block_addr, _hex(data)))
         return data
+
+    def _mifare_sector_from_block(self, block_addr):
+        """Map an absolute MIFARE Classic block number to sector number."""
+        block = int(block_addr) & 0xff
+        if block >= 128:
+            return 32 + ((block - 128) // 16)
+        return block // 4
 
     def mifare_read_authenticated_blocks(self, sector_keys, sectors,
                                          uid_bytes=None, timeout=0.500):
@@ -636,9 +585,8 @@ class PN7160Handler:
         for sector in sectors:
             if stop_after_failure:
                 break
-            # PN532 authenticates against the sector trailer.  PN7160/NCI raw
-            # MIFARE auth is tested against the first block we are about to
-            # read, matching the libnfc-nci example more closely.
+            # PN7160/NCI authenticates by sector through the NXP MIFARE
+            # extension.  Keep the public call block-based to match PN532.
             auth_block = sector * 4
             key = sector_keys[sector] if sector < len(sector_keys) else None
             if key is None:

@@ -14,7 +14,7 @@ klippy:connect
   └─ schedules _delayed_init()  (2 s delay — lets I2C and HH settle)
 
 _delayed_init()
-  └─ initialises PN532 reader
+  └─ initialises NFC reader
   └─ reads Happy Hare gate map  ← seeds local lane cache from HH state
   └─ starts background polling  (if startup_polling: 1)
 ```
@@ -41,7 +41,7 @@ The seed is one-shot — it fires at most once per lane per boot, on the first `
 Tags are never written to. The NFC tag's factory UID is stored as a Spoolman extra field (`rfid_tag` by default). On every poll:
 
 ```
-PN532 reads tag UID (or detects absence)
+NFC reader reads tag UID (or detects absence)
         │
         ▼
 SpoolmanClient resolves UID → spool_id
@@ -67,7 +67,7 @@ The `(uid, spool_id)` combination check means that if the same physical tag is r
 
 ## Scan-and-Jog Flow
 
-When a spool is loaded, the NFC tag is on the hub face — it may be pointing any direction. The scan-jog loop rotates the spool until the tag comes within read range of the PN532 antenna.
+When a spool is loaded, the NFC tag is on the hub face — it may be pointing any direction. The scan-jog loop rotates the spool until the tag comes within read range of the NFC reader antenna.
 
 During this scan, the current gate also checks for a narrow physical edge case:
 if gate `N` reads a UID already cached on gate `N - 1`, the read is treated as
@@ -121,12 +121,14 @@ Each layer owns one responsibility and must not reach across the boundary.
 
 | Layer | File | Owns | Does not own |
 |---|---|---|---|
+| **ReaderFactory** | `reader_factory.py` | Selects `PN532Driver` or `PN7160Driver` from `reader_type`, validates reader-specific I2C defaults | Tag parsing, gate policy, Happy Hare |
 | **PN532Driver** | `pn532_driver.py` | PN532 wire protocol, I2C frames, UID/page/block reads | Spoolman, gate policy, Happy Hare |
+| **PN7160Driver** | `pn7160_driver.py` | PN7160/NCI protocol, Type2/Type5/MIFARE reads, RF discovery lifecycle | Spoolman, gate policy, Happy Hare |
 | **SpoolmanClient** | `spoolman_client.py` | UID → spool record lookup, TTL cache, URL discovery | Gate state, lane assignment, MMU commands |
 | **TagHandler** | `tag_handler.py` | Tag classification, NTAG/MIFARE capture, metadata parsing, spool resolution ladder | Gate lifecycle, polling timers, GCode dispatch |
 | **GateState** | `gate_state.py` | Per-gate debounce state machine, event generation, `CurrentTag` observation | Hardware reads, Spoolman, GCode |
 | **KlipperInterface** | `klipper_interface.py` | GCode macro dispatch (reactor-thread safe), macro string building | Gate state, hardware, Spoolman |
-| **NFCGate / NFCGateDefaults** | `nfc_manager.py` | Config, polling lifecycle, HH seed, scan-jog coordination | PN532 protocol, Spoolman HTTP |
+| **NFCGate / NFCGateDefaults** | `nfc_manager.py` | Config, polling lifecycle, HH seed, scan-jog coordination | Reader wire protocol, Spoolman HTTP |
 | **nfc_macros.cfg** | config file | Happy Hare-facing GCode calls | NFC reads, Spoolman lookups |
 
 ---

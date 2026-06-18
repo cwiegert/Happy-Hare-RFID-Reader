@@ -18,7 +18,7 @@ For shared reader console and `nfc_reader.log` messages, see [Message Definition
 | `NFC_REGISTER UID=TAG_UID SPOOL_ID=SPOOL_ID` | Assign a known NFC UID to an existing Spoolman spool and clear NFC's lookup cache |
 | `NFC_LED_TEST ALL=1` | Test lane tag-read LEDs across every enabled per-lane reader with a short chase delay |
 | `NFC GATE=<#> STATUS` | Show one gate's state |
-| `NFC GATE=<#> INIT=1` | Initialize (or re-initialize) the PN532 reader |
+| `NFC GATE=<#> INIT=1` | Initialize (or re-initialize) the NFC reader |
 | `NFC GATE=<#> SCAN=1` | One raw read — shows UID, no Spoolman lookup |
 | `NFC GATE=<#> LED_TEST=1` | Test the configured lane tag-read LED effect on one gate |
 | `NFC GATE=<#> JOG_SCAN=1` | Start scan-jog sequence (same as automatic pre-load trigger) |
@@ -46,7 +46,7 @@ For shared reader console and `nfc_reader.log` messages, see [Message Definition
 | `NFC_SHARED PRELOAD_CLEAR_ASSIGNED=1 SPOOL_ID=<id>` | Legacy/recovery command to clear shared pending state when HH already has this spool assigned |
 | `NFC_SHARED POLL=1` | Force one full read/resolve cycle on the shared reader; skips while printing |
 | `NFC_SHARED SCAN=1` | Raw hardware scan only — no Spoolman/HH dispatch; skips while printing |
-| `NFC_SHARED INIT=1` | Re-run PN532 init on the shared reader; resumes startup polling if enabled |
+| `NFC_SHARED INIT=1` | Re-run NFC reader init on the shared reader; resumes startup polling if enabled |
 | `NFC_SHARED CLEAR_CACHE=1` | Clear tag cache on the shared reader (keeps pending spool) |
 | <span style="color:red">━━━ **Low-Level Debug** — requires `low_level_debug: True` — bypasses normal state machine ━━━</span> | |
 | `NFC GATE=<#> STEP=WAKEUP` | Write `0x00` to nudge PN532 out of power-down |
@@ -103,7 +103,7 @@ When Klipper connects, NFC_Manager runs this sequence for each lane automaticall
 klippy:connect  →  _handle_connect()  →  schedule _delayed_init() (2 s)
 
 _delayed_init()
-  1. Initialise PN532 reader
+  1. Initialise NFC reader
   2. Read Happy Hare gate map  →  seed this lane's local cache
   3. Start background polling  (if startup_polling: 1)
 ```
@@ -137,7 +137,7 @@ NFC_HH_SYNC_CACHE
 The macro reads `printer.mmu.gate_spool_id` for each gate and calls `NFC GATE=N HH_SYNC=1 SPOOL_ID=<n>` per lane. The Python side receives the spool_id and sets the seed. On the next poll for each lane, if the physical tag matches the seed, the dispatch is suppressed.
 
 **When to use:**
-- Happy Hare wasn't fully initialised when the PN532 init ran and the startup seed was skipped
+- Happy Hare wasn't fully initialised when the NFC reader init ran and the startup seed was skipped
 - You manually changed the HH gate map and want NFC to treat the current state as baseline
 - After loading filament manually (without NFC) and you don't want a spurious CHANGED on the next poll
 
@@ -222,7 +222,7 @@ NFC GATE=4 STATUS
 
 ### `NFC GATE=<#> INIT=1`
 
-Runs the PN532 initialization sequence: wakeup → `GetFirmwareVersion` → `SAMConfiguration`.
+Runs the configured NFC reader's initialization sequence.
 
 ```gcode
 NFC GATE=0 INIT=1
@@ -350,7 +350,7 @@ scan_enabled:    False
 
 | Check | What it guards |
 |---|---|
-| PN532 not in failed state | Reader must have initialised successfully |
+| Reader not in failed state | Reader must have initialised successfully |
 | No active print | Scan cannot move filament during a print |
 | Happy Hare `action == idle` | HH must not be loading, unloading, or homing |
 | No other gate currently scanning | Only one gate may hold the MMU at a time |
@@ -378,7 +378,7 @@ NFC[lane0]: Happy Hare is busy (action=loading) — wait for idle before startin
 
 Runs one complete cycle of the NFC manager pipeline:
 
-1. PN532 reads the UID
+1. NFC reader reads the UID
 2. NFC_Manager checks if the UID is new, the same, or absent
 3. If new: SpoolmanClient looks up the spool ID
 4. Gate state updates
@@ -405,7 +405,7 @@ Open the spool record in Spoolman, set the 'rfid_tag' extra field to: 04AABBCCDD
 
 ### `NFC GATE=<#> APPLY=1`
 
-Forces the lane's cached spool assignment through to Happy Hare immediately. Does not read the PN532, does not query Spoolman — it just dispatches:
+Forces the lane's cached spool assignment through to Happy Hare immediately. Does not read the NFC reader, does not query Spoolman — it just dispatches:
 
 ```gcode
 _NFC_SPOOL_CHANGED GATE=<gate> SPOOL_ID=<cached_id> UID=<cached_uid>
@@ -430,7 +430,7 @@ NFC GATE=0 CLEAR_CACHE=1
 Clears:
 1. The lane's cached spool ID
 2. The SpoolmanClient UID cache
-3. The PN532 driver's in-memory current-card cache
+3. The reader driver's in-memory current-card cache
 
 On the next poll, the full `(uid, spool_id)` combination is re-evaluated:
 
@@ -664,7 +664,7 @@ command surface.
 
 ## Shared Reader
 
-The shared reader is a single PN532 mounted inside the MMU body. Tap a spool tag on it before loading; NFC stages the spool ID for the next pregate preload automatically. See [Shared Reader](shared-reader.md) for the full setup and workflow guide.
+The shared reader is a single NFC reader mounted inside the MMU body. It defaults to PN532 and can use PN7160 with `reader_type: pn7160`. Tap a spool tag on it before loading; NFC stages the spool ID for the next pregate preload automatically. See [Shared Reader](shared-reader.md) for the full setup and workflow guide.
 
 ### Normal flow
 
@@ -728,7 +728,7 @@ pending spool in its gate map.
 
 **`NFC_SHARED SCAN=1`** — Raw hardware scan only — shows UID, no Spoolman lookup or dispatch. Skips while printing.
 
-**`NFC_SHARED INIT=1`** — Re-run PN532 initialisation. Use after a wiring fault or reader failure. If `startup_polling: 1` is set, the printer is not printing, and no spool is pending, polling resumes automatically after a successful init.
+**`NFC_SHARED INIT=1`** — Re-run NFC reader initialisation. Use after a wiring fault or reader failure. If `startup_polling: 1` is set, the printer is not printing, and no spool is pending, polling resumes automatically after a successful init.
 
 **`NFC_SHARED CLEAR_CACHE=1`** — Clear the tag UID cache without clearing any pending spool state.
 

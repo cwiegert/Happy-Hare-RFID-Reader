@@ -32,9 +32,9 @@ Config files use a non-destructive merge: if a section already exists in your fi
 ### Step 1 — Flash Lane MCU Firmware
 
 > [!CAUTION]
-> Do this before anything else. The PN532 driver communicates directly with the EBB42 MCU firmware over I2C. If the host Klipper and the MCU firmware are on different versions, I2C reads fail with errors that look like hardware faults.
+> Do this before anything else. The NFC reader driver communicates directly with the MCU firmware over I2C. If the host Klipper and the MCU firmware are on different versions, I2C reads fail with errors that look like hardware faults.
 >
-> Build and flash Klipper firmware for every lane MCU / EBB42 that will carry a PN532 before you run the installer.
+> Build and flash Klipper firmware for every lane MCU / EBB42 that will carry an NFC reader before you run the installer.
 
 ### Step 2 — Clone the Repository
 
@@ -122,7 +122,7 @@ i2c_mcu:  mmu0
 `i2c_mcu` must exactly match the MCU name in your Happy Hare config (from `mmu_hardware.cfg`), typically `mmu0`, `mmu1`, etc. `i2c_bus` can be set once in the base `[nfc_gate]` section or overridden per lane.
 
 > [!IMPORTANT]
-> **Temperature sensor I2C bus must match.** If your lane MCU also has a thermistor or temperature sensor connected over I2C (e.g. an SHT3x), it must be configured on the **same hardware I2C bus** as the PN532. Set `i2c_bus` in your temperature sensor section to the same value as the `i2c_bus` in the matching `[nfc_gate laneN]` section (or the base `[nfc_gate]` if all lanes share one bus). Using a different bus, or using the Klipper software-emulated I2C bus (`i2c_software_*`), will cause collisions or read failures on both devices. Hardware I2C is required.
+> **Temperature sensor I2C bus must match.** If your lane MCU also has a thermistor or temperature sensor connected over I2C (e.g. an SHT3x), it must be configured on the **same hardware I2C bus** as the NFC reader. Set `i2c_bus` in your temperature sensor section to the same value as the `i2c_bus` in the matching `[nfc_gate laneN]` section (or the base `[nfc_gate]` if all lanes share one bus). Using a different bus, or using the Klipper software-emulated I2C bus (`i2c_software_*`), will cause collisions or read failures on both devices. Hardware I2C is required.
 
 See [Configuration Reference](configuration.md) for all available settings.
 

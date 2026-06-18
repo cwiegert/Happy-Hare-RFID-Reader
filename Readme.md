@@ -1,6 +1,6 @@
 # EMU NFC Gate Reader
 
-NFC spool identification for Happy Hare. Use one PN532 reader on each EMU lane, one shared reader inside the MMU body, or both.
+NFC spool identification for Happy Hare. Use one NFC reader on each EMU lane, one shared reader inside the MMU body, or both. PN532 remains the default reader; PN7160 is also supported with `reader_type: pn7160`.
 
 This is a system-level Klipper integration, not a plug-and-play appliance. It touches Klipper extras, Happy Hare macros, lane MCU firmware, I2C wiring, Spoolman, and optional LED effects. If you are not comfortable recovering from a Klipper config error, reflashing lane MCUs, and reading logs, expect a learning curve.
 
@@ -8,8 +8,8 @@ This is a system-level Klipper integration, not a plug-and-play appliance. It to
 
 | Mode | Hardware | Best For | Flow |
 |---|---|---|---|
-| Per-lane readers | One PN532 per EMU gate/lane MCU | Automatic spool identification during lane preload | Load spool -> HH parks filament -> NFC scan-jog rotates spool -> Spoolman lookup -> HH gate map |
-| Shared reader | One PN532 mounted inside the MMU body | Fewer readers, manual tap before loading | Tap tag -> spool staged -> load any gate -> HH pregate preload -> staged spool assigned |
+| Per-lane readers | One NFC reader per EMU gate/lane MCU (default PN532, optional PN7160) | Automatic spool identification during lane preload | Load spool -> HH parks filament -> NFC scan-jog rotates spool -> Spoolman lookup -> HH gate map |
+| Shared reader | One NFC reader mounted inside the MMU body (default PN532, optional PN7160) | Fewer readers, manual tap before loading | Tap tag -> spool staged -> load any gate -> HH pregate preload -> staged spool assigned |
 | Hybrid | Per-lane readers plus shared reader | Normal lanes with per-lane readers, plus shared/bypass workflows | Lane readers handle scan-jog; shared reader stages tapped spools for preload |
 
 The shared reader can stage only a real Spoolman spool ID. UID lookup, embedded spool IDs, and auto-created Spoolman records work. Metadata-only tags without a Spoolman spool ID cannot be staged for Happy Hare preload.
@@ -17,18 +17,25 @@ The shared reader can stage only a real Spoolman spool ID. UID lookup, embedded 
 ## Requirements
 
 - Voron/EMU setup running the [igiannakas IG-dev branch of Happy Hare](https://github.com/igiannakas/Happy-Hare/tree/IG-dev), which provides `variable_user_post_preload_extension`
-- One Klipper MCU per filament lane for per-lane reader installs, or one MCU hosting the shared PN532
-- PN532 NFC reader modules configured for I2C mode
+- One Klipper MCU per filament lane for per-lane reader installs, or one MCU hosting the shared NFC reader
+- Supported NFC reader hardware configured for I2C
 - Hardware I2C bus on the MCU; software I2C is not supported
 - Spoolman reachable from the Pi
 - NFC tags on spools: NTAG213/215/216, MIFARE Classic, or supported rich-tag formats
 - Lane MCU firmware rebuilt from the same Klipper checkout as the host
 
+Supported readers:
+
+| Reader | `reader_type` | I2C address | Notes |
+|---|---|---|---|
+| PN532 | `pn532` | `36` (`0x24`) | Default reader and documented PN532 wiring path |
+| PN7160 | `pn7160` | `40-43` (`0x28-0x2B`) | Supports NTAG/Type2, ISO15693/Type5, and authenticated Bambu/MIFARE reads |
+
 ## Documentation
 
 | Guide | Purpose |
 |---|---|
-| [Wiring](docs/i2c-pn532/wiring.md) | PN532 I2C mode, pin connections, pull-ups, bus notes |
+| [PN532 Wiring](docs/i2c-pn532/wiring.md) | PN532 I2C mode, pin connections, pull-ups, bus notes |
 | [Install & Uninstall](docs/shared/install-uninstall.md) | Installer behavior, includes, updates, removal |
 | [First-Time Setup](docs/i2c-pn532/setup.md) | Configure Spoolman, lane hardware, first verification |
 | [Shared Reader](docs/shared/shared-reader.md) | Shared-reader workflow, hook wiring, commands, LED behavior |
@@ -42,7 +49,7 @@ The shared reader can stage only a real Spoolman spool ID. UID lookup, embedded 
 
 ## Quick Install
 
-Before installing, rebuild and flash Klipper firmware on every MCU that will host a PN532. Host and MCU firmware version mismatches produce I2C failures that look like wiring or PN532 problems.
+Before installing, rebuild and flash Klipper firmware on every MCU that will host an NFC reader. Host and MCU firmware version mismatches produce I2C failures that look like wiring or reader problems.
 
 ```bash
 cd ~
@@ -115,7 +122,7 @@ NFC_DOCTOR                                   ; check common config/setup problem
 NFC_STATUS                                   ; show every configured lane/shared reader
 NFC_REGISTER UID=04A1B2C3D4 SPOOL_ID=123     ; link a known UID to an existing Spoolman spool
 NFC_LED_TEST ALL=1 CYCLES=2                  ; chase-test lane tag-read LEDs on all enabled lanes
-NFC GATE=0 INIT=1                            ; re-run PN532 init on one lane reader
+NFC GATE=0 INIT=1                            ; re-run reader init on one lane reader
 NFC GATE=0 SCAN=1                            ; raw UID scan, no Spoolman/HH dispatch
 NFC GATE=0 LED_TEST=1 CYCLES=2               ; test lane tag-read LED on one gate
 NFC GATE=0 POLL=1                            ; read, resolve, and dispatch once
@@ -134,7 +141,7 @@ These are the defaults shipped in `config/nfc_reader.cfg`:
 
 | Setting | Default | Notes |
 |---|---:|---|
-| `startup_polling` | `1` | Start polling after PN532 init succeeds |
+| `startup_polling` | `1` | Start polling after reader init succeeds |
 | `poll_interval` | `10` | Per-lane background poll interval in seconds |
 | `absent_threshold` | `3` | Missed polls before a removal event |
 | `scan_enabled` | `False` | Disables automatic gate-status scan-jog trigger; manual/hook `JOG_SCAN` still works |
@@ -149,19 +156,19 @@ Set `enabled: False` on a `[nfc_gate laneN]` or `[nfc_gate shared]` section to k
 
 ## MCU Firmware Warning
 
-The PN532 driver talks to firmware running on the MCU, not only to Klipper on the Pi. After updating Klipper, rebuild and flash every lane/shared MCU that hosts a PN532 before debugging NFC.
+The NFC reader driver talks to firmware running on the MCU, not only to Klipper on the Pi. After updating Klipper, rebuild and flash every lane/shared MCU that hosts an NFC reader before debugging NFC.
 
 Recommended update order:
 
 ```text
 1. Update the Klipper host checkout.
 2. Build MCU firmware from that same checkout.
-3. Flash every MCU that hosts a PN532.
+3. Flash every MCU that hosts an NFC reader.
 4. Restart Klipper.
 5. Confirm all MCUs reconnect before testing NFC.
 ```
 
-When host and MCU firmware are out of sync, common symptoms include PN532 ACK failures, `i2c_read_response` timeouts, and other devices on the same I2C bus failing unexpectedly.
+When host and MCU firmware are out of sync, common symptoms include reader init failures, `i2c_read_response` timeouts, and other devices on the same I2C bus failing unexpectedly.
 
 ## License
 

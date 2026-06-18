@@ -49,10 +49,10 @@ These apply to both per-lane readers and the shared reader.
 | Case | Console message | `nfc_reader.log` |
 |---|---|---|
 | Reader object connected | `[CONNECTED] NFC Gate [<name>] connected` | `INFO     nfc_gate: [<name>] connected` |
-| Manual init OK | `[OK] NFC[<name>]: reader OK` | `INFO     nfc_gate: [<name>] PN532 reader OK` |
-| Manual init not responding | `[WARN] NFC[<name>]: reader not responding` | `ERROR    nfc_gate: [<name>] PN532 did not respond — check wiring and I2C address (default 0x24)` |
+| Manual init OK | `[OK] NFC[<name>]: reader OK` | `INFO     nfc_gate: [<name>] NFC Reader (<reader_type>) OK` |
+| Manual init not responding | `[WARN] NFC[<name>]: reader not responding` | `ERROR    nfc_gate: [<name>] NFC Reader (<reader_type>) did not respond - check wiring and I2C address` |
 | Manual init exception | `[WARN] NFC[<name>]: init failed: <error>` | `ERROR    nfc_gate: [<name>] init error: <error>` |
-| Delayed startup init failed | `[WARN] NFC[<name>]: not ready — check wiring. Run <init command> after fixing.` | `ERROR    nfc_gate: [<name>] PN532 did not respond — ...` or `ERROR    nfc_gate: [<name>] init error: <error>` plus `WARNING  nfc_gate: [<name>] not ready — check wiring. Run <init command> after fixing.` |
+| Delayed startup init failed | `[WARN] NFC[<name>]: not ready — check wiring. Run <init command> after fixing.` | `ERROR    nfc_gate: [<name>] NFC Reader (<reader_type>) did not respond ...` or `ERROR    nfc_gate: [<name>] init error: <error>` plus `WARNING  nfc_gate: [<name>] not ready — check wiring. Run <init command> after fixing.` |
 | Manual raw scan, no tag | `NFC[<name>]: no tag detected` | `INFO     nfc_gate: [<name>] no tag detected` |
 | Manual raw scan, tag found | `NFC[<name>]: UID=<uid> Tg=<target> SENS_RES=0x<value> SAK=0x<value> UIDLen=<n>` | `INFO     nfc_gate: [<name>] UID=<uid> Tg=<target> SENS_RES=0x<value> SAK=0x<value> UIDLen=<n>` |
 | Manual polling start | `NFC[<name>]: polling started` | Per-lane: `INFO     nfc_gate: [<name>] gate <n> READ=1 — polling started`. Shared: see shared table. |
@@ -72,8 +72,8 @@ commands and scan-jog.
 
 | Case | Console message | `nfc_reader.log` |
 |---|---|---|
-| Startup ready with HH seed | `[OK] NFC[laneN]: ready.  HH seed: spool_id=<spool>  Startup polling is enabled; first poll in <delay>s.` | `INFO     nfc_gate: [laneN] PN532 reader OK` then `INFO     nfc_gate: [laneN] ready.  HH seed: spool_id=<spool> ...` at `debug: 3` |
-| Startup ready, HH reports empty | `[OK] NFC[laneN]: ready.  HH reports gate empty  Run NFC GATE=<#> READ=1 to start polling.` | `INFO     nfc_gate: [laneN] PN532 reader OK` then `INFO     nfc_gate: [laneN] ready.  HH reports gate empty ...` at `debug: 3` |
+| Startup ready with HH seed | `[OK] NFC[laneN]: ready.  HH seed: spool_id=<spool>  Startup polling is enabled; first poll in <delay>s.` | `INFO     nfc_gate: [laneN] NFC Reader (<reader_type>) OK` then `INFO     nfc_gate: [laneN] ready.  HH seed: spool_id=<spool> ...` at `debug: 3` |
+| Startup ready, HH reports empty | `[OK] NFC[laneN]: ready.  HH reports gate empty  Run NFC GATE=<#> READ=1 to start polling.` | `INFO     nfc_gate: [laneN] NFC Reader (<reader_type>) OK` then `INFO     nfc_gate: [laneN] ready.  HH reports gate empty ...` at `debug: 3` |
 | Manual polling while reader failed | `[WARN] NFC[laneN]: reader failed; run INIT=1 first` | `ERROR    nfc_gate: [laneN] gate <n> READ=1 refused — reader failed; run INIT=1 first` |
 | Clear spool cache | `NFC[laneN]: cleared cached spool_id for gate <n>; no NFC_Manager event was dispatched. Next tag read will resolve Spoolman again.` | `INFO     nfc_gate: [laneN] gate <n> — spool cache cleared (uid=<uid> old_spool=<spool>); next read will resolve Spoolman again` |
 | Apply with no cached spool | `NFC[laneN]: no cached spool_id to apply; run POLL=1 first` | Console command output only |
@@ -138,8 +138,8 @@ Shared reader messages are specific to `[nfc_gate shared]` and `NFC_SHARED`.
 
 | Case | Console message | `nfc_reader.log` |
 |---|---|---|
-| Startup ready with polling | `[OK] NFC[shared]: ready.  Startup polling is enabled; first poll in <delay>s.` | `INFO     nfc_gate: [shared] PN532 reader OK` and `INFO     nfc_gate: [shared] startup polling enabled; first poll in <delay>s` |
-| Startup ready, manual polling needed | `[OK] NFC[shared]: ready.  Run NFC_SHARED READ=1 to start polling.` | `INFO     nfc_gate: [shared] PN532 reader OK` |
+| Startup ready with polling | `[OK] NFC[shared]: ready.  Startup polling is enabled; first poll in <delay>s.` | `INFO     nfc_gate: [shared] NFC Reader (<reader_type>) OK` and `INFO     nfc_gate: [shared] startup polling enabled; first poll in <delay>s` |
+| Startup ready, manual polling needed | `[OK] NFC[shared]: ready.  Run NFC_SHARED READ=1 to start polling.` | `INFO     nfc_gate: [shared] NFC Reader (<reader_type>) OK` |
 | Startup polling resumed after manual init | `NFC[shared]: startup polling resumed` | `INFO     nfc_gate: [shared] startup polling enabled; first poll in <delay>s` |
 | `READ=1` while reader failed | `[WARN] NFC[shared]: reader failed; run INIT=1 first` | `ERROR    nfc_gate: [shared] shared READ=1 refused — reader failed; run INIT=1 first` |
 | `READ=1` while printing | `[WARN] NFC[shared]: shared polling not started while printing` | `WARNING  nfc_gate: [shared] shared READ=1 refused — printing` |

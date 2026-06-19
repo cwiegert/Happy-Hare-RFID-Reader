@@ -422,6 +422,19 @@ def _cbor_decode(data: bytes, idx: int = 0) -> tuple:
             return True, idx
         if additional == 22:
             return None, idx
+        if additional == 25:
+            sign = -1.0 if (count & 0x8000) else 1.0
+            exp = (count >> 10) & 0x1F
+            frac = count & 0x03FF
+            if exp == 0:
+                return sign * (frac / 1024.0) * (2 ** -14), idx
+            if exp == 0x1F:
+                return sign * (float("inf") if frac == 0 else float("nan")), idx
+            return sign * (1.0 + frac / 1024.0) * (2 ** (exp - 15)), idx
+        if additional == 26:
+            return struct.unpack(">f", count.to_bytes(4, "big"))[0], idx
+        if additional == 27:
+            return struct.unpack(">d", count.to_bytes(8, "big"))[0], idx
         raise ValueError(f"CBOR: unsupported simple/float additional={additional}")
 
     raise ValueError(f"CBOR: unsupported major={major}")
@@ -1207,6 +1220,306 @@ def _try_openspool(text: str, trace=None) -> Optional[dict]:
 
 _OPENPRINTTAG_MIME = "application/vnd.openprinttag"
 
+_OPT_META_MAIN_OFFSET = 0
+_OPT_META_MAIN_SIZE = 1
+_OPT_META_AUX_OFFSET = 2
+_OPT_META_AUX_SIZE = 3
+
+_OPT_MAIN_MATERIAL_CLASS = 8
+_OPT_MAIN_MATERIAL_TYPE = 9
+_OPT_MAIN_MATERIAL_NAME = 10
+_OPT_MAIN_BRAND_NAME = 11
+_OPT_MAIN_NOMINAL_FULL_WEIGHT = 16
+_OPT_MAIN_ACTUAL_FULL_WEIGHT = 17
+_OPT_MAIN_EMPTY_CONTAINER_WEIGHT = 18
+_OPT_MAIN_PRIMARY_COLOR = 19
+_OPT_MAIN_DENSITY = 29
+_OPT_MAIN_FILAMENT_DIAMETER = 30
+_OPT_MAIN_MIN_PRINT_TEMP = 34
+_OPT_MAIN_MAX_PRINT_TEMP = 35
+_OPT_MAIN_PREHEAT_TEMP = 36
+_OPT_MAIN_MIN_BED_TEMP = 37
+_OPT_MAIN_MAX_BED_TEMP = 38
+_OPT_MAIN_MATERIAL_ABBREVIATION = 52
+_OPT_MAIN_NOMINAL_FULL_LENGTH = 53
+_OPT_MAIN_ACTUAL_FULL_LENGTH = 54
+
+_OPT_AUX_CONSUMED_WEIGHT = 0
+_OPT_AUX_GP_RANGE_USER = 2
+_OPT_AUX_GP_SPOOLMAN_ID = 65400
+
+_OPENPRINTTAG_MATERIAL_TYPES = {
+    0: "PLA",
+    1: "PETG",
+    2: "TPU",
+    3: "ABS",
+    4: "ASA",
+    5: "PC",
+    6: "PCTG",
+    7: "PP",
+    8: "PA6",
+    9: "PA11",
+    10: "PA12",
+    11: "PA66",
+    12: "CPE",
+    13: "TPE",
+    14: "HIPS",
+    15: "PHA",
+    16: "PET",
+    17: "PEI",
+    18: "PBT",
+    19: "PVB",
+    20: "PVA",
+    21: "PEKK",
+    22: "PEEK",
+    23: "BVOH",
+    24: "TPC",
+    25: "PPS",
+    26: "PPSU",
+    27: "PVC",
+    28: "PEBA",
+    29: "PVDF",
+    30: "PPA",
+    31: "PCL",
+    32: "PES",
+    33: "PMMA",
+    34: "POM",
+    35: "PPE",
+    36: "PS",
+    37: "PSU",
+    38: "TPI",
+    39: "SBS",
+    40: "OBC",
+    41: "EVA",
+}
+
+
+def _cbor_load_first(data: bytes) -> tuple:
+    """Decode one CBOR item and return (value, next_idx).
+
+    Prefer cbor2 when available, but keep the built-in decoder as the normal
+    Klipper-friendly path so OpenPrintTag does not require extra packages.
+    """
+    try:
+        import io
+        import cbor2  # type: ignore
+        stream = io.BytesIO(data)
+        decoder = cbor2.CBORDecoder(stream)
+        value = decoder.decode()
+        return value, stream.tell()
+    except ImportError:
+        return _cbor_decode(data, 0)
+
+
+def _as_int(value) -> Optional[int]:
+    try:
+        if value is None or isinstance(value, bool):
+            return None
+        return int(value)
+    except Exception:
+        return None
+
+
+def _as_float(value) -> Optional[float]:
+    try:
+        if value is None or isinstance(value, bool):
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _openprinttag_color_hex(value) -> Optional[str]:
+    if isinstance(value, (bytes, bytearray)) and len(value) >= 3:
+        return "%02X%02X%02X" % (value[0], value[1], value[2])
+    if isinstance(value, (list, tuple)) and len(value) >= 3:
+        try:
+            return "%02X%02X%02X" % (int(value[0]), int(value[1]), int(value[2]))
+        except Exception:
+            return None
+    if isinstance(value, int):
+        if value <= 0xFFFFFF:
+            return "%06X" % value
+        return "%06X" % (value & 0xFFFFFF)
+    if isinstance(value, str):
+        ch = value.strip().lstrip("#")
+        if re.fullmatch(r"[0-9A-Fa-f]{6}", ch):
+            return ch.upper()
+    return None
+
+
+def _openprinttag_legacy_from_map(data: dict) -> Optional[dict]:
+    # Compatibility for early/simple payloads that used the OpenPrintTag MIME
+    # type but stored the filament fields directly in one CBOR map.
+    def _get(*keys):
+        for k in keys:
+            v = data.get(k)
+            if v is not None:
+                return v
+        return None
+
+    material = str(_get("material", 2) or "").strip()
+    if not material:
+        return None
+
+    info: dict = {"material": material, "tag_format": "openprinttag"}
+    brand = str(_get("brand", 1) or "").strip()
+    if brand:
+        info["brand"] = brand
+
+    color = _openprinttag_color_hex(_get("color", 3))
+    if color:
+        info["color_hex"] = color
+
+    diam = _as_float(_get("diameter", 4))
+    if diam is not None:
+        info["diameter_mm"] = diam
+
+    weight = _as_float(_get("weight", 5))
+    if weight is not None:
+        info["weight_g"] = int(weight)
+
+    min_t = _as_int(_get("min_temp", 6))
+    if min_t is not None:
+        info["min_temp"] = min_t
+
+    max_t = _as_int(_get("max_temp", 7))
+    if max_t is not None:
+        info["max_temp"] = max_t
+
+    return info
+
+
+def _openprinttag_region_from_payload(payload: bytes, offset, size=None) -> Optional[dict]:
+    offset_i = _as_int(offset)
+    if offset_i is None or offset_i < 0 or offset_i >= len(payload):
+        return None
+
+    if size is None:
+        end = len(payload)
+    else:
+        size_i = _as_int(size)
+        if size_i is None or size_i <= 0:
+            end = len(payload)
+        else:
+            end = min(len(payload), offset_i + size_i)
+    if end <= offset_i:
+        return None
+
+    data, _ = _cbor_load_first(payload[offset_i:end])
+    return data if isinstance(data, dict) else None
+
+
+def _try_openprinttag_standard(meta: dict, meta_end: int,
+                               payload: bytes) -> Optional[dict]:
+    main_offset = meta.get(_OPT_META_MAIN_OFFSET, meta.get("main_offset"))
+    main_size = meta.get(_OPT_META_MAIN_SIZE, meta.get("main_size"))
+    aux_offset = meta.get(_OPT_META_AUX_OFFSET, meta.get("aux_offset"))
+    aux_size = meta.get(_OPT_META_AUX_SIZE, meta.get("aux_size"))
+
+    # Older writers may omit the explicit main offset; the official library
+    # then treats the main region as starting immediately after the meta item.
+    if main_offset is None:
+        main_offset = meta_end
+    if main_size is None and aux_offset is not None:
+        main_offset_i = _as_int(main_offset)
+        aux_offset_i = _as_int(aux_offset)
+        if main_offset_i is not None and aux_offset_i is not None:
+            main_size = aux_offset_i - main_offset_i
+
+    main = _openprinttag_region_from_payload(payload, main_offset, main_size)
+    if not main:
+        return None
+
+    aux = None
+    if aux_offset is not None and (_as_int(aux_offset) or 0) > 0:
+        aux = _openprinttag_region_from_payload(payload, aux_offset, aux_size)
+
+    material_name = str(main.get(_OPT_MAIN_MATERIAL_NAME) or "").strip()
+    material_type = _as_int(main.get(_OPT_MAIN_MATERIAL_TYPE))
+    material_abbr = str(main.get(_OPT_MAIN_MATERIAL_ABBREVIATION) or "").strip()
+
+    material = material_abbr or material_name
+    if material_type is not None:
+        material = _OPENPRINTTAG_MATERIAL_TYPES.get(material_type, material)
+    if not material:
+        return None
+
+    info: dict = {"material": material, "tag_format": "openprinttag"}
+    if material_name and material_name != material:
+        info["material_detail"] = material_name
+    if material_type is not None:
+        info["material_type_id"] = material_type
+
+    brand = str(main.get(_OPT_MAIN_BRAND_NAME) or "").strip()
+    if brand:
+        info["brand"] = brand
+
+    material_class = _as_int(main.get(_OPT_MAIN_MATERIAL_CLASS))
+    if material_class is not None:
+        info["material_class"] = "sla" if material_class == 1 else "fff"
+
+    color = _openprinttag_color_hex(main.get(_OPT_MAIN_PRIMARY_COLOR))
+    if color:
+        info["color_hex"] = color
+
+    diameter = _as_float(main.get(_OPT_MAIN_FILAMENT_DIAMETER))
+    if diameter is not None and diameter > 0:
+        info["diameter_mm"] = diameter
+    else:
+        info["diameter_mm"] = 1.75
+
+    weight = _as_float(main.get(_OPT_MAIN_ACTUAL_FULL_WEIGHT))
+    if weight is None:
+        weight = _as_float(main.get(_OPT_MAIN_NOMINAL_FULL_WEIGHT))
+    if weight is not None:
+        info["weight_g"] = int(round(weight))
+
+    spool_weight = _as_float(main.get(_OPT_MAIN_EMPTY_CONTAINER_WEIGHT))
+    if spool_weight is not None:
+        info["spool_weight_g"] = int(round(spool_weight))
+
+    density = _as_float(main.get(_OPT_MAIN_DENSITY))
+    if density is not None and density > 0:
+        info["density"] = density
+
+    length = _as_float(main.get(_OPT_MAIN_ACTUAL_FULL_LENGTH))
+    if length is None:
+        length = _as_float(main.get(_OPT_MAIN_NOMINAL_FULL_LENGTH))
+    if length is not None and length > 0:
+        info["filament_length_mm"] = length
+
+    min_t = _as_int(main.get(_OPT_MAIN_MIN_PRINT_TEMP))
+    if min_t is not None:
+        info["min_temp"] = min_t
+    max_t = _as_int(main.get(_OPT_MAIN_MAX_PRINT_TEMP))
+    if max_t is not None:
+        info["max_temp"] = max_t
+    preheat_t = _as_int(main.get(_OPT_MAIN_PREHEAT_TEMP))
+    if preheat_t is not None:
+        info["preheat_temp"] = preheat_t
+    min_bed = _as_int(main.get(_OPT_MAIN_MIN_BED_TEMP))
+    if min_bed is not None:
+        info["min_bed_temp"] = min_bed
+        info.setdefault("bed_temp", min_bed)
+    max_bed = _as_int(main.get(_OPT_MAIN_MAX_BED_TEMP))
+    if max_bed is not None:
+        info["max_bed_temp"] = max_bed
+        info.setdefault("bed_temp", max_bed)
+
+    if aux:
+        consumed = _as_float(aux.get(_OPT_AUX_CONSUMED_WEIGHT))
+        if consumed is not None:
+            info["consumed_weight_g"] = int(round(consumed))
+        spoolman_id = _as_int(aux.get(_OPT_AUX_GP_SPOOLMAN_ID))
+        if spoolman_id is not None:
+            info["spoolman_id"] = spoolman_id
+        gp_user = aux.get(_OPT_AUX_GP_RANGE_USER)
+        if gp_user is not None:
+            info["openprinttag_gp_range_user"] = str(gp_user)
+
+    return info
+
 
 def _try_openprinttag(mime_type: str, payload: bytes) -> Optional[dict]:
     """Parse an OpenPrintTag CBOR NDEF payload."""
@@ -1216,67 +1529,20 @@ def _try_openprinttag(mime_type: str, payload: bytes) -> Optional[dict]:
         return None
 
     try:
-        try:
-            import cbor2  # type: ignore
-            data = cbor2.loads(payload)
-        except ImportError:
-            data, _ = _cbor_decode(payload, 0)
+        data, next_idx = _cbor_load_first(payload)
 
         if not isinstance(data, dict):
             return None
 
-        # Keys may be either integer indices or string names depending on spec version
-        def _get(*keys):
-            for k in keys:
-                v = data.get(k)
-                if v is not None:
-                    return v
-            return None
+        if (
+            _OPT_META_MAIN_OFFSET in data or "main_offset" in data
+            or _OPT_META_MAIN_SIZE in data or "main_size" in data
+        ):
+            result = _try_openprinttag_standard(data, next_idx, payload)
+            if result is not None:
+                return result
 
-        material = str(_get("material", 2) or "").strip()
-        if not material:
-            return None
-
-        info: dict = {"material": material, "tag_format": "openprinttag"}
-        brand = str(_get("brand", 1) or "").strip()
-        if brand:
-            info["brand"] = brand
-
-        color = _get("color", 3)
-        if isinstance(color, (bytes, bytearray)) and len(color) >= 3:
-            info["color_hex"] = f"{color[0]:02X}{color[1]:02X}{color[2]:02X}"
-        elif isinstance(color, int):
-            info["color_hex"] = f"{color:06X}"
-
-        diam = _get("diameter", 4)
-        if diam is not None:
-            try:
-                info["diameter_mm"] = float(diam)
-            except Exception:
-                pass
-
-        weight = _get("weight", 5)
-        if weight is not None:
-            try:
-                info["weight_g"] = int(float(weight))
-            except Exception:
-                pass
-
-        min_t = _get("min_temp", 6)
-        if min_t is not None:
-            try:
-                info["min_temp"] = int(min_t)
-            except Exception:
-                pass
-
-        max_t = _get("max_temp", 7)
-        if max_t is not None:
-            try:
-                info["max_temp"] = int(max_t)
-            except Exception:
-                pass
-
-        return info
+        return _openprinttag_legacy_from_map(data)
 
     except Exception as exc:
         _log.debug("openprinttag cbor parse error: %s", exc)

@@ -3,7 +3,7 @@
 [← Install](../shared/install-uninstall.md) | [Spoolman Setup →](../shared/spoolman-integration.md)
 
 This guide assumes you have:
-- [Wired the PN532](wiring.md) readers and set them to I2C mode
+- [Wired the NFC reader](wiring.md)
 - [Installed the software](../shared/install-uninstall.md)
 - Rebuilt and flashed Klipper firmware on every lane MCU
 
@@ -66,13 +66,26 @@ i2c_mcu:    mmu1
 | `mmu_gate` | Yes | Happy Hare gate number (0-based integer) |
 | `i2c_mcu` | Yes | Klipper MCU name — must match an `[mcu laneN]` in your config |
 | `enabled` | No | Defaults to `True`. Set `False` to keep a future lane template without creating hardware. |
+| `reader_type` | Inherited unless overridden | `pn532` by default. Set `pn7160` for PN7160 hardware. |
+| `i2c_address` | Inherited unless overridden | PN532 uses `36`; PN7160 must use `40-43`. |
 | `i2c_bus` | Inherited unless overridden | I2C bus name on that MCU — use `i2c3_PB3_PB4` for PB3/PB4 on EBB42 or set it once in `[nfc_gate]` |
 
 > [!NOTE]
 > `i2c_mcu` must exactly match the MCU name Klipper uses. These names come from Happy Hare's `mmu_hardware.cfg`, typically `lane0`, `lane1`, etc. A mismatch causes a Klipper startup error.
 
 > [!IMPORTANT]
-> **Temperature sensor I2C bus must match.** If your lane MCU has a thermistor or temperature sensor on I2C (e.g. an SHT3x), configure it on the **same hardware I2C bus** as the PN532 — the same `i2c_bus` value used in `[nfc_gate laneN]` or the base `[nfc_gate]`. Klipper's software-emulated I2C (`i2c_software_*`) is not compatible with the PN532 driver; hardware I2C is required for both devices.
+> **Temperature sensor I2C bus must match.** If your lane MCU has a thermistor or temperature sensor on I2C (e.g. an SHT3x), configure it on the **same I2C bus** as the NFC reader. PN532 should use hardware I2C. PN7160 supports software I2C, but hardware I2C is recommended because software I2C increases MCU load.
+
+PN7160 lane example:
+
+```ini
+[nfc_gate lane1]
+enabled:     True
+reader_type: pn7160
+i2c_address: 40
+mmu_gate:    1
+i2c_mcu:     mmu1
+```
 
 All polling, timing, and logging settings are inherited from the base `[nfc_gate]` in `nfc_reader.cfg`. Override per-lane only if you need different behavior on a specific lane:
 
@@ -143,7 +156,7 @@ If Happy Hare wasn't ready when the NFC init ran, the seed step is skipped. Run 
 NFC GATE=0 INIT=1
 ```
 
-This runs the PN532 `GetFirmwareVersion` and `SAMConfiguration` handshake. Expected output:
+This runs the configured NFC reader initialization. Expected output:
 ```
 [OK] NFC[lane0]: reader OK
 ```
@@ -173,7 +186,7 @@ Expected result:
 NFC[lane0]: one poll complete; Gate 0:  spool 42  UID 04AABBCCDD ...
 ```
 
-This runs the full chain: PN532 read → Spoolman lookup → state update → Happy Hare macro. If this works, the pipeline is complete.
+This runs the full chain: NFC reader read → Spoolman lookup → state update → Happy Hare macro. If this works, the pipeline is complete.
 
 ---
 

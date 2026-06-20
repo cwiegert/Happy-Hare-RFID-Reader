@@ -12,7 +12,7 @@
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # Klipper entry point for [nfc_gate] and [nfc_gate laneN] config sections.
-# Per-lane I2C/PN532 path — one PN532 per EBB42 lane board.
+# Per-lane/shared NFC Reader path.
 #
 # All implementation lives in the nfc_gates/ package.
 # This file exists only because Klipper maps config section names to filenames

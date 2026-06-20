@@ -1,6 +1,6 @@
 # Wiring the PN532
 
-[← README](../../Readme.md) | [Next: Install →](../shared/install-uninstall.md)
+[NFC Reader Wiring](wiring.md) | [Setup](setup.md)
 
 For per-lane EMU readers, each filament gate gets **one PN532 wired directly to
 that gate's EBB42**. There is no shared bus across the per-lane readers — each

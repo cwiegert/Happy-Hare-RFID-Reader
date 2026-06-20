@@ -22,10 +22,15 @@ For a shared-reader-only install, include `nfc_reader_shared.cfg` instead of
 
 This includes hardware keys. `i2c_address` and `i2c_bus` set in the base `[nfc_gate]` section are inherited by all lanes — you only need to specify them per lane if a particular reader uses different hardware.
 
+`reader_type` is inherited the same way as other hardware keys. The shipped
+default is `pn532`; set `reader_type: pn7160` in a lane or shared-reader section
+only when that physical reader is PN7160.
+
 Example:
 
 ```ini
 [nfc_gate]
+reader_type:      pn532
 i2c_address:      36
 i2c_bus:          i2c3_PB3_PB4
 scan_enabled:     False
@@ -46,6 +51,58 @@ scan_enabled:     True
 ---
 
 ## `nfc_reader.cfg` — Base Settings
+
+### Reader Hardware
+
+```ini
+[nfc_gate]
+reader_type: pn532
+i2c_address: 36
+i2c_bus:     i2c3_PB3_PB4
+i2c_speed:   100000
+```
+
+| Setting | Default | Description |
+|---|---|---|
+| `reader_type` | `pn532` | Reader driver to use. Supported values are `pn532` and `pn7160`. |
+| `i2c_address` | `36` for PN532 | I2C address. PN532 uses fixed decimal `36` (`0x24`). PN7160 must use decimal `40-43` (`0x28-0x2B`). |
+| `i2c_bus` | board-specific | I2C bus name on the selected MCU. PN532 should use hardware I2C. PN7160 supports software I2C, but hardware I2C is recommended because software I2C increases MCU load. |
+| `i2c_speed` | `100000` | I2C speed in Hz. Keep `100000` for PN7160 and for conservative PN532 bring-up. |
+| `i2c_mcu` | per section | Klipper MCU name that hosts the reader. Required in `[nfc_gate laneN]` and `[nfc_gate shared]`. |
+
+Reader settings inherit from the base `[nfc_gate]` section. A lane with no
+`reader_type` uses the base reader type. A lane with no `i2c_address` uses the
+base address when its reader type matches the base reader type; otherwise it
+uses that reader's default address.
+
+PN7160 lane example:
+
+```ini
+[nfc_gate lane1]
+enabled:     True
+reader_type: pn7160
+i2c_address: 40
+mmu_gate:    1
+i2c_mcu:     mmu1
+```
+
+PN7160 address rule: if multiple PN7160 readers share the same MCU/I2C bus,
+give each reader a unique `i2c_address`. If each lane has its own MCU or its
+own I2C bus, the same PN7160 address can be reused.
+
+PN7160 optional hardware pins:
+
+```ini
+# ven_pin: PA8
+# irq_pin: ^PC6
+```
+
+`ven_pin` allows a hardware reset / hard power-down. It is optional, but strongly
+recommended for PN7160. Without VEN, abnormal Klipper termination can leave the
+chip in a state that software cannot fully reset. `irq_pin` is also optional;
+when omitted, the PN7160 driver uses timing-based polling.
+
+---
 
 ### Spoolman
 
@@ -100,7 +157,7 @@ absent_threshold:   3
 
 | Setting | Default | Description |
 |---|---|---|
-| `startup_polling` | `1` | `-1` = manual start only. `1` = start polling automatically after PN532 init. `0` = explicitly disabled (useful as a lane override). |
+| `startup_polling` | `1` | `-1` = manual start only. `1` = start polling automatically after reader init. `0` = explicitly disabled (useful as a lane override). |
 | `startup_poll_delay` | `0.0` | Seconds to wait before the first automatic poll. The shipped hardware config staggers this by 0.5 seconds per lane. |
 | `poll_interval` | `10` | Seconds between polls while background polling is active. |
 | `absent_threshold` | `3` | Consecutive missed reads before `_NFC_SPOOL_REMOVED` fires. At 10s interval, default = ~30s before removal. |
@@ -171,7 +228,7 @@ With this setup NFC does not poll gate-status at all — Happy Hare calls NFC on
 
 ---
 
-### PN532 I2C Hardware
+### PN532 I2C Timing
 
 ```ini
 [nfc_gate]
@@ -195,7 +252,7 @@ These keys in the base `[nfc_gate]` section are inherited by every `[nfc_gate la
 | SLB (PB10/PB11) | `i2c2_PB10_PB11` |
 
 > [!NOTE]
-> The PN532 I2C address is hardwired to `0x24` (decimal `36`). The two pads/jumpers on the breakout board (SEL0/SEL1, sometimes labeled A0/A1) select the **communication protocol** (I2C, SPI, or HSU), not the address. For I2C: SEL0=1, SEL1=0. See the [wiring guide](../i2c-pn532/wiring.md) for the mode selection table.
+> The PN532 I2C address is hardwired to `0x24` (decimal `36`). The two pads/jumpers on the breakout board (SEL0/SEL1, sometimes labeled A0/A1) select the **communication protocol** (I2C, SPI, or HSU), not the address. For I2C: SEL0=1, SEL1=0. See the [PN532 wiring guide](../i2c-nfc/pn532-wiring.md) for the mode selection table.
 
 ---
 
@@ -282,7 +339,7 @@ i2c_mcu:   lane0
 
 | Key | Required | Description |
 |---|:---:|---|
-| `enabled` | — | `True` by default. Set `False` to leave a lane template in place without creating I2C hardware, registering `NFC GATE=<n>`, or running PN532 init. Disabled lanes still appear in `NFC_STATUS` and `NFC_DOCTOR`. |
+| `enabled` | — | `True` by default. Set `False` to leave a lane template in place without creating I2C hardware, registering `NFC GATE=<n>`, or running reader init. Disabled lanes still appear in `NFC_STATUS` and `NFC_DOCTOR`. |
 | `mmu_gate` | Yes | Happy Hare gate number (0-based integer). Gate 0 = first MMU gate. |
 | `i2c_mcu` | Yes | Klipper MCU name. Must exactly match an `[mcu laneN]` section in your config. |
 | `i2c_bus` | — | Override the base `[nfc_gate]` bus for this lane only. Omit when all readers share the same bus pin. |
@@ -367,13 +424,13 @@ Default: prints the unknown UID to the console with instructions to register it.
 
 ## Shared Reader
 
-The shared reader is an optional single PN532 mounted inside the MMU body — not tied to any EMU lane. Tap a tagged spool on it before loading; when Happy Hare starts the pregate preload NFC stages the spool ID automatically.
+The shared reader is an optional single NFC reader mounted inside the MMU body — not tied to any EMU lane. It defaults to PN532 hardware and can use PN7160 with `reader_type: pn7160`. Tap a tagged spool on it before loading; when Happy Hare starts the pregate preload NFC stages the spool ID automatically.
 
 **No per-lane readers are required.** A shared-only installation needs only the base `[nfc_gate]` section (for Spoolman config) and the `[nfc_gate shared]` section. No `[nfc_gate lane0]` or similar sections are needed.
 
 The shared reader lives in its own file — `nfc_reader_shared.cfg` — so it can be added to any install without editing the lane hardware config. For a **pure shared install**, include it instead of `nfc_reader_hw.cfg`. For a **hybrid install** (per-lane readers plus a shared reader), include both.
 
-Run `install.sh` to generate `nfc_reader_shared.cfg` with your hardware values, or copy the template from `config/nfc_reader_shared.cfg` in the repo and edit `i2c_mcu`, `i2c_bus`, and `i2c_address` manually.
+Run `install.sh` to generate `nfc_reader_shared.cfg` with your hardware values, or copy the template from `config/nfc_reader_shared.cfg` in the repo and edit `reader_type`, `i2c_mcu`, `i2c_bus`, and `i2c_address` manually.
 
 ### Config
 

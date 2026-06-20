@@ -1,6 +1,6 @@
 # Expert: Low-Level PN532 I2C Debugging
 
-[← Back to README](../../Readme.md) | [Troubleshooting](../i2c-pn532/troubleshooting.md)
+[← Back to README](../../Readme.md) | [Troubleshooting](../i2c-nfc/troubleshooting.md)
 
 ---
 

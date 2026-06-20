@@ -2,7 +2,7 @@
 
 [← Configuration](configuration.md) | [Commands](klipper-functions.md) | [Messages →](message_definition.md)
 
-The shared reader is an optional single PN532 mounted **inside the MMU body** — not tied to any EMU lane. You tap a tagged spool on it before loading; when Happy Hare starts the pregate preload NFC stages the spool ID automatically.
+The shared reader is an optional single NFC reader mounted **inside the MMU body** - not tied to any EMU lane. It defaults to PN532 hardware, and can also use PN7160 by setting `reader_type: pn7160` in `[nfc_gate shared]`. You tap a tagged spool on it before loading; when Happy Hare starts the pregate preload NFC stages the spool ID automatically.
 
 For the full console/log message reference, see [Message Definitions](message_definition.md).
 
@@ -115,7 +115,7 @@ In hybrid installs, per-lane readers and the shared reader can coexist. The
 shared reader stages a spool for the next Happy Hare pregate preload; per-lane
 readers can still run scan-jog for lanes that have dedicated hardware.
 
-Run `install.sh` to generate `nfc_reader_shared.cfg` automatically, or copy `config/nfc_reader_shared.cfg` from the repo and fill in `i2c_mcu`, `i2c_bus`, and `i2c_address`.
+Run `install.sh` to generate `nfc_reader_shared.cfg` automatically, or copy `config/nfc_reader_shared.cfg` from the repo and fill in `reader_type`, `i2c_mcu`, `i2c_bus`, and `i2c_address` as needed. If `reader_type` is omitted, the shared reader inherits the base `[nfc_gate]` default, which is `pn532` in the shipped config.
 
 The `[nfc_gate shared]` section in `nfc_reader_shared.cfg`:
 
@@ -129,11 +129,24 @@ shared:          true
 startup_polling: 1
 ```
 
+PN7160 shared-reader example:
+
+```ini
+[nfc_gate shared]
+enabled:         True
+reader_type:     pn7160
+i2c_address:     40
+i2c_mcu:         mmu
+shared:          true
+startup_polling: 1
+```
+
 Full config with all optional keys:
 
 ```ini
 [nfc_gate shared]
 enabled:                True
+reader_type:            pn532
 i2c_mcu:                mmu
 shared:                 true
 startup_polling:        1
@@ -156,6 +169,8 @@ force_spool_id:         true
 | Key | Default | Description |
 |---|---|---|
 | `enabled` | `True` | Set `False` to keep the shared-reader config installed without initializing the reader. |
+| `reader_type` | inherited from `[nfc_gate]` (`pn532` in the shipped config) | Reader driver to use. Supported values are `pn532` and `pn7160`. |
+| `i2c_address` | reader-specific default | I2C address for the shared reader. PN532 defaults to `36`; PN7160 must be one of `40-43` (`0x28-0x2B`). |
 | `shared` | `false` | Must be `true`. Enables shared dispatch mode. |
 | `startup_polling` | `1` in the shipped template | Set to `1` to start polling at Klipper boot. |
 | `scan_poll_interval` | inherited from `[nfc_gate]` | Seconds between shared-reader tag reads while polling. The shipped default is `0.25`. |
@@ -254,7 +269,7 @@ Advanced shared-reader commands:
 | `NFC_SHARED PRELOAD_CLEAR_ASSIGNED=1 SPOOL_ID=<id>` | Legacy/recovery command to clear shared pending state when HH already has this spool assigned. |
 | `NFC_SHARED POLL=1` | Force one full read/resolve cycle. Skips while printing. |
 | `NFC_SHARED SCAN=1` | Raw hardware scan — shows UID only, no Spoolman lookup. Skips while printing. |
-| `NFC_SHARED INIT=1` | Re-run PN532 initialisation. Resumes startup polling when enabled and safe. |
+| `NFC_SHARED INIT=1` | Re-run NFC reader initialisation. Resumes startup polling when enabled and safe. |
 | `NFC_SHARED CLEAR_CACHE=1` | Clear the tag UID cache without clearing the pending spool. |
 
 Full command reference: [Commands & Macros](klipper-functions.md#shared-reader).

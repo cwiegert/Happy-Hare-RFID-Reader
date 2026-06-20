@@ -21,6 +21,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added adaptive continuous timing so NFC subtracts the actual
   `MMU_TEST_MOVE WAIT=0` command-return time from the estimated move duration,
   avoiding an extra move-length wait when Happy Hare returns late.
+- Reduced repeated continuous-mode search LED calls by removing the top-of-loop
+  LED reapply while keeping the post-move reassertion.
+- Fixed scan-jog direct console messages so they respect `console_output` and
+  `console_log_level` instead of always calling `respond_info`.
 
 ---
 

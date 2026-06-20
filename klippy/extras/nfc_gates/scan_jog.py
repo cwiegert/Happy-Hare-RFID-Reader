@@ -542,9 +542,6 @@ def continuous_step_event(gate, eventtime):
         # behavior. Continuous mode changes only the primary forward search jog.
         return stopped_step_event(gate, eventtime)
 
-    if not getattr(gate, '_scan_hh_prep_pending', True):
-        _led_effect(gate, getattr(gate, '_scan_searching_effect', LED_SEARCHING))
-
     if is_printing(gate):
         logger.warning(
             "[%s]: continuous scan mode: print started — aborting",
@@ -1250,7 +1247,21 @@ def rewind_and_exit(gate):
 
 
 def console(gate, msg):
-    """Send a message directly to the Klipper console."""
+    """Send a scan-jog message to the Klipper console when enabled."""
+    if not getattr(gate, '_console_output', False):
+        return
+    level_name = str(getattr(gate, '_console_log_level', 'warning') or 'warning').lower()
+    level_order = {'debug': 10, 'info': 20, 'warning': 30, 'warn': 30, 'error': 40}
+    threshold = level_order.get(level_name, 30)
+    msg_text = str(msg)
+    if '[ERROR]' in msg_text:
+        msg_level = 40
+    elif '[WARN]' in msg_text:
+        msg_level = 30
+    else:
+        msg_level = 20
+    if msg_level < threshold:
+        return
     gcode = gate.printer.lookup_object('gcode', None)
     if gcode is None:
         return

@@ -18,6 +18,11 @@ Branch: `CW-Development`
   actually takes to return and subtracts that elapsed time from the estimated
   move duration before scheduling the next read. This avoids double-waiting on
   systems where Happy Hare returns after most or all of the move has completed.
+- Reduced repeated continuous-mode search LED calls by removing the top-of-loop
+  LED reapply while keeping the post-move reassertion that restores scan LED
+  ownership after Happy Hare motion updates.
+- Fixed scan-jog direct console messages so they respect `console_output` and
+  `console_log_level`.
 
 ## Behavior
 

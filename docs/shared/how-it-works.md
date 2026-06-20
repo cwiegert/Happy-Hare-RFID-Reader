@@ -117,26 +117,26 @@ jog:
 
 ```
 _scan_step_event  (continuous mode)
-  └─ previous WAIT=0 chunk still estimated in flight? → reschedule after remaining move time + gap
   └─ print started? → rewind and exit
   └─ _poll()
-       └─ tag found? → existing _finish_scan()
+       └─ tag found while chunk is moving? → wait for current chunk to finish
+       └─ tag found after chunk is done? → existing _finish_scan()
             └─ 0.1 second read-light hold
             └─ rewind
             └─ dispatch cached tag/spool event
+  └─ current chunk still estimated in flight? → poll again after scan_continuous_poll_interval
   └─ scan limit reached? → rewind and exit
-  └─ MMU_SELECT GATE=N + MMU_TEST_MOVE MOVE=50 SPEED=150 ACCEL=2000 WAIT=0
-  └─ reschedule after remaining estimated move time + scan_continuous_poll_interval
+  └─ queue direct Happy Hare MMU-toolhead gear move for the next 50mm chunk
+  └─ poll again after scan_continuous_poll_interval
 ```
 
 The shipped continuous defaults are 50 mm chunks at 150 mm/s and 2000 mm/s^2,
-with a 0.05 s post-move read gap. That profile spends most of the move at speed:
-about 0.408 s moving plus 0.05 s before the read/check, or roughly 109 mm/s
-effective scan advance when `MMU_TEST_MOVE WAIT=0` returns promptly. If Happy
-Hare blocks inside the move command, NFC subtracts that elapsed command time
-from the estimated move duration before applying the 0.05 s read gap. Decode
-retry moves for incomplete rich tag reads stay on the existing stopped/blocking
-retry path.
+with a 0.05 s in-flight read cadence. That profile spends most of the move at
+speed: about 0.408 s moving, or roughly 123 mm/s before NFC read time is
+included. Continuous mode bypasses the public `MMU_TEST_MOVE` G-code wrapper for
+the forward search path and queues the move through Happy Hare's MMU toolhead.
+Decode retry moves for incomplete rich tag reads stay on the existing
+stopped/blocking retry path.
 
 ### Class-level scan lock
 

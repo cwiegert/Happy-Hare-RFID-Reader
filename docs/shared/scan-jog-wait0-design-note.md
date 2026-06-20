@@ -1,7 +1,9 @@
-# Scan-Jog WAIT=0 Motion Mode Design Note
+# Scan-Jog Continuous Motion Mode Design Note
 
-This is a memory/design note for a future scan-jog mode that experiments with
-Happy Hare `MMU_TEST_MOVE WAIT=0`. It is not implemented in current `main`.
+This is a memory/design note for the opt-in continuous scan-jog mode on
+`CW-Development`. The current implementation queues forward search chunks
+through Happy Hare's MMU toolhead directly and keeps `MMU_TEST_MOVE WAIT=0` only
+as a compatibility fallback.
 
 ## Goal
 
@@ -12,11 +14,13 @@ Current scan-jog uses stopped-position reads:
 3. NFC reads at the stopped spool position.
 4. Repeat until tag found or max scan distance reached.
 
-The proposed mode keeps the Klipper/Happy Hare integration inside Klipper, but
-uses small non-blocking moves so NFC can poll between queued motion chunks:
+The continuous mode keeps the Klipper/Happy Hare integration inside Klipper, but
+uses small non-blocking-ish MMU toolhead moves so NFC can poll while each chunk
+is estimated to be in flight:
 
-1. Queue a small `MMU_TEST_MOVE ... WAIT=0`.
-2. Poll the reader while that short move is completing or just after it.
+1. Queue a small direct Happy Hare MMU-toolhead gear move.
+2. Poll the reader every `scan_continuous_poll_interval` while that short move
+   is estimated to be completing.
 3. If a tag is found, stop queuing more moves.
 4. Let the current small move finish, then rewind/park through the existing
    scan-jog finish path.
@@ -35,8 +39,7 @@ scan_motion_mode: stopped
 # Small non-blocking chunks used only in continuous mode.
 scan_continuous_step_mm: 50.0
 
-# Delay after the remaining estimated move time before queueing the next move.
-# During this gap, poll the reader once for a tag.
+# NFC read cadence while the current continuous chunk is estimated in flight.
 scan_continuous_poll_interval: 0.05
 
 # Explicit continuous scan move settings.
@@ -46,9 +49,10 @@ scan_continuous_accel: 2000.0
 
 Keep `stopped` as the default until the continuous model is proven reliable.
 
-`MMU_TEST_MOVE` defaults to the `gear` motor in Happy Hare, so continuous mode
-does not need to pass `MOTOR=gear` unless we want the generated command to be
-extra explicit. The important behavior change is `WAIT=0`.
+The direct path explicitly selects the Happy Hare gate, sets the MMU toolhead to
+`GEAR_ONLY`, advances the gear rail position, and flushes step generation. If
+that direct path is unavailable on an installed Happy Hare version, NFC falls
+back to `MMU_TEST_MOVE WAIT=0`.
 
 ## Motion Model
 
@@ -57,7 +61,7 @@ Initial continuous values:
 - Move length: `50.0` mm
 - Move speed: `150.0` mm/s
 - Move accel: `2000.0` mm/s^2
-- Inter-move delay / tag-check window: `0.05` s
+- In-flight NFC poll cadence: `0.05` s
 
 For a 50 mm move at 150 mm/s with 2000 mm/s^2 acceleration:
 
@@ -68,15 +72,12 @@ For a 50 mm move at 150 mm/s with 2000 mm/s^2 acceleration:
 - Cruise time: `38.75 / 150 = 0.258` s
 - Total motion time per 50 mm chunk: about `0.408` s
 - Average speed during the moving part: about `122` mm/s
-- Average scan advance including the 0.05 s gap: about `109` mm/s
+- Average scan advance before NFC read time is included: about `122` mm/s
 
-So the spool advances in 50 mm non-blocking chunks, with a short stationary-ish
-gap between chunks. NFC measures how long `MMU_TEST_MOVE WAIT=0` takes to return
-and subtracts that elapsed command time from the estimated motion duration. If
-Happy Hare returns after most or all of the move has completed, NFC only applies
-the configured check gap instead of double-waiting for another full chunk. The
-scan checks for a tag during that 0.05 s gap, then either queues the next chunk
-or stops the jog flow and lets the existing tag handling finish the scan.
+So the spool advances in 50 mm chunks and NFC polls during the estimated motion
+window. When the estimated chunk completes with no tag, NFC queues the next
+chunk. If a tag is found during motion, NFC waits for the current chunk to finish
+before running the existing tag handling and rewind path.
 
 The existing `finish()` path intentionally pauses for about 0.1 second after a
 tag is found so the `scan_tag_read_effect` / read-light effect is visible before
@@ -215,13 +216,13 @@ If Happy Hare ignores `QUIET=1` on `MMU_TEST_MOVE`, omit it.
 
 ## Safety Notes
 
-- Do not queue another `WAIT=0` move until the estimated completion time for
+- Do not queue another continuous move until the estimated completion time for
   the prior small move has passed.
 - Use the existing tag read actions and existing scan completion logic after a
   tag is found. Continuous mode only changes how jog moves are queued.
 - Preserve the existing 0.1 s read-light hold before rewind.
-- With 50 mm chunks, worst-case tag overshoot is roughly one chunk plus the
-  0.05 s check gap and scheduler latency.
+- With 50 mm chunks, worst-case tag overshoot is roughly one chunk plus NFC
+  polling and scheduler latency.
 - Do not attempt true emergency mid-move stop in the first implementation.
 - Let the current small move finish before `_finish_scan()` or rewind.
 - Preserve the existing stopped-position decode retry path initially.
@@ -240,14 +241,11 @@ scan_continuous_accel: 2000.0
 Expected behavior:
 
 - Scan should move in 50 mm non-blocking gear chunks.
-- Each chunk should take about 0.408 s, then pause/check for about 0.05 s before
-  the next chunk is queued when `MMU_TEST_MOVE WAIT=0` returns promptly.
-- If Happy Hare returns late from `MMU_TEST_MOVE WAIT=0`, NFC should subtract the
-  command-return time from the estimated chunk duration before applying the
-  0.05 s check gap.
-- Effective scan advance should be roughly 109 mm/s with these defaults when the
-  command returns promptly.
-- If a tag is read during the check window, no more motion is queued and the
+- Each chunk should take about 0.408 s and NFC should poll roughly every 0.05 s
+  while that chunk is estimated to be moving.
+- Effective scan advance should be roughly 122 mm/s before NFC read time is
+  included.
+- If a tag is read during the in-flight polling window, no more motion is queued and the
   existing tag read actions, 0.1 s read-light hold, rewind, and completion logic
   run.
 - Rewind distance should still be based on `_scan_mm_total`, so the existing

@@ -202,11 +202,11 @@ scan_continuous_poll_interval: 0.05
 | `scan_decode_retry_mm` | `2.0` | Distance between nearby retry positions after a UID is found but the rich tag payload is marked incomplete. |
 | `scan_decode_retry_rounds` | `5` | Nearby retry rounds before accepting the current UID/metadata result. Each round probes both sides of the first UID hit. |
 | `scan_poll_interval` | `0.25` | Seconds between stopped-position NFC read attempts during scan-jog. The shared reader also uses this value as its active polling cadence. Since Happy Hare `MMU_TEST_MOVE` blocks by default, this is not a read-while-moving interval. |
-| `scan_motion_mode` | `stopped` | `stopped` keeps the existing blocking substep scan. `continuous` enables experimental `MMU_TEST_MOVE WAIT=0` forward search chunks. |
-| `scan_continuous_step_mm` | `50.0` | Continuous-mode forward search chunk size. The current move is allowed to finish before tag-found completion/rewind runs. |
-| `scan_continuous_speed` | `150.0` | Continuous-mode `MMU_TEST_MOVE SPEED` in mm/s. |
-| `scan_continuous_accel` | `2000.0` | Continuous-mode `MMU_TEST_MOVE ACCEL` in mm/s^2. At `50mm`, `150mm/s`, `2000mm/s^2`, each move takes about `0.408s`. |
-| `scan_continuous_poll_interval` | `0.05` | Delay after a continuous chunk's estimated completion before NFC reads once and either queues the next chunk or finishes the scan. NFC subtracts the time spent inside `MMU_TEST_MOVE WAIT=0` so late-returning Happy Hare moves do not double-wait. |
+| `scan_motion_mode` | `stopped` | `stopped` keeps the existing blocking substep scan. `continuous` queues the forward search chunk through Happy Hare's MMU toolhead and polls NFC while that chunk is estimated to be moving. |
+| `scan_continuous_step_mm` | `50.0` | Continuous-mode forward search chunk size. This is also the maximum intended overrun after a tag is detected because the current chunk is allowed to finish before rewind. |
+| `scan_continuous_speed` | `150.0` | Continuous-mode gear move speed in mm/s. |
+| `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration in mm/s^2. At `50mm`, `150mm/s`, `2000mm/s^2`, each move takes about `0.408s`. |
+| `scan_continuous_poll_interval` | `0.05` | NFC read cadence while a continuous chunk is estimated to be in flight. When the chunk completes with no tag, NFC queues the next chunk. |
 
 There is no user setting for left-neighbor interference. During scan-jog, gate
 `N` checks only the cached UID on gate `N - 1`; if it exactly matches the UID

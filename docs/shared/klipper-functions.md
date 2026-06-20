@@ -318,7 +318,7 @@ Scan-jog supports two motion modes:
 | Mode | Config | Behavior |
 |---|---|---|
 | Stopped | `scan_motion_mode: stopped` | Default. Divides each `scan_jog_mm` chunk into three blocking `MMU_TEST_MOVE` substeps, then reads at stopped spool positions. `scan_reads_per_position` and `scan_poll_interval` control the stopped-position reads. |
-| Continuous | `scan_motion_mode: continuous` | Experimental. Queues `MMU_TEST_MOVE WAIT=0` forward search chunks and reads once after each chunk's estimated completion plus `scan_continuous_poll_interval`. NFC subtracts the actual command-return time from the estimate so late-returning Happy Hare moves do not add an extra move-length wait. Tag-found actions, the 0.1 second read-light hold, rewind, and completion logic are unchanged. |
+| Continuous | `scan_motion_mode: continuous` | Experimental. Queues each forward search chunk through Happy Hare's MMU toolhead and polls NFC every `scan_continuous_poll_interval` while that chunk is estimated to be moving. If a tag is found during motion, the current chunk is allowed to finish before the existing 0.1 second read-light hold, rewind, and completion logic run. |
 
 Continuous scan example:
 
@@ -331,12 +331,10 @@ scan_continuous_accel: 2000.0
 scan_continuous_poll_interval: 0.05
 ```
 
-With those values, a 50 mm forward chunk takes about `0.408s`, then NFC waits
-`0.05s` to read/check before queueing the next chunk. If Happy Hare spends time
-inside `MMU_TEST_MOVE WAIT=0` before returning, NFC subtracts that elapsed time
-from the estimated motion window. Effective scan advance is roughly `109mm/s`
-when the command returns promptly. Happy Hare's `MMU_TEST_MOVE` defaults to the
-gear motor, so continuous mode does not need to pass `MOTOR=gear`.
+With those values, a 50 mm forward chunk takes about `0.408s`. NFC polls every
+`0.05s` during that estimated motion window, then queues the next chunk if no
+tag has been found. Effective scan advance is roughly `123mm/s` before NFC read
+time is included.
 
 Scan-jog always clears the Happy Hare gate cache and runs the pre-scan
 `MMU_SPOOLMAN SYNC=1` before moving filament. When launched from a Happy Hare

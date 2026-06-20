@@ -197,11 +197,11 @@ These are the defaults shipped in `config/nfc_reader.cfg`:
 | `scan_jog_max` | unset | Optional fixed scan-jog travel limit; leave unset to use the lane Bowden length |
 | `scan_reads_per_position` | `1` | Reads per stopped scan position |
 | `scan_poll_interval` | `0.25` | Read spacing during scan-jog and shared-reader polling cadence |
-| `scan_motion_mode` | `stopped` | `stopped` keeps blocking substep reads; `continuous` enables experimental `MMU_TEST_MOVE WAIT=0` search chunks |
-| `scan_continuous_step_mm` | `50.0` | Continuous-mode forward chunk size |
+| `scan_motion_mode` | `stopped` | `stopped` keeps blocking substep reads; `continuous` queues direct Happy Hare gear moves and polls while each chunk is moving |
+| `scan_continuous_step_mm` | `50.0` | Continuous-mode forward chunk size and maximum intended overrun after tag detection |
 | `scan_continuous_speed` | `150.0` | Continuous-mode gear move speed |
 | `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration |
-| `scan_continuous_poll_interval` | `0.05` | Post-chunk read/check gap before queueing the next continuous move; NFC subtracts the actual `MMU_TEST_MOVE WAIT=0` command-return time from the estimated move duration |
+| `scan_continuous_poll_interval` | `0.05` | In-flight NFC read cadence while a continuous chunk is estimated to be moving |
 | `debug` | `2` | Warnings and errors in `nfc_reader.log` |
 | `console_output` | `False` | Keep routine NFC logs out of the console |
 

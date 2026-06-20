@@ -10,14 +10,12 @@ Branch: `CW-Development`
   - `scan_continuous_speed: 150.0`
   - `scan_continuous_accel: 2000.0`
   - `scan_continuous_poll_interval: 0.05`
-- Added `MMU_TEST_MOVE WAIT=0` forward jog support for continuous scan.
-- Added trapezoid timing estimation for continuous scan chunks so the next
-  read/check is scheduled after the estimated move completion plus the
-  configured check gap.
-- Added adaptive continuous timing: NFC measures how long `MMU_TEST_MOVE WAIT=0`
-  actually takes to return and subtracts that elapsed time from the estimated
-  move duration before scheduling the next read. This avoids double-waiting on
-  systems where Happy Hare returns after most or all of the move has completed.
+- Added direct Happy Hare MMU-toolhead forward jog support for continuous scan.
+- Added trapezoid timing estimation for continuous scan chunks so NFC can poll
+  while a chunk is estimated to be moving.
+- Added in-flight NFC polling every `scan_continuous_poll_interval` during the
+  continuous search chunk. If a tag is found during motion, NFC lets the current
+  chunk finish before running the existing finish/rewind path.
 - Reduced repeated continuous-mode search LED calls by removing the top-of-loop
   LED reapply while keeping the post-move reassertion that restores scan LED
   ownership after Happy Hare motion updates.
@@ -28,8 +26,9 @@ Branch: `CW-Development`
 
 - Default scan behavior remains `stopped`.
 - Continuous scan only changes the forward search jog pacing.
-- Happy Hare's default `MMU_TEST_MOVE` motor remains `gear`; continuous scan
-  does not need to pass `MOTOR=gear`.
+- Continuous forward search moves bypass the public `MMU_TEST_MOVE` G-code
+  wrapper and use Happy Hare's MMU toolhead directly. If that direct path is not
+  available, NFC falls back to `MMU_TEST_MOVE WAIT=0`.
 - Tag-found handling still uses the existing scan completion path:
   - stop queueing forward moves
   - preserve the 0.1 second read-light hold
@@ -44,16 +43,16 @@ With the default continuous values:
 - 50 mm move
 - 150 mm/s speed
 - 2000 mm/s^2 acceleration
-- 0.05 s post-move tag-check gap
+- 0.05 s in-flight NFC poll cadence
 
 Estimated motion:
 
 - Accel time: about 0.075 s
 - Cruise distance: about 38.75 mm
 - Move duration: about 0.408 s
-- Effective scan advance including the 0.05 s check gap: about 109 mm/s
-- If Happy Hare blocks inside `MMU_TEST_MOVE WAIT=0`, NFC subtracts that command
-  time from the estimated move duration before applying the 0.05 s check gap.
+- Effective scan advance before NFC read time is included: about 122 mm/s
+- If a tag is found during the in-flight polling window, NFC lets the current
+  chunk finish before running the existing finish/rewind path.
 
 ## Files Changed
 

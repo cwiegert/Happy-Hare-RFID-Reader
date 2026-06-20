@@ -1008,6 +1008,8 @@ class NFCGate:
         self._scan_continuous_move_inflight = False
         self._scan_continuous_move_complete_time = 0.0
         self._scan_continuous_last_move_mm = 0.0
+        self._scan_continuous_tag_pending = False
+        self._scan_continuous_direct_available = True
         self._scan_decode_retry_attempts = 0
         self._scan_decode_retry_uid      = None
         self._scan_decode_retry_offset   = 0.0

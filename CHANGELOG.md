@@ -10,17 +10,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Scan-Jog Continuous Mode
 
 - Added opt-in continuous scan-jog mode via `scan_motion_mode: continuous`.
-  Continuous mode queues `MMU_TEST_MOVE WAIT=0` forward search chunks while
-  preserving existing tag-found actions, the 0.1 second read-light hold, rewind,
-  and completion logic.
+  Continuous mode queues forward search chunks through Happy Hare's MMU toolhead
+  and polls NFC while the chunk is estimated to be moving, while preserving
+  existing tag-found actions, the 0.1 second read-light hold, rewind, and
+  completion logic.
 - Added continuous scan settings:
   `scan_continuous_step_mm`, `scan_continuous_speed`,
   `scan_continuous_accel`, and `scan_continuous_poll_interval`.
 - Documented the tested continuous profile: 50 mm chunks at 150 mm/s with
-  2000 mm/s^2 acceleration and a 0.05 s post-move tag-check gap.
-- Added adaptive continuous timing so NFC subtracts the actual
-  `MMU_TEST_MOVE WAIT=0` command-return time from the estimated move duration,
-  avoiding an extra move-length wait when Happy Hare returns late.
+  2000 mm/s^2 acceleration and a 0.05 s in-flight tag-check cadence.
+- Added direct Happy Hare MMU-toolhead forward jog support for continuous scan,
+  with `MMU_TEST_MOVE WAIT=0` retained as a compatibility fallback.
 - Reduced repeated continuous-mode search LED calls by removing the top-of-loop
   LED reapply while keeping the post-move reassertion.
 - Fixed scan-jog direct console messages so they respect `console_output` and

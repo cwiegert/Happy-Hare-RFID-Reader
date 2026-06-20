@@ -197,8 +197,28 @@ These are the defaults shipped in `config/nfc_reader.cfg`:
 | `scan_jog_max` | unset | Optional fixed scan-jog travel limit; leave unset to use the lane Bowden length |
 | `scan_reads_per_position` | `1` | Reads per stopped scan position |
 | `scan_poll_interval` | `0.25` | Read spacing during scan-jog and shared-reader polling cadence |
+| `scan_motion_mode` | `stopped` | `stopped` keeps blocking substep reads; `continuous` enables experimental `MMU_TEST_MOVE WAIT=0` search chunks |
+| `scan_continuous_step_mm` | `50.0` | Continuous-mode forward chunk size |
+| `scan_continuous_speed` | `150.0` | Continuous-mode gear move speed |
+| `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration |
+| `scan_continuous_poll_interval` | `0.05` | Post-chunk read/check gap before queueing the next continuous move |
 | `debug` | `2` | Warnings and errors in `nfc_reader.log` |
 | `console_output` | `False` | Keep routine NFC logs out of the console |
+
+To try continuous scan-jog:
+
+```ini
+[nfc_gate]
+scan_motion_mode: continuous
+scan_continuous_step_mm: 50.0
+scan_continuous_speed: 150.0
+scan_continuous_accel: 2000.0
+scan_continuous_poll_interval: 0.05
+```
+
+Continuous mode preserves the existing tag-found flow: the read-light effect
+plays for about 1 second, then NFC rewinds and dispatches the cached tag/spool
+action just like stopped mode.
 
 Set `enabled: False` on a `[nfc_gate laneN]` or `[nfc_gate shared]` section to keep the config block in place without initializing hardware or registering commands for that reader.
 

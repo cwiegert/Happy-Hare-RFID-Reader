@@ -311,7 +311,30 @@ Starts the scan-and-jog sequence on demand, identical to the automatic pre-load 
 NFC GATE=0 JOG_SCAN=1
 ```
 
-**What it does:** Selects the gate, then jogs the filament forward in `scan_jog_mm` increments, reading the NFC tag after each step. When the tag is found it rewinds toward the parked position, leaves `scan_rewind_buffer_mm` for Happy Hare's final gate parking step, and runs `_MMU_STEP_UNLOAD_GATE`. If `scan_jog_max` is set, that distance is the scan limit; otherwise the lane's Happy Hare Bowden calibration length is used. When the limit is reached without a read, NFC follows the same rewind-and-park path and exits scan mode.
+**What it does:** Selects the gate, then jogs the filament forward until the NFC tag is read or the scan limit is reached. When the tag is found it rewinds toward the parked position, leaves `scan_rewind_buffer_mm` for Happy Hare's final gate parking step, and runs `_MMU_STEP_UNLOAD_GATE`. If `scan_jog_max` is set, that distance is the scan limit; otherwise the lane's Happy Hare Bowden calibration length is used. When the limit is reached without a read, NFC follows the same rewind-and-park path and exits scan mode.
+
+Scan-jog supports two motion modes:
+
+| Mode | Config | Behavior |
+|---|---|---|
+| Stopped | `scan_motion_mode: stopped` | Default. Divides each `scan_jog_mm` chunk into three blocking `MMU_TEST_MOVE` substeps, then reads at stopped spool positions. `scan_reads_per_position` and `scan_poll_interval` control the stopped-position reads. |
+| Continuous | `scan_motion_mode: continuous` | Experimental. Queues `MMU_TEST_MOVE WAIT=0` forward search chunks and reads once after each chunk's estimated completion plus `scan_continuous_poll_interval`. Tag-found actions, the 1 second read-light hold, rewind, and completion logic are unchanged. |
+
+Continuous scan example:
+
+```ini
+[nfc_gate]
+scan_motion_mode: continuous
+scan_continuous_step_mm: 50.0
+scan_continuous_speed: 150.0
+scan_continuous_accel: 2000.0
+scan_continuous_poll_interval: 0.05
+```
+
+With those values, a 50 mm forward chunk takes about `0.408s`, then NFC waits
+`0.05s` to read/check before queueing the next chunk. Effective scan advance is
+roughly `109mm/s`. Happy Hare's `MMU_TEST_MOVE` defaults to the gear motor, so
+continuous mode does not need to pass `MOTOR=gear`.
 
 Scan-jog always clears the Happy Hare gate cache and runs the pre-scan
 `MMU_SPOOLMAN SYNC=1` before moving filament. When launched from a Happy Hare
@@ -365,6 +388,16 @@ Expected success output:
 NFC[lane0]: scan-jog started for gate 0 (step=50mm  max=600mm  interval=2.0s)
 NFC[0] - moved 50.0mm  total 50.0mm / 600.0mm
 NFC[0]: rewinding 50.0mm
+```
+
+Continuous-mode success output uses the same start/rewind messages but includes
+continuous move messages while searching:
+
+```
+NFC[lane0]: scan-jog started for gate 0 (max=600mm  poll=0.25s)
+NFC[Lane0]: continuous move 50.0mm  scan position 50.0 / 600.0mm
+NFC[Lane0]: tag found
+NFC[Lane0]: rewinding 20.0mm (scan=50.0mm buffer=30.0mm)
 ```
 
 If a precondition fails:

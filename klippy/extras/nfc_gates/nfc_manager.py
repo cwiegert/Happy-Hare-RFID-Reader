@@ -128,6 +128,14 @@ def _gcmd_get_any(gcmd, names, default=None):
     return default
 
 
+def _get_scan_motion_mode(config, default='stopped'):
+    mode = str(config.get('scan_motion_mode', default) or '').strip().lower()
+    if mode not in ('stopped', 'continuous'):
+        raise config.error(
+            "scan_motion_mode must be 'stopped' or 'continuous'")
+    return mode
+
+
 def _normalise_command_uid(uid):
     uid_norm = SpoolmanClient._normalise_uid(str(uid or ''))
     if not uid_norm:
@@ -626,6 +634,19 @@ class NFCGateDefaults:
             minval=1, maxval=20)
         self.scan_poll_interval = config.getfloat('scan_poll_interval', 0.1,
                                                    minval=0.1, maxval=5.0)
+        self.scan_motion_mode = _get_scan_motion_mode(config, 'stopped')
+        self.scan_continuous_step_mm = config.getfloat(
+            'scan_continuous_step_mm', 50.0,
+            minval=1.0, maxval=500.0)
+        self.scan_continuous_speed = config.getfloat(
+            'scan_continuous_speed', 150.0,
+            minval=1.0, maxval=500.0)
+        self.scan_continuous_accel = config.getfloat(
+            'scan_continuous_accel', 2000.0,
+            minval=1.0, maxval=10000.0)
+        self.scan_continuous_poll_interval = config.getfloat(
+            'scan_continuous_poll_interval', 0.05,
+            minval=0.01, maxval=5.0)
         self.scan_enabled         = config.getboolean('scan_enabled', True)
         self.tag_parsing          = config.getboolean('tag_parsing', False)
         self.tag_max_pages        = config.getint('tag_max_pages', 16,
@@ -769,6 +790,11 @@ class NFCGate:
             self._failed = False
             self._polling = False
             self._scan_enabled = False
+            self._scan_motion_mode = d.scan_motion_mode if d else 'stopped'
+            self._scan_continuous_step_mm = d.scan_continuous_step_mm if d else 50.0
+            self._scan_continuous_speed = d.scan_continuous_speed if d else 150.0
+            self._scan_continuous_accel = d.scan_continuous_accel if d else 2000.0
+            self._scan_continuous_poll_interval = d.scan_continuous_poll_interval if d else 0.05
             self._tag_parsing = False
             self._bambu_reads = False
             self._spoolman_auto_create = False
@@ -910,6 +936,24 @@ class NFCGate:
         self._scan_poll_interval = config.getfloat('scan_poll_interval',
                                                     d.scan_poll_interval if d else 0.1,
                                                     minval=0.1, maxval=5.0)
+        self._scan_motion_mode = _get_scan_motion_mode(
+            config, d.scan_motion_mode if d else 'stopped')
+        self._scan_continuous_step_mm = config.getfloat(
+            'scan_continuous_step_mm',
+            d.scan_continuous_step_mm if d else 50.0,
+            minval=1.0, maxval=500.0)
+        self._scan_continuous_speed = config.getfloat(
+            'scan_continuous_speed',
+            d.scan_continuous_speed if d else 150.0,
+            minval=1.0, maxval=500.0)
+        self._scan_continuous_accel = config.getfloat(
+            'scan_continuous_accel',
+            d.scan_continuous_accel if d else 2000.0,
+            minval=1.0, maxval=10000.0)
+        self._scan_continuous_poll_interval = config.getfloat(
+            'scan_continuous_poll_interval',
+            d.scan_continuous_poll_interval if d else 0.05,
+            minval=0.01, maxval=5.0)
         # scan_enabled: forced false for shared (no physical EMU lane for jog).
         if self._shared:
             self._scan_enabled = False
@@ -961,6 +1005,9 @@ class NFCGate:
         self._scan_mode            = False
         self._scan_mm_total        = 0.0
         self._scan_next_chunk_time = 0.0
+        self._scan_continuous_move_inflight = False
+        self._scan_continuous_move_complete_time = 0.0
+        self._scan_continuous_last_move_mm = 0.0
         self._scan_decode_retry_attempts = 0
         self._scan_decode_retry_uid      = None
         self._scan_decode_retry_offset   = 0.0

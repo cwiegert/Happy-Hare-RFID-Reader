@@ -185,6 +185,11 @@ scan_rewind_buffer_mm: 30.0
 scan_decode_retry_mm:     2.0
 scan_decode_retry_rounds: 5
 scan_poll_interval:    0.25
+scan_motion_mode: stopped
+scan_continuous_step_mm: 50.0
+scan_continuous_speed: 150.0
+scan_continuous_accel: 2000.0
+scan_continuous_poll_interval: 0.05
 ```
 
 | Setting | Default | Description |
@@ -197,11 +202,20 @@ scan_poll_interval:    0.25
 | `scan_decode_retry_mm` | `2.0` | Distance between nearby retry positions after a UID is found but the rich tag payload is marked incomplete. |
 | `scan_decode_retry_rounds` | `5` | Nearby retry rounds before accepting the current UID/metadata result. Each round probes both sides of the first UID hit. |
 | `scan_poll_interval` | `0.25` | Seconds between stopped-position NFC read attempts during scan-jog. The shared reader also uses this value as its active polling cadence. Since Happy Hare `MMU_TEST_MOVE` blocks by default, this is not a read-while-moving interval. |
+| `scan_motion_mode` | `stopped` | `stopped` keeps the existing blocking substep scan. `continuous` enables experimental `MMU_TEST_MOVE WAIT=0` forward search chunks. |
+| `scan_continuous_step_mm` | `50.0` | Continuous-mode forward search chunk size. The current move is allowed to finish before tag-found completion/rewind runs. |
+| `scan_continuous_speed` | `150.0` | Continuous-mode `MMU_TEST_MOVE SPEED` in mm/s. |
+| `scan_continuous_accel` | `2000.0` | Continuous-mode `MMU_TEST_MOVE ACCEL` in mm/s^2. At `50mm`, `150mm/s`, `2000mm/s^2`, each move takes about `0.408s`. |
+| `scan_continuous_poll_interval` | `0.05` | Delay after a continuous chunk's estimated completion before NFC reads once and either queues the next chunk or finishes the scan. |
 
 There is no user setting for left-neighbor interference. During scan-jog, gate
 `N` checks only the cached UID on gate `N - 1`; if it exactly matches the UID
 just read, NFC moves the left neighbor 75 mm out of range, continues scanning,
 and restores the neighbor on scan exit.
+
+Continuous scan mode preserves the existing tag-found path: tag actions are
+cached until after rewind, the 1 second read-light hold still plays before the
+rewind effect, and `_scan_mm_total` still drives the final rewind distance.
 
 **Happy Hare post-preload hook (alternative to automatic polling):**
 

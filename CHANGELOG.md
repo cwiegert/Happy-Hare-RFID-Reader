@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] - Continuous Scan - WoodWorker
+
+### Scan-Jog Continuous Mode
+
+- Added opt-in continuous scan-jog mode via `scan_motion_mode: continuous`.
+  Continuous mode queues `MMU_TEST_MOVE WAIT=0` forward search chunks while
+  preserving existing tag-found actions, the 1 second read-light hold, rewind,
+  and completion logic.
+- Added continuous scan settings:
+  `scan_continuous_step_mm`, `scan_continuous_speed`,
+  `scan_continuous_accel`, and `scan_continuous_poll_interval`.
+- Documented the tested continuous profile: 50 mm chunks at 150 mm/s with
+  2000 mm/s^2 acceleration and a 0.05 s post-move tag-check gap.
+
+---
+
 ## [0.9.23] - 06/01/2026 - WoodWorker
 
 ### Installer Prompt Cleanup

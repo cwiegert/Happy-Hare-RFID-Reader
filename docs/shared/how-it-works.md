@@ -95,7 +95,7 @@ Initialization sets `_prev_gate_status = -1` so a cold-start with status already
 ### Scan loop
 
 ```
-_scan_step_event  (after each jog chunk completes)
+_scan_step_event  (stopped mode: after each jog substep completes)
   └─ print started?  →  rewind and exit
   └─ _poll()
        └─ tag found?  →  _finish_scan()
@@ -108,6 +108,32 @@ _scan_step_event  (after each jog chunk completes)
 ```
 
 `_poll()` during a scan step is identical to a normal poll — I2C read, Spoolman lookup, `GateState.process_read`, macro dispatch. The only difference is that `GateState.miss_count` does not increment on a no-read during scan (a blank read while the spool rotates is not an absence event).
+
+`scan_motion_mode: stopped` is the default. It uses blocking `MMU_TEST_MOVE`
+substeps and reads only while the spool is stopped.
+
+`scan_motion_mode: continuous` is opt-in. It changes only the forward search
+jog:
+
+```
+_scan_step_event  (continuous mode)
+  └─ previous WAIT=0 chunk still estimated in flight? → reschedule after completion + gap
+  └─ print started? → rewind and exit
+  └─ _poll()
+       └─ tag found? → existing _finish_scan()
+            └─ 1 second read-light hold
+            └─ rewind
+            └─ dispatch cached tag/spool event
+  └─ scan limit reached? → rewind and exit
+  └─ MMU_SELECT GATE=N + MMU_TEST_MOVE MOVE=50 SPEED=150 ACCEL=2000 WAIT=0
+  └─ reschedule after estimated move completion + scan_continuous_poll_interval
+```
+
+The shipped continuous defaults are 50 mm chunks at 150 mm/s and 2000 mm/s^2,
+with a 0.05 s post-move read gap. That profile spends most of the move at speed:
+about 0.408 s moving plus 0.05 s before the read/check, or roughly 109 mm/s
+effective scan advance. Decode retry moves for incomplete rich tag reads stay on
+the existing stopped/blocking retry path.
 
 ### Class-level scan lock
 

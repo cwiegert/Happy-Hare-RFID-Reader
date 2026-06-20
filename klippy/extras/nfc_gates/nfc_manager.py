@@ -518,9 +518,10 @@ def _nfc_help(gcmd=None):
         "NFC_DOCTOR : Check NFC config, readers, Spoolman, and Happy Hare hooks",
         "NFC_REGISTER UID=TAG_UID SPOOL_ID=SPOOL_ID : Assign a UID to an existing Spoolman spool",
         "NFC_LED_TEST ALL=1 CYCLES=2 : Test configured lane tag-read LED effect on every enabled lane",
-        "NFC GATE=<#> HELP : Show commands for one per-lane reader",
+        "NFC GATE=<#> HELP=1 : Show commands for one per-lane reader",
         "NFC GATE=<#> STATUS : Show one per-lane reader state",
         "NFC GATE=<#> SCAN=1 : Scan hardware once, no Spoolman/Happy Hare dispatch",
+        "NFC GATE=<#> JOG_SCAN=1 : Start scan-jog to find tag on a loaded spool",
         "NFC GATE=<#> LED_TEST=1 CYCLES=2 : Test configured lane tag-read LED effect",
         "NFC GATE=<#> POLL=1 : Run one full read/resolve cycle",
         "NFC GATE=<#> READ=1 : Start timer polling",
@@ -1593,14 +1594,14 @@ class NFCGate:
             return True
 
     def cmd_NFC(self, gcmd):
+        if _flag_param(gcmd, "HELP"):
+            self._cmd_help(gcmd)
+            return
         if self._cmd_low_level_debug(gcmd):
             return
         read_value = gcmd.get("READ", None)
         if read_value is not None:
             self._set_reading(gcmd, gcmd.get_int("READ", minval=0, maxval=1) == 1)
-            return
-        if _flag_param(gcmd, "HELP"):
-            self._cmd_help(gcmd)
             return
         if _flag_param(gcmd, "STATUS"):
             gcmd.respond_info(self.status_line())

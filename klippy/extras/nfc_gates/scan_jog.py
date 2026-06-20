@@ -542,9 +542,6 @@ def continuous_step_event(gate, eventtime):
         # behavior. Continuous mode changes only the primary forward search jog.
         return stopped_step_event(gate, eventtime)
 
-    if not getattr(gate, '_scan_hh_prep_pending', True):
-        _led_effect(gate, getattr(gate, '_scan_searching_effect', LED_SEARCHING))
-
     if is_printing(gate):
         logger.warning(
             "[%s]: continuous scan mode: print started — aborting",
@@ -623,9 +620,6 @@ def continuous_step_event(gate, eventtime):
             gate._name.capitalize(), move,
             gate._scan_continuous_speed, gate._scan_continuous_accel)
     run_continuous_jog(gate, move)
-    effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
-    _led_effect(gate, effect_name)
-    _schedule_led_reassert(gate, effect_name)
     gate._scan_mm_total += move
     gate._scan_continuous_last_move_mm = move
     gate._scan_continuous_move_inflight = True

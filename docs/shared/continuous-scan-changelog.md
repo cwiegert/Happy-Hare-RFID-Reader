@@ -14,6 +14,8 @@ Branch: `CW-Development`
 - Added trapezoid timing estimation for continuous scan chunks so the next
   read/check is scheduled after the estimated move completion plus the
   configured check gap.
+- Reduced per-chunk overhead by starting the search LED once during scan setup
+  instead of re-applying the search effect after every continuous move.
 
 ## Behavior
 
@@ -51,4 +53,3 @@ Estimated motion:
 - `config/nfc_reader.cfg`
 - `docs/shared/configuration.md`
 - `docs/shared/scan-jog-wait0-design-note.md`
-

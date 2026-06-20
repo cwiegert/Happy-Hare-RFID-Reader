@@ -18,6 +18,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `scan_continuous_accel`, and `scan_continuous_poll_interval`.
 - Documented the tested continuous profile: 50 mm chunks at 150 mm/s with
   2000 mm/s^2 acceleration and a 0.05 s post-move tag-check gap.
+- Reduced continuous scan inter-chunk overhead by starting the search LED once
+  during scan setup instead of re-applying it after every queued move.
 
 ---
 

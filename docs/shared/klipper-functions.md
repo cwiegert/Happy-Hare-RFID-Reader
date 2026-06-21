@@ -394,8 +394,8 @@ Continuous-mode success output uses the same start/rewind messages but includes
 continuous move messages while searching:
 
 ```
-NFC[lane0]: scan-jog started for gate 0 (max=600mm  poll=0.25s)
-NFC[Lane0]: continuous move 50.0mm  scan position 50.0 / 600.0mm
+NFC[lane0]: continuous scan-jog started for gate 0 (max=600mm  step=50.0mm  speed=150.0mm/s  accel=2000.0mm/s^2  poll=0.05s)
+NFC[Lane0]: continuous Direct Move 50.0mm  scan position 50.0 / 600.0mm
 NFC[Lane0]: tag found
 NFC[Lane0]: rewinding 20.0mm (scan=50.0mm buffer=30.0mm)
 ```

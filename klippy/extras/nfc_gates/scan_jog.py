@@ -154,10 +154,23 @@ def manual_jog_scan(gate, gcmd):
 
     gate.reactor.update_timer(gate._poll_timer, gate.reactor.NEVER)
     start(gate, max_mm=max_mm)
-    msg = ("[SCAN] NFC[%s]: scan-jog started for gate %d"
-           " (max=%.0fmm  poll=%.2fs)"
-           % (gate._name, gate._gate,
-              gate._scan_max_mm, gate._scan_poll_interval))
+    if getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous':
+        msg = ("[SCAN] NFC[%s]: continuous scan-jog started for gate %d"
+               " (max=%.0fmm  step=%.1fmm  speed=%.1fmm/s  "
+               "accel=%.1fmm/s^2  poll=%.2fs)"
+               % (gate._name, gate._gate, gate._scan_max_mm,
+                  gate._scan_continuous_step_mm,
+                  gate._scan_continuous_speed,
+                  gate._scan_continuous_accel,
+                  gate._scan_continuous_poll_interval))
+    else:
+        msg = ("[SCAN] NFC[%s]: stopped scan-jog started for gate %d"
+               " (max=%.0fmm  chunk=%.1fmm  substep=%.1fmm  "
+               "reads=%d  poll=%.2fs)"
+               % (gate._name, gate._gate, gate._scan_max_mm,
+                  gate._scan_jog_mm, substep_distance(gate),
+                  max(1, int(getattr(gate, '_scan_reads_per_position', 3))),
+                  gate._scan_poll_interval))
     logger.info(msg)
     gcmd.respond_info(_color_tags(msg))
 
@@ -190,7 +203,7 @@ def chunk_interval(gate, mm):
 
 
 def continuous_chunk_interval(gate, mm):
-    """Estimate a WAIT=0 scan chunk duration using trapezoid motion timing."""
+    """Estimate a continuous scan chunk duration using trapezoid timing."""
     distance = abs(float(mm))
     if distance <= 0.0:
         return 0.0
@@ -641,17 +654,32 @@ def continuous_step_event(gate, eventtime):
         return gate.reactor.NEVER
 
     next_position = gate._scan_mm_total + move
-    msg = ("[SCAN] NFC[%s]: continuous move %.1fmm  scan position %.1f / %.1fmm"
-           % (gate._name.capitalize(), move, next_position, gate._scan_max_mm))
-    logger.info(msg)
-    gate._console(msg)
-    command_start = gate.reactor.monotonic()
-    move_path = run_continuous_jog(gate, move)
     if gate._debug >= 4:
         logger.debug(
-            "[%s]: jogging filament %.2fmm at %.1fmm/s accel=%.1fmm/s^2 (path=%s)",
-            gate._name.capitalize(), move,
-            gate._scan_continuous_speed, gate._scan_continuous_accel, move_path)
+            "[%s]: preparing continuous scan move %.2fmm  "
+            "scan position %.1f / %.1fmm",
+            gate._name.capitalize(), move, next_position, gate._scan_max_mm)
+    command_start = gate.reactor.monotonic()
+    move_path = run_continuous_jog(gate, move)
+    move_source = continuous_move_source(move_path)
+    if gate._debug >= 4:
+        logger.debug(
+            "[%s]: continuous scan move submitted via %s: "
+            "move=%.2fmm speed=%.1fmm/s accel=%.1fmm/s^2",
+            gate._name.capitalize(), move_source, move,
+            gate._scan_continuous_speed, gate._scan_continuous_accel)
+    msg = ("[SCAN] NFC[%s]: continuous %s %.1fmm  "
+           "scan position %.1f / %.1fmm"
+           % (gate._name.capitalize(), move_source, move,
+              next_position, gate._scan_max_mm))
+    logger.info(msg)
+    gate._console(msg)
+    if gate._debug >= 4:
+        logger.debug(
+            "[%s]: continuous scan move timing source=%s "
+            "move=%.2fmm speed=%.1fmm/s accel=%.1fmm/s^2",
+            gate._name.capitalize(), move_source, move,
+            gate._scan_continuous_speed, gate._scan_continuous_accel)
     command_elapsed = max(0.0, gate.reactor.monotonic() - command_start)
     expected_duration = continuous_chunk_interval(gate, move)
     remaining_duration = max(0.0, expected_duration - command_elapsed)
@@ -667,10 +695,10 @@ def continuous_step_event(gate, eventtime):
         gate._scan_continuous_move_complete_time
         + gate._scan_continuous_poll_interval)
     logger.info(
-        "[%s]: continuous move queued %.1fmm  scan position %.1f / %.1fmm "
-        "(path=%s next read in %.2fs; command returned in %.2fs, remaining move %.2fs)",
-        gate._name.capitalize(), move, gate._scan_mm_total, gate._scan_max_mm,
-        move_path,
+        "[%s]: continuous %s queued %.1fmm  scan position %.1f / %.1fmm "
+        "(next read in %.2fs; call returned in %.2fs, remaining move %.2fs)",
+        gate._name.capitalize(), move_source, move,
+        gate._scan_mm_total, gate._scan_max_mm,
         gate._scan_next_chunk_time - gate.reactor.monotonic(),
         command_elapsed, remaining_duration)
     return gate.reactor.monotonic() + gate._scan_continuous_poll_interval
@@ -1313,6 +1341,14 @@ def run_jog(gate, mm):
                          % (gate._gate, mm))
     else:
         gcode.run_script("MMU_TEST_MOVE MOVE=%.2f QUIET=1" % mm)
+
+
+def continuous_move_source(move_path):
+    if move_path == "direct":
+        return "Direct Move"
+    if move_path == "gcode":
+        return "MMU_TEST_MOVE"
+    return str(move_path or "unknown")
 
 
 def run_continuous_jog(gate, mm):

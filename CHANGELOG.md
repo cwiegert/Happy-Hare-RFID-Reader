@@ -11,7 +11,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Replaced all abbreviated `HH` references with `Happy Hare` across log strings, console messages, docstrings, and user-visible status text in `nfc_manager.py`, `scan_jog.py`, `shared_preload.py`, and `hh_status.py`. `HH_SYNC` macro/command names and the `HH:MM:SS` datetime format in `log.py` are unchanged.
 - Changed `[SCAN]`, `[REWIND]`, and `[OK]` tagged scan-jog messages to appear at `console_log_level: 2`, matching the warning threshold. Previously all scan-jog messages required level 3. Verbose detail lines with no tag (move-queued timing, LED state changes) still require level 3.
-- Changed the debug log for continuous jog moves from logging the equivalent `MMU_TEST_MOVE` macro string to `jogging filament Xmm at Ymm/s accel=Zmm/s^2 (path=direct|gcode)`. The log now fires after the call so `move_path` reflects what was actually executed.
+- Changed continuous jog move logging so it reports the actual execution path:
+  `Direct Move` for direct Happy Hare MMU-toolhead moves or `MMU_TEST_MOVE` for
+  the G-code fallback. The user-visible `[SCAN]` move line now fires after the
+  call so it accurately reflects what was executed.
 
 ### Macro Naming Consistency
 

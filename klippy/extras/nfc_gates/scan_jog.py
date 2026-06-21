@@ -156,23 +156,32 @@ def manual_jog_scan(gate, gcmd):
     start(gate, max_mm=max_mm)
     if getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous':
         msg = ("[SCAN] NFC[%s]: continuous scan-jog started for gate %d"
-               " (max=%.0fmm  step=%.1fmm  speed=%.1fmm/s  "
-               "accel=%.1fmm/s^2  poll=%.2fs)"
-               % (gate._name, gate._gate, gate._scan_max_mm,
-                  gate._scan_continuous_step_mm,
-                  gate._scan_continuous_speed,
-                  gate._scan_continuous_accel,
-                  gate._scan_continuous_poll_interval))
+               % (gate._name, gate._gate))
     else:
         msg = ("[SCAN] NFC[%s]: stopped scan-jog started for gate %d"
-               " (max=%.0fmm  chunk=%.1fmm  substep=%.1fmm  "
-               "reads=%d  poll=%.2fs)"
-               % (gate._name, gate._gate, gate._scan_max_mm,
-                  gate._scan_jog_mm, substep_distance(gate),
-                  max(1, int(getattr(gate, '_scan_reads_per_position', 3))),
-                  gate._scan_poll_interval))
+               % (gate._name, gate._gate))
     logger.info(msg)
     gcmd.respond_info(_color_tags(msg))
+    if gate._debug >= 3:
+        if getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous':
+            logger.info(
+                "[%s]: continuous scan-jog settings — "
+                "max=%.0fmm step=%.1fmm speed=%.1fmm/s "
+                "accel=%.1fmm/s^2 poll=%.2fs",
+                gate._name, gate._scan_max_mm,
+                gate._scan_continuous_step_mm,
+                gate._scan_continuous_speed,
+                gate._scan_continuous_accel,
+                gate._scan_continuous_poll_interval)
+        else:
+            logger.info(
+                "[%s]: stopped scan-jog settings — "
+                "max=%.0fmm chunk=%.1fmm substep=%.1fmm "
+                "reads=%d poll=%.2fs",
+                gate._name, gate._scan_max_mm,
+                gate._scan_jog_mm, substep_distance(gate),
+                max(1, int(getattr(gate, '_scan_reads_per_position', 3))),
+                gate._scan_poll_interval)
 
 
 def is_printing(gate):

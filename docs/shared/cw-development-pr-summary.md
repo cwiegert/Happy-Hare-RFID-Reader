@@ -11,6 +11,8 @@ The big idea: NFC can now move the spool forward in continuous chunks, poll the 
 - 🌀 Added **continuous scan-jog mode** and made it the default.
 - ⚙️ Added a **Direct Move** path that queues forward scan motion through Happy Hare's MMU toolhead instead of relying on the `MMU_TEST_MOVE` G-code wrapper.
 - 🧭 Kept `MMU_TEST_MOVE WAIT=0` as a compatibility fallback when the direct Happy Hare motion path is not available.
+- 🧠 Split continuous scan reads into a fast UID probe during motion and full Spoolman/rich-tag resolution after the current chunk finishes.
+- 🏷️ Added continuous overshoot recovery for rich tag parsing and Spoolman auto-create workflows.
 - 🔎 Preserved the existing scan finish behavior: tag found, read-light flash, rewind, and cached tag/spool dispatch.
 - 💡 Reduced repeated LED calls during continuous scan while keeping the searching/read visual feedback.
 - 🧼 Cleaned up console output, help text, macro naming, and scan-jog logging so the messages match the actual behavior.
@@ -46,6 +48,9 @@ scan_continuous_step_mm: 75.0
 scan_continuous_speed: 250.0
 scan_continuous_accel: 2000.0
 scan_continuous_poll_interval: 0.03
+#scan_continuous_overshoot_backup_mm: 37.5
+scan_decode_retry_mm: 5.0
+scan_decode_retry_rounds: 5
 ```
 
 What they control:
@@ -57,6 +62,9 @@ What they control:
 | `scan_continuous_speed` | Gear move speed for the continuous scan chunk. |
 | `scan_continuous_accel` | Gear move acceleration for the continuous scan chunk. |
 | `scan_continuous_poll_interval` | How often NFC polls while the current chunk is estimated to be moving. |
+| `scan_continuous_overshoot_backup_mm` | One-time backtrack before rich tag parsing/retries when a continuous UID hit does not resolve through Spoolman. Defaults to 50% of `scan_continuous_step_mm`. |
+| `scan_decode_retry_mm` | Rich-tag retry spacing after the overshoot backup. Default changed to `5.0mm`. |
+| `scan_decode_retry_rounds` | Number of left/right rich-tag retry rounds. |
 
 ## 🧠 Direct Move Path
 
@@ -95,14 +103,58 @@ Continuous scan runs as a reactor-timer loop:
 start scan-jog
   └─ prepare Happy Hare / Spoolman state
   └─ queue forward Direct Move chunk
-  └─ poll NFC every scan_continuous_poll_interval while chunk is estimated in flight
-      └─ tag found during chunk? wait for current chunk to finish
-      └─ tag found after chunk? finish scan using existing logic
+  └─ UID-only probe every scan_continuous_poll_interval while chunk is estimated in flight
+      └─ UID found during chunk? stop queueing forward chunks
+      └─ wait for current chunk to finish
+      └─ resolve UID through Spoolman
+          └─ known UID? finish scan using existing logic
+          └─ unknown UID? optionally back up and run rich tag parse/retry
   └─ no tag? queue next chunk
   └─ scan limit reached? rewind and exit
 ```
 
-Rich/incomplete tag retry behavior intentionally stays on the stopped/blocking retry path. Continuous mode only changes the primary forward search jog.
+Continuous motion uses the fast UID probe only while the spool is moving. Spoolman lookup, rich tag parsing, and auto-create work happen after the current chunk finishes, so the moving scan loop does not perform heavier HTTP or rich-read work while motion timing is active.
+
+## 🏷️ Rich Tag Read and Overshoot Recovery
+
+Continuous scan can overshoot the reader because the current chunk is allowed to finish after the UID is detected. This branch adds a specific recovery path for rich tag workflows:
+
+```text
+UID detected during continuous motion
+  └─ finish current chunk
+  └─ check UID against Spoolman
+      └─ UID exists? cache spool result and finish normally
+      └─ UID unknown?
+          └─ back up scan_continuous_overshoot_backup_mm
+          └─ run full rich tag read
+          └─ if incomplete, probe left/right using scan_decode_retry_mm
+          └─ if metadata is valid, auto-create or resolve spool
+```
+
+This matters for workflows where the UID is not already registered in Spoolman and the tag payload is needed to create or identify the spool.
+
+The backup move updates the internal scan distance before rewind. For example:
+
+```text
+continuous chunk moved: 75.0mm
+overshoot backup:      -37.5mm
+rewind basis:           37.5mm
+```
+
+That keeps the final rewind from overshooting by the amount already backed up.
+
+After the backup, the decode retry sweep is recentered around the backed-up position. With the new default:
+
+```ini
+scan_decode_retry_mm: 5.0
+scan_decode_retry_rounds: 5
+```
+
+retry offsets are:
+
+```text
++5, -5, +10, -10, +15, -15, +20, -20, +25, -25mm
+```
 
 ## 💡 LED Behavior
 
@@ -225,6 +277,8 @@ Docs and installer:
 
 This PR adds continuous scan-jog support for NFC spool tag detection.
 
-Continuous scan-jog queues forward spool movement through Happy Hare's MMU toolhead and polls NFC while the move is estimated to be in flight. This avoids the delay-heavy stopped-position scan loop for the primary search path while preserving the existing tag-found, read-light, rewind, and Happy Hare / Spoolman dispatch behavior.
+Continuous scan-jog queues forward spool movement through Happy Hare's MMU toolhead and uses a lightweight UID-only probe while the move is estimated to be in flight. Once a UID is found, NFC stops queueing forward chunks, waits for the current chunk to finish, then resolves the UID through Spoolman.
+
+If the UID is already known, scan-jog finishes through the existing read-light, rewind, and Happy Hare / Spoolman dispatch behavior. If the UID is unknown and rich tag parsing is enabled, NFC backs up toward the reader field before attempting the full rich tag read and auto-create path. This keeps continuous scan fast for known spools while preserving rich tag creation workflows for new spools.
 
 The PR also improves operator-facing logging and console output so messages clearly show whether scan-jog is using `Direct Move` or the `MMU_TEST_MOVE` fallback, adds documentation for the new scan settings, fixes NFC help output, and cleans up macro labels so reader names like `lane0` are shown consistently.

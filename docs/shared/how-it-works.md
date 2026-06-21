@@ -123,7 +123,10 @@ Continuous mode forward search:
 _scan_step_event  (continuous mode)
   └─ print started? → rewind and exit
   └─ _poll()
-       └─ tag found while chunk is moving? → wait for current chunk to finish
+       └─ UID found while chunk is moving? → wait for current chunk to finish
+       └─ Spoolman UID lookup succeeds? → existing _finish_scan()
+       └─ UID unresolved and rich parsing enabled? → back up from continuous overshoot
+       └─ rich payload incomplete? → retry around backed-up position
        └─ tag found after chunk is done? → existing _finish_scan()
             └─ 0.1 second read-light hold
             └─ rewind
@@ -139,8 +142,13 @@ with a 0.05 s in-flight read cadence. That profile spends most of the move at
 speed: about 0.408 s moving, or roughly 123 mm/s before NFC read time is
 included. Continuous mode bypasses the public `MMU_TEST_MOVE` G-code wrapper for
 the forward search path and queues the move through Happy Hare's MMU toolhead.
-Decode retry moves for incomplete rich tag reads stay on the existing
-stopped/blocking retry path.
+During in-flight continuous motion, NFC uses a UID-only probe and avoids rich tag
+parsing. After the current chunk finishes, Spoolman UID lookup runs first. If
+the UID resolves, scan-jog can finish without any rich read. If the UID does not
+resolve and rich parsing is enabled, NFC backs up by
+`scan_continuous_overshoot_backup_mm` to recover from chunk overshoot. After
+that one-time recenter move, decode retry moves for incomplete rich tag reads
+stay on the existing stopped/blocking retry path.
 
 ### Class-level scan lock
 

@@ -202,6 +202,7 @@ These are the defaults shipped in `config/nfc_reader.cfg`:
 | `scan_continuous_speed` | `150.0` | Continuous-mode gear move speed |
 | `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration |
 | `scan_continuous_poll_interval` | `0.05` | In-flight NFC read cadence while a continuous chunk is estimated to be moving |
+| `scan_continuous_overshoot_backup_mm` | 50% of `scan_continuous_step_mm` | One-time backtrack before rich-tag parsing/retries when a continuous UID hit does not resolve through Spoolman |
 | `debug` | `2` | Warnings and errors in `nfc_reader.log` |
 | `console_output` | `False` | Keep routine NFC logs out of the console |
 
@@ -214,11 +215,16 @@ scan_continuous_step_mm: 50.0
 scan_continuous_speed: 150.0
 scan_continuous_accel: 2000.0
 scan_continuous_poll_interval: 0.05
+#scan_continuous_overshoot_backup_mm: 25.0
 ```
 
 Continuous mode preserves the existing tag-found flow: the read-light effect
 plays for about 0.1 second, then NFC rewinds and dispatches the cached tag/spool
 action just like stopped mode.
+If a UID is found during motion, continuous mode waits for the current chunk to
+finish and checks Spoolman first. Only unresolved UIDs backtrack toward the
+reader field before running rich tag parsing and the normal rich-read retry
+sweep.
 
 Set `enabled: False` on a `[nfc_gate laneN]` or `[nfc_gate shared]` section to keep the config block in place without initializing hardware or registering commands for that reader.
 

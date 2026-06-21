@@ -39,7 +39,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   completion logic.
 - Added continuous scan settings:
   `scan_continuous_step_mm`, `scan_continuous_speed`,
-  `scan_continuous_accel`, and `scan_continuous_poll_interval`.
+  `scan_continuous_accel`, `scan_continuous_poll_interval`, and
+  `scan_continuous_overshoot_backup_mm`.
+- Changed the default rich-tag decode retry spacing from 2 mm to 5 mm and added
+  a one-time continuous-mode overshoot backtrack before rich parsing/retries when
+  a UID hit does not resolve through Spoolman.
+- Changed continuous in-flight scanning to perform a UID-only probe while the
+  chunk is moving, then defer Spoolman lookup and rich tag parsing until the
+  current chunk has finished.
 - Documented the tested continuous profile: 50 mm chunks at 150 mm/s with
   2000 mm/s^2 acceleration and a 0.05 s in-flight tag-check cadence.
 - Added direct Happy Hare MMU-toolhead forward jog support for continuous scan,

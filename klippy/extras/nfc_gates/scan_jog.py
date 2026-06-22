@@ -365,6 +365,8 @@ def queue_continuous_overshoot_backup(gate, now):
     _schedule_led_reassert(gate, effect_name)
     gate._scan_mm_total = max(0.0, gate._scan_mm_total + move)
     gate._scan_continuous_overshoot_uid = uid
+    gate._scan_decode_retry_uid = uid
+    gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_offset = 0.0
     gate._scan_next_chunk_time = gate.reactor.monotonic() + DECODE_RETRY_SETTLE_DELAY
     logger.info(
@@ -372,6 +374,27 @@ def queue_continuous_overshoot_backup(gate, now):
         "scan position %.1f / %.1fmm",
         gate._name.capitalize(), move, gate._scan_mm_total, gate._scan_max_mm)
     return True
+
+
+def queue_continuous_post_backup_retry(gate, now):
+    uid = getattr(gate, '_scan_decode_retry_uid', None)
+    if not uid:
+        return False
+    if getattr(gate, '_scan_motion_mode', 'stopped') != 'continuous':
+        return False
+    if not getattr(gate, '_scan_continuous_overshoot_backed_up', False):
+        return False
+    if getattr(gate, '_scan_continuous_overshoot_uid', None) != uid:
+        return False
+    max_attempts, retry_mm = decode_retry_config(gate)
+    if max_attempts <= 0 or retry_mm <= 0.0:
+        return False
+    if gate._scan_decode_retry_attempts >= max_attempts:
+        return False
+    return queue_decode_retry_move(
+        gate, now, uid,
+        "no complete tag read after continuous overshoot backup",
+        max_attempts, retry_mm)
 
 
 def full_poll_after_continuous_probe(gate):
@@ -642,6 +665,8 @@ def stopped_step_event(gate, eventtime):
             if retry_incomplete_decode(gate, now):
                 return gate.reactor.monotonic() + gate._scan_poll_interval
             if decode_retry_exhausted(gate):
+                if fail_continuous_uid_resolution_after_retries(gate):
+                    return gate.reactor.NEVER
                 resume_scan_after_decode_retry(gate, now)
                 if gate._scan_mm_total < gate._scan_max_mm:
                     return now + gate._scan_poll_interval
@@ -655,6 +680,8 @@ def stopped_step_event(gate, eventtime):
     if decode_retry_in_progress(gate):
         if continue_decode_retry(gate, now):
             return gate.reactor.monotonic() + gate._scan_poll_interval
+        if fail_continuous_uid_resolution_after_retries(gate):
+            return gate.reactor.NEVER
         resume_scan_after_decode_retry(gate, now)
         if gate._scan_mm_total < gate._scan_max_mm:
             return now + gate._scan_poll_interval
@@ -802,6 +829,8 @@ def continuous_step_event(gate, eventtime):
                 gate._scan_continuous_tag_pending = False
                 return gate.reactor.monotonic() + gate._scan_continuous_poll_interval
             if decode_retry_exhausted(gate):
+                if fail_continuous_uid_resolution_after_retries(gate):
+                    return gate.reactor.NEVER
                 msg = ("[WARN] NFC[%s]: tag decode still incomplete after retries; "
                        "using best incomplete result" % gate._name.capitalize())
                 logger.info(msg)
@@ -813,6 +842,9 @@ def continuous_step_event(gate, eventtime):
         return min(
             complete_time,
             gate.reactor.monotonic() + gate._scan_continuous_poll_interval)
+
+    if queue_continuous_post_backup_retry(gate, now):
+        return gate.reactor.monotonic() + gate._scan_continuous_poll_interval
 
     if gate._scan_mm_total >= gate._scan_max_mm:
         if gate._scan_found_event is not None:
@@ -1184,6 +1216,29 @@ def decode_retry_exhausted(gate):
         max_attempts > 0 and retry_mm > 0.0
         and gate._scan_decode_retry_uid is not None
         and gate._scan_decode_retry_attempts >= max_attempts)
+
+
+def fail_continuous_uid_resolution_after_retries(gate):
+    if getattr(gate, '_scan_motion_mode', 'stopped') != 'continuous':
+        return False
+    uid = getattr(gate, '_scan_decode_retry_uid', None)
+    if not uid:
+        return False
+    if getattr(gate, '_scan_continuous_overshoot_uid', None) != uid:
+        return False
+    if not getattr(gate, '_scan_continuous_overshoot_backed_up', False):
+        return False
+    if not decode_retry_exhausted(gate):
+        return False
+    max_attempts, _retry_mm = decode_retry_config(gate)
+    msg = ("[WARN] NFC[%s]: uid=%s rich tag read failed after %d local "
+           "retries; rewinding without resuming scan-jog"
+           % (gate._name.capitalize(), uid, max_attempts))
+    logger.info(msg)
+    gate._console(msg)
+    reset_uid_only_read(gate, uid)
+    gate._rewind_and_exit_scan()
+    return True
 
 
 def resume_scan_after_decode_retry(gate, now):

@@ -44,6 +44,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Changed the default rich-tag decode retry spacing from 2 mm to 5 mm and added
   a one-time continuous-mode overshoot backtrack before rich parsing/retries when
   a UID hit does not resolve through Spoolman.
+- Changed continuous-mode rich tag retry jogs from a ±sweep to a reverse-only
+  walk. After the overshoot backup, subsequent decode retries step backward by
+  `scan_decode_retry_mm` each attempt and stop when they reach the start of the
+  chunk that contained the UID hit, instead of oscillating ±around the backed-up
+  position with small steps. Any incomplete rich read triggers this path, not
+  just Bambu tags. The `chunk_start` floor is recorded at backup time from
+  `scan_mm_total - scan_continuous_last_move_mm` and stored in
+  `_scan_continuous_chunk_start_mm`; retries cannot step past it even if
+  `scan_decode_retry_rounds` would allow more attempts.
 - Changed continuous in-flight scanning to perform a UID-only probe while the
   chunk is moving, then defer Spoolman lookup and rich tag parsing until the
   current chunk has finished.

@@ -806,13 +806,20 @@ class _PN532Base:
                          e, traceback.format_exc())
             return False
 
-    def read_tag(self):
+    def read_tag(self, timeout=None):
         """
         Attempt to read the UID of any tag in the RF field.
 
         Uses InListPassiveTarget to let the PN532 handle REQA / ANTICOLL /
         SELECT internally, then InRelease to deselect so the next scan starts
         clean.  No data is read from tag memory.
+
+        Parameters
+        ----------
+        timeout : float or None
+            Override the scan timeout passed to read_target().  When None the
+            driver default (transceive_delay + 0.100) is used.  Pass a shorter
+            value for in-flight continuous probes to reduce blocking time.
 
         Returns
         -------
@@ -822,7 +829,7 @@ class _PN532Base:
             No tag in the RF field, or a communication error occurred.
         """
         try:
-            target_info = self.read_target()
+            target_info = self.read_target(timeout=timeout)
             if target_info is None:
                 return None
 

@@ -232,14 +232,15 @@ def continuous_probe_uid(gate):
     """Lightweight UID-only probe while a continuous chunk is in flight."""
     uid = None
     target_info = None
+    probe_timeout = getattr(gate, '_scan_continuous_poll_interval', 0.050)
     read_tag = getattr(gate._reader, 'read_tag', None)
     if read_tag is not None:
-        uid = read_tag()
+        uid = read_tag(timeout=probe_timeout)
     else:
         read_target = getattr(gate._reader, 'read_target', None)
         if read_target is None:
             return False
-        target_info = read_target()
+        target_info = read_target(timeout=probe_timeout)
         if target_info is None:
             return False
         uid = target_info.get('uid')
@@ -355,6 +356,8 @@ def queue_continuous_overshoot_backup(gate, now):
     if backup_mm <= 0.001:
         return False
     move = -backup_mm
+    gate._scan_continuous_chunk_start_mm = max(
+        0.0, gate._scan_mm_total - gate._scan_continuous_last_move_mm)
     msg = ("[WARN] NFC[%s]: uid=%s not resolved in Spoolman; backing up %.1fmm "
            "before rich tag parse" % (gate._name.capitalize(), uid, backup_mm))
     logger.info(msg)
@@ -546,6 +549,7 @@ def start(gate, max_mm=None):
     gate._scan_continuous_direct_available = True
     gate._scan_continuous_overshoot_backed_up = False
     gate._scan_continuous_overshoot_uid = None
+    gate._scan_continuous_chunk_start_mm = None
     gate._scan_position_reads_done = 0
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
@@ -839,9 +843,8 @@ def continuous_step_event(gate, eventtime):
         return gate.reactor.NEVER
 
     if move_inflight and not move_complete:
-        return min(
-            complete_time,
-            gate.reactor.monotonic() + gate._scan_continuous_poll_interval)
+        # No artificial delay — read_tag() blocks for poll_interval already
+        return min(complete_time, gate.reactor.monotonic())
 
     if queue_continuous_post_backup_retry(gate, now):
         return gate.reactor.monotonic() + gate._scan_continuous_poll_interval
@@ -1176,6 +1179,7 @@ def disconnect_cleanup(gate):
     gate._scan_continuous_direct_available = True
     gate._scan_continuous_overshoot_backed_up = False
     gate._scan_continuous_overshoot_uid = None
+    gate._scan_continuous_chunk_start_mm = None
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
     gate._scan_decode_retry_offset = 0.0
@@ -1328,8 +1332,34 @@ def next_decode_retry_move(gate, max_attempts, retry_mm):
     return 0.0
 
 
+def next_continuous_overshoot_retry_move(gate, max_attempts, retry_mm):
+    """Reverse-only retry steps for continuous overshoot mode, stopping at chunk_start.
+
+    Steps backward by retry_mm each attempt instead of the normal ±sweep, and
+    stops when the position would cross chunk_start.  If no room remains before
+    attempts are exhausted, advances attempts to max to force the exhausted state.
+    """
+    chunk_start = max(0.0, getattr(gate, '_scan_continuous_chunk_start_mm', 0.0))
+    while gate._scan_decode_retry_attempts < max_attempts:
+        move = -retry_mm
+        next_total = gate._scan_mm_total + move
+        floor = max(chunk_start, 0.0)
+        if next_total < floor:
+            move = floor - gate._scan_mm_total
+        gate._scan_decode_retry_attempts += 1
+        if abs(move) > 0.001:
+            return move
+        gate._scan_decode_retry_attempts = max_attempts
+        break
+    return 0.0
+
+
 def queue_decode_retry_move(gate, now, uid, reason, max_attempts, retry_mm):
-    move = next_decode_retry_move(gate, max_attempts, retry_mm)
+    if (getattr(gate, '_scan_continuous_overshoot_backed_up', False)
+            and getattr(gate, '_scan_continuous_chunk_start_mm', None) is not None):
+        move = next_continuous_overshoot_retry_move(gate, max_attempts, retry_mm)
+    else:
+        move = next_decode_retry_move(gate, max_attempts, retry_mm)
     if abs(move) <= 0.001:
         return False
 
@@ -1397,6 +1427,8 @@ def retry_incomplete_decode(gate, now):
         gate._scan_continuous_overshoot_backed_up = True
         if backup_mm > 0.001:
             move = -backup_mm
+            gate._scan_continuous_chunk_start_mm = max(
+                0.0, gate._scan_mm_total - gate._scan_continuous_last_move_mm)
             msg = ("[WARN] NFC[%s]: tag decode incomplete; backing up %.1fmm "
                    "after continuous overshoot before retry"
                    % (gate._name.capitalize(), backup_mm))

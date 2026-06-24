@@ -876,6 +876,7 @@ def continuous_step_event(gate, eventtime):
             "[%s]: preparing continuous scan move %.2fmm  "
             "scan position %.1f / %.1fmm",
             gate._name.capitalize(), move, next_position, gate._scan_max_mm)
+    gate_was_selected = getattr(gate, '_scan_gate_selected', False)
     command_start = gate.reactor.monotonic()
     move_path = run_continuous_jog(gate, move)
     move_source = continuous_move_source(move_path)
@@ -899,7 +900,17 @@ def continuous_step_event(gate, eventtime):
             gate._scan_continuous_speed, gate._scan_continuous_accel)
     command_elapsed = max(0.0, gate.reactor.monotonic() - command_start)
     expected_duration = continuous_chunk_interval(gate, move)
-    remaining_duration = max(0.0, expected_duration - command_elapsed)
+    # mmu.select_gate() blocks while the gate servo positions (~0.5s) before the
+    # move enters the queue. If gate selection ran during this call, command_elapsed
+    # includes that overhead and remaining_duration would be zero even though the
+    # move just started. Use expected_duration instead so in-flight probing fires
+    # for the first chunk.
+    gate_selected_this_call = (
+        not gate_was_selected and getattr(gate, '_scan_gate_selected', False))
+    if gate_selected_this_call:
+        remaining_duration = expected_duration
+    else:
+        remaining_duration = max(0.0, expected_duration - command_elapsed)
     effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
     _led_effect(gate, effect_name)
     _schedule_led_reassert(gate, effect_name)

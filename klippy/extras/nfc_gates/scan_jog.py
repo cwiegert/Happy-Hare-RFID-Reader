@@ -366,16 +366,20 @@ def queue_continuous_overshoot_backup(gate, now):
     effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
     _led_effect(gate, effect_name)
     _schedule_led_reassert(gate, effect_name)
+    gate._scan_continuous_overshoot_origin_mm = gate._scan_mm_total
+    gate._scan_continuous_overshoot_start_mm = max(0.0, gate._scan_mm_total + move)
+    gate._scan_continuous_retry_phase = 1
     gate._scan_mm_total = max(0.0, gate._scan_mm_total + move)
     gate._scan_continuous_overshoot_uid = uid
     gate._scan_decode_retry_uid = uid
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_offset = 0.0
     gate._scan_next_chunk_time = gate.reactor.monotonic() + DECODE_RETRY_SETTLE_DELAY
-    logger.info(
-        "[%s]: continuous unresolved UID overshoot backup queued %.1fmm  "
-        "scan position %.1f / %.1fmm",
-        gate._name.capitalize(), move, gate._scan_mm_total, gate._scan_max_mm)
+    if gate._debug >= 3:
+        logger.info(
+            "[%s]: continuous unresolved UID overshoot backup queued %.1fmm  "
+            "scan position %.1f / %.1fmm",
+            gate._name.capitalize(), move, gate._scan_mm_total, gate._scan_max_mm)
     return True
 
 
@@ -1344,19 +1348,51 @@ def next_decode_retry_move(gate, max_attempts, retry_mm):
 
 
 def next_continuous_overshoot_retry_move(gate, max_attempts, retry_mm):
-    """Reverse-only retry steps for continuous overshoot mode, stopping at chunk_start.
+    """Two-phase retry walk for continuous overshoot mode.
 
-    Steps backward by retry_mm each attempt instead of the normal ±sweep, and
-    stops when the position would cross chunk_start.  If no room remains before
-    attempts are exhausted, advances attempts to max to force the exhausted state.
+    Phase 1: step backward from the backup point in retry_mm increments (floor at 0).
+    Phase 2: return to the backup point, then step forward up to the UID detection position.
     """
-    chunk_start = max(0.0, getattr(gate, '_scan_continuous_chunk_start_mm', 0.0))
-    while gate._scan_decode_retry_attempts < max_attempts:
+    start_mm = getattr(gate, '_scan_continuous_overshoot_start_mm', gate._scan_mm_total)
+    origin_mm = getattr(gate, '_scan_continuous_overshoot_origin_mm', gate._scan_max_mm)
+    max_backward = max(1, max_attempts // 2)
+    retry_phase = getattr(gate, '_scan_continuous_retry_phase', 1)
+
+    if retry_phase == 2:
+        correction = start_mm - gate._scan_mm_total
+        if correction > 0.001:
+            return correction
+        while gate._scan_decode_retry_attempts < max_attempts:
+            move = retry_mm
+            if gate._scan_mm_total + move > origin_mm:
+                move = origin_mm - gate._scan_mm_total
+            gate._scan_decode_retry_attempts += 1
+            if abs(move) > 0.001:
+                return move
+            gate._scan_decode_retry_attempts = max_attempts
+            break
+        return 0.0
+
+    # Phase 1: backward steps from backup point
+    while gate._scan_decode_retry_attempts < max_backward:
         move = -retry_mm
-        next_total = gate._scan_mm_total + move
-        floor = max(chunk_start, 0.0)
-        if next_total < floor:
-            move = floor - gate._scan_mm_total
+        if gate._scan_mm_total + move < 0.0:
+            move = -gate._scan_mm_total
+        gate._scan_decode_retry_attempts += 1
+        if abs(move) > 0.001:
+            return move
+        gate._scan_decode_retry_attempts = max_backward
+        break
+
+    # Transition to phase 2
+    gate._scan_continuous_retry_phase = 2
+    correction = start_mm - gate._scan_mm_total
+    if correction > 0.001:
+        return correction
+    while gate._scan_decode_retry_attempts < max_attempts:
+        move = retry_mm
+        if gate._scan_mm_total + move > origin_mm:
+            move = origin_mm - gate._scan_mm_total
         gate._scan_decode_retry_attempts += 1
         if abs(move) > 0.001:
             return move
@@ -1387,9 +1423,10 @@ def queue_decode_retry_move(gate, now, uid, reason, max_attempts, retry_mm):
     gate._scan_mm_total += move
     gate._scan_decode_retry_offset += move
     gate._scan_next_chunk_time = gate.reactor.monotonic() + DECODE_RETRY_SETTLE_DELAY
-    logger.info(
-        "[%s]: decode retry move queued %.1fmm  scan position %.1f / %.1fmm",
-        gate._name.capitalize(), move, gate._scan_mm_total, gate._scan_max_mm)
+    if gate._debug >= 3:
+        logger.info(
+            "[%s]: decode retry move queued %.1fmm  scan position %.1f / %.1fmm",
+            gate._name.capitalize(), move, gate._scan_mm_total, gate._scan_max_mm)
     return True
 
 
@@ -1450,22 +1487,25 @@ def retry_incomplete_decode(gate, now):
             effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
             _led_effect(gate, effect_name)
             _schedule_led_reassert(gate, effect_name)
+            gate._scan_continuous_overshoot_origin_mm = gate._scan_mm_total
+            gate._scan_continuous_overshoot_start_mm = max(0.0, gate._scan_mm_total + move)
+            gate._scan_continuous_retry_phase = 1
             gate._scan_mm_total = max(0.0, gate._scan_mm_total + move)
             gate._scan_continuous_overshoot_uid = uid
-            # Treat the overshoot backup as the new center point for the rich
-            # decode retry sweep. Rewind still uses the reduced scan total, but
-            # retry offsets should now probe +/- scan_decode_retry_mm around the
-            # recentered tag position instead of jumping back toward the original
-            # continuous hit point.
             gate._scan_decode_retry_offset = 0.0
             gate._scan_next_chunk_time = (
                 gate.reactor.monotonic() + DECODE_RETRY_SETTLE_DELAY)
-            logger.info(
-                "[%s]: continuous overshoot backup queued %.1fmm  "
-                "scan position %.1f / %.1fmm",
-                gate._name.capitalize(), move,
-                gate._scan_mm_total, gate._scan_max_mm)
+            if gate._debug >= 3:
+                logger.info(
+                    "[%s]: continuous overshoot backup queued %.1fmm  "
+                    "scan position %.1f / %.1fmm",
+                    gate._name.capitalize(), move,
+                    gate._scan_mm_total, gate._scan_max_mm)
             return True
+
+    if (getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous'
+            and getattr(gate, '_scan_continuous_overshoot_backed_up', False)):
+        return queue_decode_retry_move(gate, now, uid, reason, max_attempts, retry_mm)
 
     move = 0.0
     while gate._scan_decode_retry_attempts < max_attempts:
@@ -1502,9 +1542,10 @@ def retry_incomplete_decode(gate, now):
     gate._scan_mm_total += move
     gate._scan_decode_retry_offset += move
     gate._scan_next_chunk_time = gate.reactor.monotonic() + DECODE_RETRY_SETTLE_DELAY
-    logger.info(
-        "[%s]: decode retry move queued %.1fmm  scan position %.1f / %.1fmm",
-        gate._name.capitalize(), move, gate._scan_mm_total, gate._scan_max_mm)
+    if gate._debug >= 3:
+        logger.info(
+            "[%s]: decode retry move queued %.1fmm  scan position %.1f / %.1fmm",
+            gate._name.capitalize(), move, gate._scan_mm_total, gate._scan_max_mm)
     return True
 
 

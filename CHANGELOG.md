@@ -33,6 +33,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Replaced all abbreviated `HH` references with `Happy Hare` across log strings, console messages, docstrings, and user-visible status text in `nfc_manager.py`, `scan_jog.py`, `shared_preload.py`, and `hh_status.py`. `HH_SYNC` macro/command names and the `HH:MM:SS` datetime format in `log.py` are unchanged.
 - Changed `[SCAN]`, `[REWIND]`, and `[OK]` tagged scan-jog messages to appear at `console_log_level: 2`, matching the warning threshold. Previously all scan-jog messages required level 3. Verbose detail lines with no tag (move-queued timing, LED state changes) still require level 3.
+- Gated retry-jog position detail lines (`decode retry move queued Xmm  scan position X.X / X.Xmm`) and overshoot backup position detail lines (`continuous overshoot backup queued Xmm  scan position X.X / X.Xmm`) behind `gate._debug >= 3`. The `[WARN]` tagged console messages for these same events are unaffected and remain visible at the default warning threshold.
 - Changed continuous jog move logging so it reports the actual execution path:
   `Direct Move` for direct Happy Hare MMU-toolhead moves or `MMU_TEST_MOVE` for
   the G-code fallback. The user-visible `[SCAN]` move line now fires after the
@@ -66,15 +67,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Changed the default rich-tag decode retry spacing from 2 mm to 5 mm and added
   a one-time continuous-mode overshoot backtrack before rich parsing/retries when
   a UID hit does not resolve through Spoolman.
-- Changed continuous-mode rich tag retry jogs from a ±sweep to a reverse-only
-  walk. After the overshoot backup, subsequent decode retries step backward by
-  `scan_decode_retry_mm` each attempt and stop when they reach the start of the
-  chunk that contained the UID hit, instead of oscillating ±around the backed-up
-  position with small steps. Any incomplete rich read triggers this path, not
-  just Bambu tags. The `chunk_start` floor is recorded at backup time from
-  `scan_mm_total - scan_continuous_last_move_mm` and stored in
-  `_scan_continuous_chunk_start_mm`; retries cannot step past it even if
-  `scan_decode_retry_rounds` would allow more attempts.
+- Changed continuous-mode rich tag retry jogs from a ±sweep to a two-phase
+  backward/forward walk. After the initial overshoot backup, retries now:
+  (1) step backward from the backup point in `scan_decode_retry_mm` increments
+  (half of `scan_decode_retry_rounds` attempts, floor at 0); then
+  (2) return to the backup point and step forward in the same increment toward
+  the original UID detection position (ceiling = scan total before backup),
+  using the remaining attempts. The backup point and UID detection position are
+  recorded as `_scan_continuous_overshoot_start_mm` and
+  `_scan_continuous_overshoot_origin_mm` at backup time. Both the
+  `queue_continuous_overshoot_backup` and `retry_incomplete_decode` backup paths
+  record these values. The `retry_incomplete_decode` function now redirects
+  continuous+overshoot retries to `queue_decode_retry_move` (same path as
+  no-tag-found retries) instead of falling through to the stopped-mode ±sweep.
 - Fixed a race in the first continuous chunk where `mmu.select_gate()` blocks
   for the full gate-positioning time (~0.5 s) inside `run_direct_continuous_jog`.
   Because this blocking consumed more time than the expected move duration,

@@ -24,7 +24,8 @@ This includes hardware keys. `i2c_address` and `i2c_bus` set in the base `[nfc_g
 
 `reader_type` is inherited the same way as other hardware keys. The shipped
 default is `pn532`; set `reader_type: pn7160` in a lane or shared-reader section
-only when that physical reader is PN7160.
+only when that physical reader is PN7160. Set `reader_type: rc522` only for
+RC522 SPI hardware.
 
 Example:
 
@@ -64,11 +65,15 @@ i2c_speed:   100000
 
 | Setting | Default | Description |
 |---|---|---|
-| `reader_type` | `pn532` | Reader driver to use. Supported values are `pn532` and `pn7160`. |
-| `i2c_address` | `36` for PN532 | I2C address. PN532 uses fixed decimal `36` (`0x24`). PN7160 must use decimal `40-43` (`0x28-0x2B`). |
-| `i2c_bus` | board-specific | I2C bus name on the selected MCU. PN532 should use hardware I2C. PN7160 supports software I2C, but hardware I2C is recommended because software I2C increases MCU load. |
+| `reader_type` | `pn532` | Reader driver to use. Supported values are `pn532`, `pn7160`, and `rc522`. |
+| `i2c_address` | `36` for PN532 | I2C address. PN532 uses fixed decimal `36` (`0x24`). PN7160 must use decimal `40-43` (`0x28-0x2B`). Not used by RC522. |
+| `i2c_bus` | board-specific | I2C bus name on the selected MCU. PN532 should use hardware I2C. PN7160 supports software I2C, but hardware I2C is recommended because software I2C increases MCU load. Not used by RC522. |
 | `i2c_speed` | `100000` | I2C speed in Hz. Keep `100000` for PN7160 and for conservative PN532 bring-up. |
 | `i2c_mcu` | per section | Klipper MCU name that hosts the reader. Required in `[nfc_gate laneN]` and `[nfc_gate shared]`. |
+| `cs_pin` | unset | Required for RC522 SPI readers. Use the Klipper pin name connected to RC522 SDA/SS/CS. |
+| `spi_bus` / software SPI pins | unset | Required for RC522 SPI readers. Use Klipper's normal SPI config keys for the selected MCU. |
+| `spi_speed` | `1000000` for RC522 | Optional RC522 SPI clock in Hz. The default is conservative. |
+| `rc522_transceive_delay` | `0.035` | Optional RC522 UID-read response wait in seconds. Leave at the default unless hardware testing shows the reader needs more time. |
 
 Reader settings inherit from the base `[nfc_gate]` section. A lane with no
 `reader_type` uses the base reader type. A lane with no `i2c_address` uses the
@@ -101,6 +106,26 @@ PN7160 optional hardware pins:
 recommended for PN7160. Without VEN, abnormal Klipper termination can leave the
 chip in a state that software cannot fully reset. `irq_pin` is also optional;
 when omitted, the PN7160 driver uses timing-based polling.
+
+RC522 lane example:
+
+```ini
+[nfc_gate lane1]
+enabled:     True
+reader_type: rc522
+mmu_gate:    1
+i2c_mcu:     mmu1
+cs_pin:      mmu1:PA4
+spi_bus:     spi1
+# spi_speed: 1000000
+# rc522_transceive_delay: 0.035
+```
+
+RC522 can resolve tags registered in Spoolman's RFID extra field and can read
+NTAG/Type-2 rich metadata through the normal NFC Reader pipeline. It also
+supports authenticated MIFARE Classic/Bambu reads when `tag_parsing: True`,
+`bambu_reads: True`, and `pycryptodome` are available. It does not support
+ISO15693 rich tag metadata.
 
 ---
 
@@ -336,7 +361,10 @@ debug:             3
 low_level_debug: False
 ```
 
-When `True`, exposes manual PN532 I2C bus commands (`STEP`, `RAW_READ`, `RAW_WRITE`, etc.) on the `NFC` command for step-by-step bring-up debugging.
+When `True`, exposes manual low-level reader commands for step-by-step bring-up
+debugging. PN532 readers expose I2C `STEP`, `RAW_READ`, `RAW_WRITE`, and ACK
+helpers. RC522 readers expose SPI register, antenna, FIFO transceive, and REQA
+tag-wake helpers on `NFC` / `NFC_SHARED`.
 
 > [!WARNING]
 > These commands bypass the normal state machine. Set back to `False` before printing.

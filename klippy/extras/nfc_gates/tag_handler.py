@@ -243,6 +243,8 @@ def classify_tag_target(gate, target_info):
         return 'uid_only'
     protocol = str(target_info.get('protocol') or '').strip().lower()
     protocol_name = str(target_info.get('protocol_name') or '').strip().lower()
+    if protocol == 'uid_only' or protocol_name.endswith('uid_only'):
+        return 'uid_only'
     if protocol == 'iso15693_type5' or protocol_name == 'iso15693':
         return 'iso15693_type5'
     try:

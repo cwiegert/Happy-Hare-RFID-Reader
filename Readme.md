@@ -1,6 +1,6 @@
 # Happy Hare RFID/NFC Reader
 
-NFC spool identification for Happy Hare. Use one NFC reader on each EMU lane, one shared reader inside the MMU body, or both. PN532 remains the default reader; PN7160 is also supported with `reader_type: pn7160`.
+NFC spool identification for Happy Hare. Use one NFC reader on each EMU lane, one shared reader inside the MMU body, or both. PN532 remains the default reader; PN7160 is also supported with `reader_type: pn7160`; RC522 is supported as an SPI reader with `reader_type: rc522`.
 
 This is a system-level Klipper integration, not a plug-and-play appliance. It touches Klipper extras, Happy Hare macros, lane MCU firmware, I2C wiring, Spoolman, and optional LED effects. If you are not comfortable recovering from a Klipper config error, reflashing lane MCUs, and reading logs, expect a learning curve.
 
@@ -41,8 +41,8 @@ The shared reader can stage only a real Spoolman spool ID. UID lookup, embedded 
 
 - Voron/EMU setup running the [igiannakas IG-dev branch of Happy Hare](https://github.com/igiannakas/Happy-Hare/tree/IG-dev), which provides `variable_user_post_preload_extension`
 - One Klipper MCU per filament lane for per-lane reader installs, or one MCU hosting the shared NFC reader
-- Supported NFC reader hardware configured for I2C
-- Hardware I2C bus on the MCU hosting the NFC reader
+- Supported NFC reader hardware configured for its bus
+- Hardware I2C or SPI bus on the MCU hosting the NFC reader
 - Klipper version requirements:
   - Strongly recommended: use the latest Klipper on the host and every MCU
     hosting an NFC reader. The NFC drivers use Klipper's newer low-level
@@ -59,19 +59,20 @@ The shared reader can stage only a real Spoolman spool ID. UID lookup, embedded 
 
 Supported readers:
 
-| Reader | `reader_type` | I2C address | Notes |
+| Reader | `reader_type` | Bus / address | Notes |
 |---|---|---|---|
 | PN532 | `pn532` | `36` (`0x24`) | Default reader and documented PN532 wiring path |
 | PN7160 | `pn7160` | `40-43` (`0x28-0x2B`) | Supports NTAG/Type2, ISO15693/Type5, and authenticated Bambu/MIFARE reads |
+| RC522 | `rc522` | SPI (`cs_pin` + `spi_bus`/software SPI pins) | UID lookup, NTAG/Type-2 rich reads, and authenticated MIFARE/Bambu reads; no ISO15693 |
 
 Supported tag formats:
 
-| Tag / data path | PN532 | PN7160 | Notes |
-|---|---:|---:|---|
-| Spoolman UID lookup | Yes | Yes | Default path. The tag only needs a readable factory UID registered in Spoolman's extra field. |
-| NTAG / NFC Type 2 rich tags | Yes | Yes | NDEF text/URI/MIME/JSON payloads, OpenSpool, OpenTag3D, OpenPrintTag text-compatible payloads, and several manufacturer binary tags. |
-| MIFARE Classic rich tags | Yes | Yes | Bambu factory tags and other MIFARE Classic formats require `tag_parsing: True`; Bambu authenticated reads also require `bambu_reads: True` and `pycryptodome`. |
-| ISO15693 / NFC Type 5 rich tags | No | Yes | Used by SLIX2 / OpenPrintTag Type-5 tags. Official OpenPrintTag antenna size is best suited to a shared reader; per-lane use needs hardware testing. |
+| Tag / data path | PN532 | PN7160 | RC522 | Notes |
+|---|---:|---:|---:|---|
+| Spoolman UID lookup | Yes | Yes | Yes | Default path. The tag only needs a readable factory UID registered in Spoolman's extra field. |
+| NTAG / NFC Type 2 rich tags | Yes | Yes | Yes | NDEF text/URI/MIME/JSON payloads, OpenSpool, OpenTag3D, OpenPrintTag text-compatible payloads, and several manufacturer binary tags. |
+| MIFARE Classic rich tags | Yes | Yes | Yes | Bambu factory tags and other MIFARE Classic formats require `tag_parsing: True`; Bambu authenticated reads also require `bambu_reads: True` and `pycryptodome`. |
+| ISO15693 / NFC Type 5 rich tags | No | Yes | No | Used by SLIX2 / OpenPrintTag Type-5 tags. Official OpenPrintTag antenna size is best suited to a shared reader; per-lane use needs hardware testing. |
 
 The vendored parser currently recognizes Bambu Lab, ELEGOO, Anycubic ACE,
 Creality CFS/K1/K2, QIDI Box, SimplyPrint/QIDI URL tags, OpenTag3D, OpenSpool,

@@ -151,7 +151,7 @@ spoolman_auto_create: False
 [nfc_gate]
 startup_polling:    1
 startup_poll_delay: 0.0
-startup_check_gates: True
+startup_check_unknown_gates: True
 poll_interval:      10
 absent_threshold:   3
 ```
@@ -160,7 +160,7 @@ absent_threshold:   3
 |---|---|---|
 | `startup_polling` | `1` | `-1` = manual start only. `1` = start polling automatically after reader init. `0` = explicitly disabled (useful as a lane override). |
 | `startup_poll_delay` | `0.0` | Seconds to wait before the first automatic poll. The shipped hardware config staggers this by 0.5 seconds per lane. |
-| `startup_check_gates` | `True` | Before seeding NFC's cache, run Happy Hare gate checks when useful. With Spoolman disabled, NFC runs `MMU_CHECK_GATE GATE=<n>` for all configured lane readers. With Spoolman enabled, it checks only lanes still reporting unknown (`gate_status=-1`). Skipped while printing, while Happy Hare is busy, or while filament is not parked. |
+| `startup_check_unknown_gates` | `True` | If Happy Hare reports this lane as unknown (`gate_status=-1`) at startup, run `MMU_CHECK_GATE GATE=<n>` for that lane before seeding NFC's cache. Skipped while printing, while Happy Hare is busy, or while filament is not parked. |
 | `poll_interval` | `10` | Seconds between polls while background polling is active. |
 | `absent_threshold` | `3` | Consecutive missed reads before `_NFC_SPOOL_REMOVED` fires. At 10s interval, default = ~30s before removal. |
 

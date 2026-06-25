@@ -86,6 +86,8 @@ LANE_LED_TEST_DURATION = 2.0
 LANE_LED_TEST_GAP = 0.15
 LANE_LED_TEST_DEFAULT_CYCLES = 2
 LANE_LED_TEST_MAX_CYCLES = 20
+STARTUP_UNKNOWN_GATE_CHECK_DELAY = 5.0
+STARTUP_UNKNOWN_GATE_CHECK_STAGGER = 1.0
 
 
 def _spoolman_url_enabled(url):
@@ -609,8 +611,6 @@ class NFCGateDefaults:
                                                  minval=-1, maxval=1)
         self.startup_poll_delay = config.getfloat('startup_poll_delay', 0.,
                                                    minval=0., maxval=3600.)
-        self.startup_check_unknown_gates = config.getboolean(
-            'startup_check_unknown_gates', True)
         self.absent_threshold   = config.getint('absent_threshold', 3,
                                                  minval=1, maxval=255)
         self.transceive_delay   = config.getfloat('transceive_delay', 0.250,
@@ -788,7 +788,6 @@ class NFCGate:
             self._poll_interval = 0.0
             self._startup_polling = 0
             self._startup_poll_delay = 0.0
-            self._startup_check_unknown_gates = False
             self._absent_threshold = 3
             self._debug = d.debug if d else 2
             self._low_level_debug = False
@@ -841,9 +840,6 @@ class NFCGate:
             'startup_poll_delay',
             d.startup_poll_delay if d else 0.,
             minval=0., maxval=3600.)
-        self._startup_check_unknown_gates = config.getboolean(
-            'startup_check_unknown_gates',
-            d.startup_check_unknown_gates if d else True)
         self._absent_threshold = config.getint('absent_threshold',
                                                 d.absent_threshold if d else 3,
                                                 minval=1, maxval=255)
@@ -922,6 +918,8 @@ class NFCGate:
             spoolman_enabled=self._spoolman is not None)
         self._polling    = False
         self._poll_timer    = self.reactor.register_timer(self._poll_timer_event)
+        self._startup_check_timer = self.reactor.register_timer(
+            self._startup_check_unknown_gate_event)
         self._warning_timer = self.reactor.register_timer(
             self._warning_timer_event)
         self._shared_led_failsafe_timer = self.reactor.register_timer(
@@ -1893,8 +1891,6 @@ class NFCGate:
 
     def _startup_check_unknown_gate(self, eventtime):
         """Ask Happy Hare to classify this gate if it still reports unknown."""
-        if not getattr(self, '_startup_check_unknown_gates', False):
-            return
         if self._gcode is None:
             return
         if self._is_printing():
@@ -1930,6 +1926,24 @@ class NFCGate:
                 "Happy Hare status=%s spool=%s",
                 self._name, self._gate, refreshed.status, refreshed.spool)
 
+    def _startup_check_unknown_gate_event(self, eventtime):
+        was_polling = self._polling
+        if was_polling:
+            self.reactor.update_timer(self._poll_timer, self.reactor.NEVER)
+        try:
+            self._startup_check_unknown_gate(eventtime)
+            seed_time = self.reactor.monotonic()
+            self._seed_cache_from_hh(seed_time)
+            hh = self._read_hh_status(seed_time)
+            if hh.present and self._gate < hh.gate_count:
+                self._prev_gate_status = hh.status
+        finally:
+            if was_polling and not self._failed:
+                self.reactor.update_timer(
+                    self._poll_timer,
+                    self.reactor.monotonic() + self._poll_interval)
+        return self.reactor.NEVER
+
     def _delayed_init(self, eventtime):
         """Initialise the NFC Reader after other I2C devices have settled.
 
@@ -1960,7 +1974,6 @@ class NFCGate:
         # after restart does not re-dispatch a spool Happy Hare already knows about.
         # Shared reader has no Happy Hare gate assignment to seed and no scan-jog edge detector.
         if not self._failed and not self._shared:
-            self._startup_check_unknown_gate(eventtime)
             seed_time = self.reactor.monotonic()
             self._seed_cache_from_hh(seed_time)
             # Bootstrap the scan-jog edge detector with the current gate status
@@ -1968,6 +1981,18 @@ class NFCGate:
             hh = self._read_hh_status(seed_time)
             if hh.present and self._gate < hh.gate_count:
                 self._prev_gate_status = hh.status
+            if self._spoolman is None:
+                delay = (STARTUP_UNKNOWN_GATE_CHECK_DELAY
+                         + (self._gate
+                            * STARTUP_UNKNOWN_GATE_CHECK_STAGGER))
+                self.reactor.update_timer(
+                    self._startup_check_timer,
+                    self.reactor.monotonic() + delay)
+                if self._debug >= 3:
+                    logger.info(
+                        "[%s]: gate %d — Spoolman disabled; startup "
+                        "unknown-gate check scheduled in %.1fs",
+                        self._name, self._gate, delay)
 
         if self._gcode is not None:
             if self._failed:
@@ -2022,6 +2047,8 @@ class NFCGate:
                          self._name)
         self._polling = False
         self.reactor.update_timer(self._poll_timer, self.reactor.NEVER)
+        self.reactor.update_timer(self._startup_check_timer,
+                                  self.reactor.NEVER)
         if self._shared and self._shared_pending_spool is None:
             self._shared_restore_hh_leds()
         if self._scan_timer is not None:
@@ -2583,36 +2610,6 @@ class NFCGate:
 
         if not status.gate_statuses:
             return False, "Happy Hare gate status unavailable"
-
-        if self._spoolman is None:
-            unknown_lanes = [
-                lane for lane, gate_state in enumerate(status.gate_statuses)
-                if gate_state == -1
-            ]
-            if unknown_lanes:
-                gcode = self.printer.lookup_object('gcode', None)
-                if gcode is not None:
-                    for lane in unknown_lanes:
-                        script = "MMU_CHECK_GATE GATE=%d" % lane
-                        try:
-                            logger.info(
-                                "[%s]: scan preflight — lane %d "
-                                "gate_status=-1; running %s before jog",
-                                self._name, lane, script)
-                            gcode.run_script(script)
-                        except Exception as e:
-                            logger.warning(
-                                "[%s]: scan preflight — %s failed: %s",
-                                self._name, script, e)
-                    status = hh_status.read_full(
-                        self.printer, self.reactor.monotonic())
-                    if not status.present:
-                        return False, "Happy Hare status unavailable"
-                    if status.filament_pos != hh_status.FILAMENT_POS_UNLOADED:
-                        return False, "filament is not parked (filament_pos=%d)" % (
-                            status.filament_pos,)
-                    if not status.gate_statuses:
-                        return False, "Happy Hare gate status unavailable"
 
         for lane, gate_state in enumerate(status.gate_statuses):
             safe = gate_state in (hh_status.GATE_EMPTY,

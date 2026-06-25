@@ -104,17 +104,18 @@ klippy:connect  →  _handle_connect()  →  schedule _delayed_init() (2 s)
 
 _delayed_init()
   1. Initialise NFC reader
-  2. If enabled, ask Happy Hare to check this lane when it reports `gate_status=-1`
-  3. Read Happy Hare gate map  →  seed this lane's local cache
+  2. Read Happy Hare gate map  →  seed this lane's local cache
+  3. If Spoolman is disabled, schedule a delayed unknown-gate check
   4. Start background polling  (if startup_polling: 1)
 ```
 
-If `startup_check_unknown_gates: True` and Happy Hare reports this lane as
-unknown (`gate_status=-1`), NFC runs `MMU_CHECK_GATE GATE=<n>` before seeding.
-That check is skipped while printing, while Happy Hare is busy, or while
-filament is not parked.
+When Spoolman is disabled and Happy Hare still reports this lane as unknown
+(`gate_status=-1`) after the delayed timer, NFC runs
+`MMU_CHECK_GATE GATE=<n>`. NFC uses an internal delayed/staggered timer so lanes
+do not all check at once. The check is skipped while printing, while Happy Hare
+is busy, or while filament is not parked.
 
-**Step 3 is the key one.** NFC_Manager calls `mmu.get_status()` directly to read `gate_spool_id` for this gate. The result is stored as a one-shot seed. On the very first poll:
+**Step 2 is the key one.** NFC_Manager calls `mmu.get_status()` directly to read `gate_spool_id` for this gate. The result is stored as a one-shot seed. On the very first poll:
 
 - Tag resolves to the **same spool** as the HH seed → cache updated silently, **no dispatch** (HH already knows)
 - Tag resolves to a **different spool** → `_NFC_SPOOL_CHANGED` dispatched normally (spool was swapped while Klipper was down)

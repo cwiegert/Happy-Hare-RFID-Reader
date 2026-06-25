@@ -410,8 +410,9 @@ def full_poll_after_continuous_probe(gate):
     try:
         tag_found = gate._poll()
     finally:
-        gate._scan_continuous_pending_uid = None
-        gate._scan_continuous_pending_target_info = None
+        if tag_found:
+            gate._scan_continuous_pending_uid = None
+            gate._scan_continuous_pending_target_info = None
     return tag_found
 
 
@@ -790,11 +791,15 @@ def continuous_step_event(gate, eventtime):
         gate._scan_continuous_tag_pending = False
         tag_found = resolve_continuous_pending_uid(gate, now)
         if not tag_found:
-            if queue_continuous_overshoot_backup(gate, now):
-                return gate.reactor.monotonic() + gate._scan_continuous_poll_interval
-            tag_found = (
-                cache_continuous_uid_only_if_needed(gate)
-                or full_poll_after_continuous_probe(gate))
+            if getattr(gate, '_tag_parsing', False):
+                if full_poll_after_continuous_probe(gate):
+                    tag_found = True
+                elif queue_continuous_overshoot_backup(gate, now):
+                    return gate.reactor.monotonic() + gate._scan_continuous_poll_interval
+            else:
+                tag_found = (
+                    cache_continuous_uid_only_if_needed(gate)
+                    or full_poll_after_continuous_probe(gate))
     else:
         try:
             if move_inflight and not move_complete:

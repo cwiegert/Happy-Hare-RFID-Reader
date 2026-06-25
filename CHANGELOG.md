@@ -28,6 +28,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   explaining that rich mode is required to pass filament data to Happy Hare
   without Spoolman, and skips the auto-create Spoolman spool question since there
   is no Spoolman instance to create records in.
+- Fixed no-Spoolman continuous scan-jog resolution. When continuous mode finds a
+  UID during motion and `tag_parsing: True`, it now runs the normal rich-tag poll
+  immediately after the current move completes, before scheduling the
+  overshoot-backup retry. This lets metadata-only tags resolve cleanly with
+  `spoolman_url: disabled` instead of backing up first because the Spoolman UID
+  lookup was unavailable.
+
+### Reader Hardware
+
+- Added RC522 as a supported UID-only SPI reader via `reader_type: rc522`.
+  `reader_factory.py` now creates an `RC522Driver` through Klipper's SPI bus
+  helper before the I2C reader path. The RC522 driver exposes the current
+  reader API (`read_tag(timeout=...)`, `read_target(timeout=...)`, and target
+  cleanup), marks targets as `protocol: uid_only`, and honors short continuous
+  scan probe timeouts. RC522 uses its own optional
+  `rc522_transceive_delay` setting (default `0.035`) instead of inheriting the
+  slower PN532 passive-target delay. Rich tag parsing intentionally falls back
+  to UID-only behavior for RC522 because NTAG/MIFARE memory reads are not
+  implemented.
+- Added RC522 diagnostic logging for the UID-only path. Init failures now log a
+  warning with SPI wiring/config hints before re-raising, health checks warn
+  when the reader does not respond or antenna TX bits are off, and post-REQA
+  anticollision/checksum failures produce warning-level summaries with raw
+  detail retained behind `debug >= 4`. Manual `SCAN=1` output now handles
+  UID-only targets with no SAK value.
+- Added RC522-specific low-level debug commands guarded by `low_level_debug`.
+  `INIT=1` and `SCAN=1` exercise the normal RC522 init and UID scan paths;
+  `RC522_DUMP_REGS=1`, `RC522_REG_READ=<reg>`,
+  `RC522_REG_WRITE=<reg> VALUE=<byte>`, `RC522_ANTENNA=0|1`,
+  `RC522_REQA=1`/`RC522_WAKE=1`, and
+  `RC522_TRANSCEIVE='<bytes>' BIT_FRAMING=<0-7>` provide register, antenna,
+  FIFO transceive, and tag-wake diagnostics without reusing PN532 ACK/ready
+  semantics.
 
 ### Console Output and Logging
 
@@ -107,6 +140,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Changed continuous in-flight scanning to perform a UID-only probe while the
   chunk is moving, then defer Spoolman lookup and rich tag parsing until the
   current chunk has finished.
+- Switched continuous scan behavior to try resolving a detected UID first;
+  only if tag resolution fails is the reverse/overshoot backup jog queued.
 - Documented the tested continuous profile: 50 mm chunks at 150 mm/s with
   2000 mm/s^2 acceleration and a 0.05 s in-flight tag-check cadence.
 - Optimized the baseline continuous scan configuration for optimal speed while

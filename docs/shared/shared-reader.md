@@ -2,7 +2,7 @@
 
 [← Configuration](configuration.md) | [Commands](klipper-functions.md) | [Messages →](message_definition.md)
 
-The shared reader is an optional single NFC reader mounted **inside the MMU body** - not tied to any EMU lane. It defaults to PN532 hardware, and can also use PN7160 by setting `reader_type: pn7160` in `[nfc_gate shared]`. You tap a tagged spool on it before loading; when Happy Hare starts the pregate preload NFC stages the spool ID automatically.
+The shared reader is an optional single NFC reader mounted **inside the MMU body** - not tied to any EMU lane. It defaults to PN532 hardware, can use PN7160 with `reader_type: pn7160`, and can use RC522 as a UID-only SPI reader with `reader_type: rc522`. You tap a tagged spool on it before loading; when Happy Hare starts the pregate preload NFC stages the spool ID automatically.
 
 For the full console/log message reference, see [Message Definitions](message_definition.md).
 
@@ -169,8 +169,8 @@ force_spool_id:         true
 | Key | Default | Description |
 |---|---|---|
 | `enabled` | `True` | Set `False` to keep the shared-reader config installed without initializing the reader. |
-| `reader_type` | inherited from `[nfc_gate]` (`pn532` in the shipped config) | Reader driver to use. Supported values are `pn532` and `pn7160`. |
-| `i2c_address` | reader-specific default | I2C address for the shared reader. PN532 defaults to `36`; PN7160 must be one of `40-43` (`0x28-0x2B`). |
+| `reader_type` | inherited from `[nfc_gate]` (`pn532` in the shipped config) | Reader driver to use. Supported values are `pn532`, `pn7160`, and UID-only `rc522`. |
+| `i2c_address` | reader-specific default | I2C address for the shared reader. PN532 defaults to `36`; PN7160 must be one of `40-43` (`0x28-0x2B`). Not used by RC522. |
 | `shared` | `false` | Must be `true`. Enables shared dispatch mode. |
 | `startup_polling` | `1` in the shipped template | Set to `1` to start polling at Klipper boot. |
 | `scan_poll_interval` | inherited from `[nfc_gate]` | Seconds between shared-reader tag reads while polling. The shipped default is `0.25`. |

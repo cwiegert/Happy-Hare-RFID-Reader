@@ -28,6 +28,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   explaining that rich mode is required to pass filament data to Happy Hare
   without Spoolman, and skips the auto-create Spoolman spool question since there
   is no Spoolman instance to create records in.
+- Fixed no-Spoolman continuous scan-jog resolution. When continuous mode finds a
+  UID during motion and `tag_parsing: True`, it now runs the normal rich-tag poll
+  immediately after the current move completes, before scheduling the
+  overshoot-backup retry. This lets metadata-only tags resolve cleanly with
+  `spoolman_url: disabled` instead of backing up first because the Spoolman UID
+  lookup was unavailable.
 
 ### Console Output and Logging
 

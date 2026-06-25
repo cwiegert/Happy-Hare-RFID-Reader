@@ -151,6 +151,7 @@ spoolman_auto_create: False
 [nfc_gate]
 startup_polling:    1
 startup_poll_delay: 0.0
+startup_check_unknown_gates: True
 poll_interval:      10
 absent_threshold:   3
 ```
@@ -159,6 +160,7 @@ absent_threshold:   3
 |---|---|---|
 | `startup_polling` | `1` | `-1` = manual start only. `1` = start polling automatically after reader init. `0` = explicitly disabled (useful as a lane override). |
 | `startup_poll_delay` | `0.0` | Seconds to wait before the first automatic poll. The shipped hardware config staggers this by 0.5 seconds per lane. |
+| `startup_check_unknown_gates` | `True` | If Happy Hare reports this lane as unknown (`gate_status=-1`) at startup, run `MMU_CHECK_GATE GATE=<n>` for that lane before seeding NFC's cache. Skipped while printing, while Happy Hare is busy, or while filament is not parked. |
 | `poll_interval` | `10` | Seconds between polls while background polling is active. |
 | `absent_threshold` | `3` | Consecutive missed reads before `_NFC_SPOOL_REMOVED` fires. At 10s interval, default = ~30s before removal. |
 
@@ -435,9 +437,12 @@ MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 
 ### `_NFC_TAG_NO_SPOOL`
 
-Called when a tag is detected but no matching spool is found in Spoolman. Parameters: `GATE`, `UID`.
+Called when a tag is detected but cannot be resolved to a spool. Parameters:
+`GATE`, `UID`, and optional `SPOOLMAN_DISABLED`.
 
-Default: prints the unknown UID to the console with instructions to register it.
+Default: with Spoolman enabled, prints the unknown UID with instructions to
+register it. With Spoolman disabled, prints a warning that the tag was read but
+no rich metadata or spool assignment was available.
 
 ---
 

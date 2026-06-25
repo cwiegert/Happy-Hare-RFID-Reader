@@ -609,6 +609,8 @@ class NFCGateDefaults:
                                                  minval=-1, maxval=1)
         self.startup_poll_delay = config.getfloat('startup_poll_delay', 0.,
                                                    minval=0., maxval=3600.)
+        self.startup_check_unknown_gates = config.getboolean(
+            'startup_check_unknown_gates', True)
         self.absent_threshold   = config.getint('absent_threshold', 3,
                                                  minval=1, maxval=255)
         self.transceive_delay   = config.getfloat('transceive_delay', 0.250,
@@ -786,6 +788,7 @@ class NFCGate:
             self._poll_interval = 0.0
             self._startup_polling = 0
             self._startup_poll_delay = 0.0
+            self._startup_check_unknown_gates = False
             self._absent_threshold = 3
             self._debug = d.debug if d else 2
             self._low_level_debug = False
@@ -838,6 +841,9 @@ class NFCGate:
             'startup_poll_delay',
             d.startup_poll_delay if d else 0.,
             minval=0., maxval=3600.)
+        self._startup_check_unknown_gates = config.getboolean(
+            'startup_check_unknown_gates',
+            d.startup_check_unknown_gates if d else True)
         self._absent_threshold = config.getint('absent_threshold',
                                                 d.absent_threshold if d else 3,
                                                 minval=1, maxval=255)
@@ -911,7 +917,9 @@ class NFCGate:
         self._hh_confirmed_spool = None  # last spool Happy Hare acknowledged; enables _check_hh_cleared
         self._hh_load_paused     = False  # True while Happy Hare owns this gate assignment
         self._failed     = False
-        self._klipper    = KlipperInterface(self.printer, self.reactor, self._debug, name=self._name)
+        self._klipper    = KlipperInterface(
+            self.printer, self.reactor, self._debug, name=self._name,
+            spoolman_enabled=self._spoolman is not None)
         self._polling    = False
         self._poll_timer    = self.reactor.register_timer(self._poll_timer_event)
         self._warning_timer = self.reactor.register_timer(
@@ -1871,6 +1879,53 @@ class NFCGate:
             self.reactor.monotonic() + 2.0
         )
 
+    def _startup_check_unknown_gate(self, eventtime):
+        """Ask Happy Hare to classify this gate if it still reports unknown."""
+        if not getattr(self, '_startup_check_unknown_gates', False):
+            return
+        if self._gcode is None:
+            return
+        if self._is_printing():
+            logger.info(
+                "[%s]: gate %d — startup check-gate skipped while printing",
+                self._name, self._gate)
+            return
+
+        hh = self._read_hh_status(eventtime)
+        if not hh.present or self._gate >= hh.gate_count:
+            return
+        if hh.status != -1:
+            return
+        if not hh.idle:
+            logger.info(
+                "[%s]: gate %d — startup check-gate skipped because "
+                "Happy Hare is busy (action=%s)",
+                self._name, self._gate, hh.action)
+            return
+        if hh.filament_pos != hh_status.FILAMENT_POS_UNLOADED:
+            logger.info(
+                "[%s]: gate %d — startup check-gate skipped because "
+                "filament is not parked (filament_pos=%d)",
+                self._name, self._gate, hh.filament_pos)
+            return
+
+        script = "MMU_CHECK_GATE GATE=%d" % self._gate
+        try:
+            logger.info(
+                "[%s]: gate %d — Happy Hare reports status=-1; "
+                "running %s",
+                self._name, self._gate, script)
+            self._gcode.run_script(script)
+            refreshed = self._read_hh_status(self.reactor.monotonic())
+            logger.info(
+                "[%s]: gate %d — startup check-gate complete; "
+                "Happy Hare status=%s spool=%s",
+                self._name, self._gate, refreshed.status, refreshed.spool)
+        except Exception as e:
+            logger.warning(
+                "[%s]: gate %d — startup check-gate failed (%s): %s",
+                self._name, self._gate, script, e)
+
     def _delayed_init(self, eventtime):
         """Initialise the NFC Reader after other I2C devices have settled.
 
@@ -1901,10 +1956,12 @@ class NFCGate:
         # after restart does not re-dispatch a spool Happy Hare already knows about.
         # Shared reader has no Happy Hare gate assignment to seed and no scan-jog edge detector.
         if not self._failed and not self._shared:
-            self._seed_cache_from_hh(eventtime)
+            self._startup_check_unknown_gate(eventtime)
+            seed_time = self.reactor.monotonic()
+            self._seed_cache_from_hh(seed_time)
             # Bootstrap the scan-jog edge detector with the current gate status
             # so a pre-loaded gate never triggers a scan on the first poll.
-            hh = self._read_hh_status(eventtime)
+            hh = self._read_hh_status(seed_time)
             if hh.present and self._gate < hh.gate_count:
                 self._prev_gate_status = hh.status
 
@@ -2085,7 +2142,8 @@ class NFCGate:
         # Scan-jog gate-status edge detection.
         # Reads Happy Hare gate_status on every tick — Python dict only, no I2C.
         # When gate is empty (curr==0) skip the I2C read entirely.
-        # On < 1 -> >=1 transition with Happy Hare idle and not printing, enter scan mode.
+        # On 0 -> >=1 transition with Happy Hare idle and not printing, enter scan mode.
+        # A -1 -> >=1 transition is Happy Hare resolving an unknown state, not a new load.
         if self._scan_enabled:
             hh = self._read_hh_status(eventtime)
             if hh.present and self._gate < hh.gate_count:
@@ -2140,8 +2198,9 @@ class NFCGate:
                             self._name, self._gate)
                         return self.reactor.monotonic() + 1.0
                     return self.reactor.monotonic() + self._poll_interval
-                # 0→1 edge: arm pending flag and let Happy Hare fully settle
-                if prev < 1  and curr >= 1:
+                # 0→1 edge: arm pending flag and let Happy Hare fully settle.
+                # Do not treat -1→1 as a preload; that is unknown-state recovery.
+                if prev == hh_status.GATE_EMPTY and curr >= 1:
                     self._scan_pending = True
                     self._scan_deferred_notified = False
                     self._scan_idle_ready_time = 0.0
@@ -2426,8 +2485,12 @@ class NFCGate:
                 action_str = "REMOVED  (tag absent for %d consecutive polls)" % (
                     self._state.absent_threshold,)
             elif etype == EVENT_UID_ONLY:
-                action_str = "NO_SPOOL  (uid=%s not registered in Spoolman)" % (
-                    event[2],)
+                if self._spoolman is None:
+                    action_str = "NO_SPOOL  (uid=%s no metadata/spool assignment)" % (
+                        event[2],)
+                else:
+                    action_str = "NO_SPOOL  (uid=%s not registered in Spoolman)" % (
+                        event[2],)
             else:
                 action_str = str(etype)
         logger.debug("[%s]: POLL  gate=%-2d  %-28s  →  %s",

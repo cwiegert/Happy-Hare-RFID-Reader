@@ -13,7 +13,7 @@
 #   _NFC_SPOOL_CHANGED  GATE=<n>  [NAME=<str>]  [MATERIAL=<str>]  [COLOR=<hex>]  [TEMP=<int>]  UID=<hex>
 #                       [SCAN_FINISH=1]
 #   _NFC_SPOOL_REMOVED  GATE=<n>
-#   _NFC_TAG_NO_SPOOL   GATE=<n>  UID=<hex>  [SCAN_FINISH=1]
+#   _NFC_TAG_NO_SPOOL   GATE=<n>  UID=<hex>  [SPOOLMAN_DISABLED=1] [SCAN_FINISH=1]
 
 import re
 
@@ -23,11 +23,13 @@ from .log import logger
 
 
 class KlipperInterface:
-    def __init__(self, printer, reactor, debug=2, name=''):
+    def __init__(self, printer, reactor, debug=2, name='',
+                 spoolman_enabled=True):
         self._printer = printer
         self._reactor = reactor
         self._debug = debug
         self._name = name
+        self._spoolman_enabled = spoolman_enabled
 
     def dispatch(self, event_type, gate, uid_hex, spool_id, meta=None,
                  auto_created=False, scan_finish=False):
@@ -101,12 +103,21 @@ class KlipperInterface:
                             gate, uid_hex, name, material, color, brand,
                             min_temp, max_temp, diameter, weight)
             elif event_type == EVENT_UID_ONLY:
-                script = "_NFC_TAG_NO_SPOOL GATE={} READER={} UID={}{}".format(
-                    gate, self._name, uid_hex, " SCAN_FINISH=1" if scan_finish else "")
+                script = "_NFC_TAG_NO_SPOOL GATE={} READER={} UID={}{}{}".format(
+                    gate, self._name, uid_hex,
+                    " SPOOLMAN_DISABLED=1" if not self._spoolman_enabled else "",
+                    " SCAN_FINISH=1" if scan_finish else "")
                 if self._debug >= 3:
-                    logger.info(
-                        "nfc_gates: gate %d → tag %s (no spool ID in Spoolman)",
-                        gate, uid_hex)
+                    if self._spoolman_enabled:
+                        logger.info(
+                            "nfc_gates: gate %d → tag %s "
+                            "(no spool ID in Spoolman)",
+                            gate, uid_hex)
+                    else:
+                        logger.info(
+                            "nfc_gates: gate %d → tag %s "
+                            "(Spoolman disabled; no metadata spool)",
+                            gate, uid_hex)
             elif event_type == EVENT_REMOVED:
                 script = "_NFC_SPOOL_REMOVED GATE={} READER={}".format(gate, self._name)
                 if self._debug >= 3:

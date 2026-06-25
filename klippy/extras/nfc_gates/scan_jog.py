@@ -1617,7 +1617,12 @@ def finish(gate):
             logger.info(msg)
             gate._console(msg)
         elif event_type == 'uid_only':
-            msg = "[WARN] NFC[%s]: tag has no Spoolman match" % gate._name.capitalize()
+            if gate._spoolman is None:
+                msg = ("[WARN] NFC[%s]: tag read, but no rich metadata "
+                       "or spool assignment was found" %
+                       gate._name.capitalize())
+            else:
+                msg = "[WARN] NFC[%s]: tag has no Spoolman match" % gate._name.capitalize()
             logger.warning(msg)
             gate._console(msg)
     gate._scan_previous_uid = None

@@ -104,11 +104,17 @@ klippy:connect  →  _handle_connect()  →  schedule _delayed_init() (2 s)
 
 _delayed_init()
   1. Initialise NFC reader
-  2. Read Happy Hare gate map  →  seed this lane's local cache
-  3. Start background polling  (if startup_polling: 1)
+  2. If enabled, ask Happy Hare to check this lane when it reports `gate_status=-1`
+  3. Read Happy Hare gate map  →  seed this lane's local cache
+  4. Start background polling  (if startup_polling: 1)
 ```
 
-**Step 2 is the key one.** NFC_Manager calls `mmu.get_status()` directly to read `gate_spool_id` for this gate. The result is stored as a one-shot seed. On the very first poll:
+If `startup_check_unknown_gates: True` and Happy Hare reports this lane as
+unknown (`gate_status=-1`), NFC runs `MMU_CHECK_GATE GATE=<n>` before seeding.
+That check is skipped while printing, while Happy Hare is busy, or while
+filament is not parked.
+
+**Step 3 is the key one.** NFC_Manager calls `mmu.get_status()` directly to read `gate_spool_id` for this gate. The result is stored as a one-shot seed. On the very first poll:
 
 - Tag resolves to the **same spool** as the HH seed → cache updated silently, **no dispatch** (HH already knows)
 - Tag resolves to a **different spool** → `_NFC_SPOOL_CHANGED` dispatched normally (spool was swapped while Klipper was down)
@@ -614,18 +620,22 @@ The macro also checks `printer.mmu.action` — if the MMU is mid-load, unload, o
 
 ### `_NFC_TAG_NO_SPOOL`
 
-Fires when a tag UID is detected but no matching spool is found in Spoolman.
+Fires when a tag UID is detected but cannot be resolved to a spool.
 
 ```gcode
-_NFC_TAG_NO_SPOOL GATE=<gate> UID=<uid> [SCAN_FINISH=1]
+_NFC_TAG_NO_SPOOL GATE=<gate> UID=<uid> [SPOOLMAN_DISABLED=1] [SCAN_FINISH=1]
 ```
 
 Parameters:
 - `GATE` — Happy Hare gate number
 - `UID` — the unrecognized tag UID
+- `SPOOLMAN_DISABLED` — `1` when this is the no-Spoolman metadata path
 - `SCAN_FINISH` — `1` when the event came from scan-jog after rewind; accepted as a compatibility marker by the default macro
 
-Default behavior: prints a message to the console with the UID and instructions to register it, clears stale visible filament fields, and keeps the gate loaded/available.
+Default behavior: with Spoolman enabled, prints a message with the UID and
+instructions to register it. With Spoolman disabled, prints a warning that the
+tag was read but no rich metadata or spool assignment was available. Both paths
+clear stale visible filament fields and keep the gate loaded/available.
 
 ```gcode
 MMU_GATE_MAP GATE={gate} SPOOLID=-1 NAME=Unknown MATERIAL=Unknown COLOR=FFFFFF TEMP=0 AVAILABLE=1 SYNC=1 QUIET=1

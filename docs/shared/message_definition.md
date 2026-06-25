@@ -84,7 +84,7 @@ commands and scan-jog.
 | Poll event detected | No direct console message from Python; configured macros may respond. | `INFO     nfc_gate: [laneN] gate <n> — <event> uid=<uid> spool=<spool>` at `debug: 3` |
 | Spool dispatch to Happy Hare | Macro output, if any, comes from the configured `_NFC_SPOOL_CHANGED` macro. | `INFO     nfc_gates: gate <n> → spool <spool> detected (UID <uid>)` |
 | Metadata-only dispatch to Happy Hare | Macro output, if any, comes from the configured `_NFC_SPOOL_CHANGED` macro. | `INFO     nfc_gates: gate <n> → tag <uid> metadata-only (material=<material> color=<color> temp=<temp>)` |
-| UID has no Spoolman spool | Macro output, if any, comes from the configured `_NFC_TAG_NO_SPOOL` macro. | `INFO     nfc_gates: gate <n> → tag <uid> (no spool ID in Spoolman)` |
+| UID has no spool assignment | Macro output, if any, comes from the configured `_NFC_TAG_NO_SPOOL` macro. | `INFO     nfc_gates: gate <n> → tag <uid> (no spool ID in Spoolman)` or `(Spoolman disabled; no metadata spool)` |
 | Spool removed dispatch | Macro output, if any, comes from the configured `_NFC_SPOOL_REMOVED` macro. | `INFO     nfc_gates: gate <n> → spool removed (was spool_id=<spool>)` |
 | G-code dispatch failed | No direct console message from Python. Klipper may show the macro error. | `ERROR    nfc_gates: GCode dispatch failed for gate <n> event <event>` |
 | HH already owns NFC spool | No direct console message. | `INFO     nfc_gate: [laneN] gate <n> — spool confirmed by NFC; HH owns same spool — suspending poll until ejected` |
@@ -129,7 +129,7 @@ JOG_SCAN=1` or by the automatic scan-jog trigger.
 | Rewind complete | `[REWIND] NFC[<n>]: rewind complete; gate parking handed to Happy Hare (rewound=<mm>mm scan=<mm>mm buffer=<mm>mm)` | Same message at `INFO` |
 | Spool assigned | `[OK] NFC[<n>]: spool <spool> assigned` | Same message at `INFO` |
 | Metadata assigned | `[OK] NFC[<n>]: tag metadata assigned` | Same message at `INFO` |
-| Tag has no Spoolman match | `[WARN] NFC[<n>]: tag has no Spoolman match` | `WARNING  [WARN] NFC[<n>]: tag has no Spoolman match` |
+| Tag has no spool assignment | Spoolman enabled: `[WARN] NFC[<n>]: tag has no Spoolman match`; Spoolman disabled: `[WARN] NFC[<n>]: tag read, but no rich metadata or spool assignment was found` | Same message at `WARNING` |
 | No tag found | `[REWIND] NFC[<n>]: no tag found; rewinding <mm>mm (scan=<mm>mm buffer=<mm>mm)` | Same message at `INFO` |
 | No tag found, rewind skipped | `[REWIND] NFC[<n>]: no tag found; rewind fast move skipped (scan=<mm>mm buffer=<mm>mm)` | Same message at `INFO` |
 | Print starts during scan | No direct console message unless a rewind/no-tag message follows. | `WARNING  nfc_gate: [laneN] scan mode: print started — aborting` |

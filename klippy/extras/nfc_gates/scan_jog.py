@@ -28,6 +28,7 @@ SCAN_JOG_SUBSTEPS = 3
 LEFT_NEIGHBOR_CLEARANCE_MM = 75.0
 LEFT_NEIGHBOR_CLEARANCE_RETRIES = 3
 TAG_READ_HOLD_DELAY = 0.1
+CONTINUOUS_QUEUE_COMPLETE_EPSILON = 0.05
 
 LED_SEARCHING  = 'mmu_clockwise_slow'
 LED_TAG_READ   = 'mmu_RFID_read'
@@ -623,6 +624,7 @@ def start(gate, max_mm=None):
     gate._scan_mm_total = 0.0
     gate._scan_next_chunk_time = gate.reactor.monotonic()
     gate._scan_continuous_move_inflight = False
+    gate._scan_continuous_move_source = None
     gate._scan_continuous_move_complete_time = 0.0
     gate._scan_continuous_last_move_mm = 0.0
     gate._scan_continuous_probe_due = False
@@ -854,7 +856,8 @@ def continuous_step_event(gate, eventtime):
     move_inflight = getattr(gate, '_scan_continuous_move_inflight', False)
     complete_time = getattr(gate, '_scan_continuous_move_complete_time', 0.0)
     probe_due = getattr(gate, '_scan_continuous_probe_due', False)
-    move_complete = (not move_inflight) or now >= complete_time
+    move_complete, complete_time = refresh_continuous_move_complete(
+        gate, move_inflight, complete_time)
     completed_continuous_move = move_inflight and move_complete
 
     if move_inflight and move_complete and not probe_due:
@@ -1032,6 +1035,7 @@ def continuous_step_event(gate, eventtime):
     gate._scan_continuous_last_move_mm = move
     gate._scan_continuous_probe_due = True
     gate._scan_continuous_move_inflight = True
+    gate._scan_continuous_move_source = move_source
     gate._scan_continuous_move_complete_time = (
         gate.reactor.monotonic() + remaining_duration)
     gate._scan_next_chunk_time = (
@@ -1298,6 +1302,7 @@ def disconnect_cleanup(gate):
     gate._scan_timer = None
     gate._scan_found_event = None
     gate._scan_continuous_move_inflight = False
+    gate._scan_continuous_move_source = None
     gate._scan_continuous_move_complete_time = 0.0
     gate._scan_continuous_last_move_mm = 0.0
     gate._scan_continuous_probe_due = False
@@ -1823,6 +1828,38 @@ def _continuous_timing_snapshot(gate, mmu_toolhead):
     estimated_print_time = float(
         mcu.estimated_print_time(gate.reactor.monotonic()))
     return last_move_time, estimated_print_time
+
+
+def continuous_queue_remaining(gate):
+    mmu = gate.printer.lookup_object('mmu', None)
+    mmu_toolhead = getattr(mmu, 'mmu_toolhead', None) if mmu is not None else None
+    if mmu_toolhead is None:
+        return None
+    last_move_time, estimated_print_time = _continuous_timing_snapshot(
+        gate, mmu_toolhead)
+    return last_move_time - estimated_print_time
+
+
+def refresh_continuous_move_complete(gate, move_inflight, complete_time):
+    if not move_inflight:
+        return True, complete_time
+    if getattr(gate, '_scan_continuous_move_source', None) != "Direct Move":
+        return gate.reactor.monotonic() >= complete_time, complete_time
+    remaining = continuous_queue_remaining(gate)
+    gate._scan_continuous_queue_remaining = remaining
+    if gate._debug >= 4:
+        logger.debug(
+            "[%s]: continuous queue timing completion check "
+            "queue_remaining=%s threshold=%.3f",
+            gate._name.capitalize(),
+            _fmt_optional_float(remaining),
+            CONTINUOUS_QUEUE_COMPLETE_EPSILON)
+    if remaining <= CONTINUOUS_QUEUE_COMPLETE_EPSILON:
+        gate._scan_continuous_move_complete_time = gate.reactor.monotonic()
+        return True, gate._scan_continuous_move_complete_time
+    gate._scan_continuous_move_complete_time = (
+        gate.reactor.monotonic() + max(0.0, remaining))
+    return False, gate._scan_continuous_move_complete_time
 
 
 def run_continuous_jog(gate, mm):

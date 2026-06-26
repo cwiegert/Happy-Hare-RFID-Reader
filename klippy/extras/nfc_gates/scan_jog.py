@@ -826,6 +826,7 @@ def continuous_step_event(gate, eventtime):
     move_inflight = getattr(gate, '_scan_continuous_move_inflight', False)
     complete_time = getattr(gate, '_scan_continuous_move_complete_time', 0.0)
     move_complete = (not move_inflight) or now >= complete_time
+    completed_continuous_move = move_inflight and move_complete
 
     if move_inflight and move_complete:
         gate._scan_continuous_move_inflight = False
@@ -859,6 +860,11 @@ def continuous_step_event(gate, eventtime):
                 tag_found = continuous_probe_uid(gate)
             elif getattr(gate, '_scan_continuous_pending_uid', None):
                 tag_found = full_poll_after_continuous_probe(gate)
+            elif completed_continuous_move:
+                # The in-flight UID probe already checked this chunk.  If it
+                # found nothing, queue the next chunk instead of inserting a
+                # stopped, full-timeout poll that breaks continuous motion.
+                tag_found = False
             else:
                 tag_found = gate._poll()
         except Exception:

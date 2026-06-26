@@ -1835,6 +1835,20 @@ def _continuous_timing_snapshot(gate, mmu_toolhead):
     return last_move_time, estimated_print_time
 
 
+def continuous_lookahead_flush(mmu_toolhead):
+    flush = getattr(mmu_toolhead, '_nfc_continuous_lookahead_flush', None)
+    if flush is not None:
+        return flush
+    if hasattr(mmu_toolhead, '_process_lookahead'):
+        flush = mmu_toolhead._process_lookahead
+    elif hasattr(mmu_toolhead, 'lookahead'):
+        flush = mmu_toolhead.lookahead.flush
+    else:
+        flush = False
+    setattr(mmu_toolhead, '_nfc_continuous_lookahead_flush', flush)
+    return flush
+
+
 def continuous_queue_remaining(gate):
     mmu = gate.printer.lookup_object('mmu', None)
     mmu_toolhead = getattr(mmu, 'mmu_toolhead', None) if mmu is not None else None
@@ -1959,8 +1973,9 @@ def run_direct_continuous_jog(gate, mm):
         # return just as late as a short one.  Process lookahead enough to put
         # the move in the MMU trapq and let Klipper's background flusher send
         # steps while NFC UID probes run.
-        if hasattr(mmu_toolhead, '_process_lookahead'):
-            mmu_toolhead._process_lookahead()
+        flush_lookahead = continuous_lookahead_flush(mmu_toolhead)
+        if flush_lookahead:
+            flush_lookahead()
         last_after = float(mmu_toolhead.print_time)
         est_after = float(
             mcu.estimated_print_time(gate.reactor.monotonic()))

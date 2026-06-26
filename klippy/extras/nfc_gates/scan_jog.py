@@ -1771,6 +1771,31 @@ def continuous_move_source(move_path):
     return str(move_path or "unknown")
 
 
+def _fmt_optional_float(value):
+    return "n/a" if value is None else "%.6f" % value
+
+
+def _continuous_timing_snapshot(gate, mmu_toolhead):
+    mcu = getattr(mmu_toolhead, 'mcu', None)
+    if mcu is None:
+        mcu = gate.printer.lookup_object('mcu', None)
+    last_move_time = None
+    estimated_print_time = None
+    get_last_move_time = getattr(mmu_toolhead, 'get_last_move_time', None)
+    if get_last_move_time is not None:
+        try:
+            last_move_time = float(get_last_move_time())
+        except Exception:
+            last_move_time = None
+    if mcu is not None and hasattr(mcu, 'estimated_print_time'):
+        try:
+            estimated_print_time = float(
+                mcu.estimated_print_time(gate.reactor.monotonic()))
+        except Exception:
+            estimated_print_time = None
+    return last_move_time, estimated_print_time
+
+
 def run_continuous_jog(gate, mm):
     if (getattr(gate, '_scan_continuous_direct_available', True)
             and run_direct_continuous_jog(gate, mm)):
@@ -1807,6 +1832,9 @@ def run_direct_continuous_jog(gate, mm):
     if mmu_toolhead is None:
         return False
     try:
+        timing_before = (None, None)
+        if gate._debug >= 4:
+            timing_before = _continuous_timing_snapshot(gate, mmu_toolhead)
         if not gate._scan_gate_selected:
             mmu.select_gate(gate._gate)
             gate._scan_gate_selected = True
@@ -1838,6 +1866,30 @@ def run_direct_continuous_jog(gate, mm):
         printer_toolhead = getattr(mmu, 'toolhead', None)
         if printer_toolhead is not None:
             printer_toolhead.flush_step_generation()
+        if gate._debug >= 4:
+            last_before, est_before = timing_before
+            last_after, est_after = _continuous_timing_snapshot(
+                gate, mmu_toolhead)
+            last_delta = (
+                last_after - last_before
+                if last_after is not None and last_before is not None
+                else None)
+            queue_remaining = (
+                last_after - est_after
+                if last_after is not None and est_after is not None
+                else None)
+            logger.debug(
+                "[%s]: continuous Direct Move timing detail "
+                "mmu_last_before=%s mmu_last_after=%s "
+                "last_delta=%s mcu_est_before=%s mcu_est_after=%s "
+                "queue_remaining=%s",
+                gate._name.capitalize(),
+                _fmt_optional_float(last_before),
+                _fmt_optional_float(last_after),
+                _fmt_optional_float(last_delta),
+                _fmt_optional_float(est_before),
+                _fmt_optional_float(est_after),
+                _fmt_optional_float(queue_remaining))
         return True
     except Exception:
         logger.exception(

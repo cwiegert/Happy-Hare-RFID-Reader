@@ -263,6 +263,33 @@ def continuous_probe_uid(gate):
     return True
 
 
+def log_continuous_queue_remaining(gate, label):
+    """Log Klipper's remaining queued MMU move time for continuous-scan debug."""
+    if gate._debug < 4:
+        return None
+    mmu = gate.printer.lookup_object('mmu', None)
+    mmu_toolhead = getattr(mmu, 'mmu_toolhead', None) if mmu is not None else None
+    if mmu_toolhead is None:
+        logger.debug(
+            "[%s]: continuous queue timing %s unavailable: no mmu_toolhead",
+            gate._name.capitalize(), label)
+        return None
+    last_move_time, estimated_print_time = _continuous_timing_snapshot(
+        gate, mmu_toolhead)
+    queue_remaining = (
+        last_move_time - estimated_print_time
+        if last_move_time is not None and estimated_print_time is not None
+        else None)
+    logger.debug(
+        "[%s]: continuous queue timing %s "
+        "mmu_last=%s mcu_est=%s queue_remaining=%s",
+        gate._name.capitalize(), label,
+        _fmt_optional_float(last_move_time),
+        _fmt_optional_float(estimated_print_time),
+        _fmt_optional_float(queue_remaining))
+    return queue_remaining
+
+
 def _cache_continuous_resolved_uid(gate, uid, spool_id, path):
     tag = CurrentTag(uid=uid)
     target_info = getattr(gate, '_scan_continuous_pending_target_info', None)
@@ -860,9 +887,13 @@ def continuous_step_event(gate, eventtime):
         try:
             if probe_due:
                 gate._scan_continuous_probe_due = False
+                log_continuous_queue_remaining(gate, "probe_due before")
                 tag_found = continuous_probe_uid(gate)
+                log_continuous_queue_remaining(gate, "probe_due after")
             elif move_inflight and not move_complete:
+                log_continuous_queue_remaining(gate, "inflight probe before")
                 tag_found = continuous_probe_uid(gate)
+                log_continuous_queue_remaining(gate, "inflight probe after")
             elif getattr(gate, '_scan_continuous_pending_uid', None):
                 tag_found = full_poll_after_continuous_probe(gate)
             elif completed_continuous_move:

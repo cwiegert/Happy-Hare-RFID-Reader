@@ -236,6 +236,7 @@ def continuous_probe_uid(gate):
     uid = None
     target_info = None
     probe_timeout = getattr(gate, '_scan_continuous_poll_interval', 0.050)
+    probe_start_pos = estimate_continuous_probe_position(gate)
     read_tag = getattr(gate._reader, 'read_tag', None)
     if read_tag is not None:
         uid = read_tag(timeout=probe_timeout)
@@ -253,16 +254,159 @@ def continuous_probe_uid(gate):
                 release(reason="continuous_uid_probe")
             except TypeError:
                 release()
+    probe_end_pos = estimate_continuous_probe_position(gate)
     if not uid:
+        if gate._debug >= 4:
+            logger.debug(
+                "[%s]: continuous UID probe found no tag "
+                "probe_window=%.1f..%.1fmm",
+                gate._name.capitalize(),
+                min(probe_start_pos, probe_end_pos),
+                max(probe_start_pos, probe_end_pos))
         return False
     gate._scan_continuous_pending_uid = uid
     gate._scan_continuous_pending_target_info = (
         dict(target_info) if isinstance(target_info, dict) else None)
+    record_continuous_uid_hit(gate, uid, probe_start_pos, probe_end_pos)
     if gate._debug >= 3:
         logger.info(
             "[%s]: continuous scan UID probe found uid=%s; "
             "deferring Spoolman/rich resolution until current move completes",
             gate._name.capitalize(), uid)
+    return True
+
+
+def estimate_continuous_probe_position(gate):
+    """Estimate where the spool was when the latest in-flight UID probe hit."""
+    move = float(getattr(gate, '_scan_continuous_last_move_mm', 0.0))
+    end_mm = float(getattr(gate, '_scan_mm_total', 0.0))
+    if abs(move) <= 0.001:
+        return end_mm
+    start_mm = end_mm - move
+    duration = continuous_chunk_interval(gate, move)
+    if duration <= 0.0:
+        return end_mm
+
+    progress = None
+    if getattr(gate, '_scan_continuous_move_source', None) == "Direct Move":
+        remaining = continuous_queue_remaining(gate)
+        if remaining is not None:
+            active_remaining = max(
+                0.0,
+                remaining - getattr(gate, '_scan_continuous_queue_baseline', 0.0))
+            progress = 1.0 - (active_remaining / duration)
+
+    if progress is None:
+        complete_time = float(
+            getattr(gate, '_scan_continuous_move_complete_time', 0.0) or 0.0)
+        progress = 1.0 - (
+            max(0.0, complete_time - gate.reactor.monotonic()) / duration)
+
+    progress = min(1.0, max(0.0, progress))
+    return start_mm + (move * progress)
+
+
+def record_continuous_uid_hit(gate, uid, start_pos, end_pos):
+    hits = getattr(gate, '_scan_continuous_uid_hits', None)
+    if hits is None:
+        hits = []
+        gate._scan_continuous_uid_hits = hits
+    low = min(start_pos, end_pos)
+    high = max(start_pos, end_pos)
+    center = (low + high) * 0.5
+    hits.append((uid, center, low, high))
+    if gate._debug >= 4:
+        window = continuous_uid_hit_window(gate, uid)
+        if window is not None:
+            hit_low, hit_high, hit_center, hit_count = window
+        else:
+            hit_low, hit_high, hit_center, hit_count = low, high, center, 1
+        logger.debug(
+            "[%s]: continuous UID hit uid=%s estimated_pos=%.1fmm "
+            "probe_window=%.1f..%.1fmm "
+            "chunk_start=%.1fmm chunk_end=%.1fmm "
+            "hit_window=%.1f..%.1fmm center=%.1fmm hits=%d",
+            gate._name.capitalize(), uid, center, low, high,
+            getattr(gate, '_scan_mm_total', 0.0)
+            - getattr(gate, '_scan_continuous_last_move_mm', 0.0),
+            getattr(gate, '_scan_mm_total', 0.0),
+            hit_low, hit_high, hit_center, hit_count)
+
+
+def continuous_uid_hit_window(gate, uid):
+    matching = [
+        (center, low, high)
+        for hit_uid, center, low, high
+        in getattr(gate, '_scan_continuous_uid_hits', [])
+        if hit_uid == uid
+    ]
+    if not matching:
+        return None
+    low = min(hit_center for hit_center, _hit_low, _hit_high in matching)
+    high = max(hit_center for hit_center, _hit_low, _hit_high in matching)
+    return low, high, (low + high) * 0.5, len(matching)
+
+
+def continuous_overshoot_backup_mm(gate, uid):
+    """Choose the rich-read retry point after a continuous UID hit.
+
+    UID-only and Spoolman-resolved scans still finish from the cached UID.  Rich
+    tag parsing needs the spool to be stopped near the readable area; when a
+    continuous move produced several UID hits, use the estimated middle of that
+    hit window instead of blindly backing up half a chunk.
+    """
+    window = continuous_uid_hit_window(gate, uid)
+    if window is not None:
+        low, high, center, count = window
+        current = float(getattr(gate, '_scan_mm_total', 0.0))
+        backup_mm = max(0.0, current - center)
+        backup_mm = min(backup_mm, max(0.0, current))
+        return backup_mm, center, "uid_hit_window", low, high, count
+
+    backup_mm = max(
+        0.0,
+        float(getattr(
+            gate, '_scan_continuous_overshoot_backup_mm',
+            float(getattr(gate, '_scan_continuous_step_mm', 0.0)) * 0.5)))
+    backup_mm = min(backup_mm, max(0.0, gate._scan_mm_total))
+    center = max(0.0, gate._scan_mm_total - backup_mm)
+    return backup_mm, center, "configured", center, center, 0
+
+
+def log_continuous_uid_hit_window(gate, uid, label):
+    if gate._debug < 3 or not uid:
+        return
+    window = continuous_uid_hit_window(gate, uid)
+    if window is None:
+        logger.info(
+            "[%s]: continuous UID hit window %s uid=%s none "
+            "current=%.1fmm",
+            gate._name.capitalize(), label, uid,
+            getattr(gate, '_scan_mm_total', 0.0))
+        return
+    low, high, center, count = window
+    logger.info(
+        "[%s]: continuous UID hit window %s uid=%s %.1f..%.1fmm "
+        "center=%.1fmm hits=%d current=%.1fmm",
+        gate._name.capitalize(), label, uid, low, high, center, count,
+        getattr(gate, '_scan_mm_total', 0.0))
+
+
+def should_backup_before_rich_read(gate, uid):
+    """Prefer the observed UID hit-window center before rich tag reads."""
+    if not getattr(gate, '_tag_parsing', False):
+        return False
+    if getattr(gate, '_scan_continuous_overshoot_backed_up', False):
+        return False
+    window = continuous_uid_hit_window(gate, uid)
+    if window is None:
+        return False
+    if gate._debug >= 3:
+        low, high, center, count = window
+        logger.info(
+            "[%s]: continuous scan uid=%s has hit_window=%.1f..%.1fmm "
+            "center=%.1fmm hits=%d; backing up before rich read",
+            gate._name.capitalize(), uid, low, high, center, count)
     return True
 
 
@@ -401,12 +545,9 @@ def queue_continuous_overshoot_backup(gate, now):
         return False
     if not getattr(gate, '_tag_parsing', False):
         return False
-    backup_mm = max(
-        0.0,
-        float(getattr(
-            gate, '_scan_continuous_overshoot_backup_mm',
-            float(getattr(gate, '_scan_continuous_step_mm', 0.0)) * 0.5)))
-    backup_mm = min(backup_mm, max(0.0, gate._scan_mm_total))
+    (backup_mm, center_mm, backup_source,
+     window_low, window_high, window_hits) = continuous_overshoot_backup_mm(
+         gate, uid)
     gate._scan_continuous_overshoot_backed_up = True
     if backup_mm <= 0.001:
         return False
@@ -422,6 +563,12 @@ def queue_continuous_overshoot_backup(gate, now):
                "backing up %.1fmm before retry"
                % (gate._name.capitalize(), uid, backup_mm))
     logger.info(msg)
+    if gate._debug >= 3:
+        logger.info(
+            "[%s]: continuous overshoot backup target %.1fmm "
+            "(source=%s current=%.1fmm hit_window=%.1f..%.1fmm hits=%d)",
+            gate._name.capitalize(), center_mm, backup_source,
+            gate._scan_mm_total, window_low, window_high, window_hits)
     gate._console(msg)
     gate._run_jog(move)
     effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
@@ -633,6 +780,7 @@ def start(gate, max_mm=None):
     gate._scan_continuous_tag_pending = False
     gate._scan_continuous_pending_uid = None
     gate._scan_continuous_pending_target_info = None
+    gate._scan_continuous_uid_hits = []
     gate._scan_continuous_queue_baseline = 0.0
     gate._scan_continuous_queue_active_remaining = 0.0
     gate._scan_continuous_direct_available = True
@@ -871,16 +1019,20 @@ def continuous_step_event(gate, eventtime):
     run_pending_hh_prep(gate)
 
     pending_tag = getattr(gate, '_scan_continuous_tag_pending', False)
-    if pending_tag:
-        if not move_complete:
-            return min(
-                complete_time,
-                gate.reactor.monotonic() + gate._scan_continuous_poll_interval)
+    if pending_tag and move_complete:
         gate._scan_continuous_tag_pending = False
+        log_continuous_uid_hit_window(
+            gate, getattr(gate, '_scan_continuous_pending_uid', None),
+            "before_tag_handling")
         tag_found = resolve_continuous_pending_uid(gate, now)
         if not tag_found:
             if getattr(gate, '_tag_parsing', False):
-                if full_poll_after_continuous_probe_resolved(gate):
+                uid = getattr(gate, '_scan_continuous_pending_uid', None)
+                if should_backup_before_rich_read(gate, uid):
+                    if queue_continuous_overshoot_backup(gate, now):
+                        return (gate.reactor.monotonic()
+                                + gate._scan_continuous_poll_interval)
+                elif full_poll_after_continuous_probe_resolved(gate):
                     tag_found = True
                 elif retry_continuous_overshoot_position(gate, now):
                     return gate.reactor.monotonic() + gate._scan_continuous_poll_interval
@@ -919,14 +1071,22 @@ def continuous_step_event(gate, eventtime):
 
     if tag_found and move_inflight and (probe_due or not move_complete):
         gate._scan_continuous_tag_pending = True
-        logger.info(
-            "[%s]: continuous scan found tag during in-flight move; "
-            "waiting %.2fs for current %.1fmm chunk to finish before tag handling",
-            gate._name.capitalize(),
-            max(0.0, complete_time - gate.reactor.monotonic()),
-            getattr(gate, '_scan_continuous_last_move_mm', 0.0))
         if move_complete:
+            logger.info(
+                "[%s]: continuous scan found tag at chunk end; "
+                "starting tag handling",
+                gate._name.capitalize())
             return gate.reactor.monotonic()
+        if gate._debug >= 3:
+            log_continuous_uid_hit_window(
+                gate, getattr(gate, '_scan_continuous_pending_uid', None),
+                "inflight")
+            logger.info(
+                "[%s]: continuous scan found uid=%s during in-flight move; "
+                "continuing UID probes for %.2fs before tag handling",
+                gate._name.capitalize(),
+                getattr(gate, '_scan_continuous_pending_uid', None),
+                max(0.0, complete_time - gate.reactor.monotonic()))
         return min(
             complete_time,
             gate.reactor.monotonic() + gate._scan_continuous_poll_interval)
@@ -1036,6 +1196,13 @@ def continuous_step_event(gate, eventtime):
     _led_effect(gate, effect_name)
     _schedule_led_reassert(gate, effect_name)
     gate._scan_mm_total += move
+    gate._scan_continuous_uid_hits = []
+    if gate._debug >= 4:
+        logger.debug(
+            "[%s]: continuous UID hit window reset for new %.1fmm chunk "
+            "%.1f..%.1fmm",
+            gate._name.capitalize(), move,
+            gate._scan_mm_total - move, gate._scan_mm_total)
     gate._scan_continuous_last_move_mm = move
     gate._scan_continuous_probe_due = True
     gate._scan_continuous_move_inflight = True
@@ -1313,6 +1480,7 @@ def disconnect_cleanup(gate):
     gate._scan_continuous_tag_pending = False
     gate._scan_continuous_pending_uid = None
     gate._scan_continuous_pending_target_info = None
+    gate._scan_continuous_uid_hits = []
     gate._scan_continuous_queue_baseline = 0.0
     gate._scan_continuous_queue_active_remaining = 0.0
     gate._scan_continuous_direct_available = True
@@ -1323,6 +1491,7 @@ def disconnect_cleanup(gate):
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
     gate._scan_decode_retry_offset = 0.0
+    gate._scan_continuous_uid_hits = []
     gate._scan_left_neighbor_gate = -1
     gate._scan_left_neighbor_shift_mm = 0.0
     gate._scan_left_neighbor_shifted = False
@@ -1567,12 +1736,9 @@ def retry_incomplete_decode(gate, now):
 
     if (getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous'
             and not getattr(gate, '_scan_continuous_overshoot_backed_up', False)):
-        backup_mm = max(
-            0.0,
-            float(getattr(
-                gate, '_scan_continuous_overshoot_backup_mm',
-                float(getattr(gate, '_scan_continuous_step_mm', 0.0)) * 0.5)))
-        backup_mm = min(backup_mm, max(0.0, gate._scan_mm_total))
+        (backup_mm, center_mm, backup_source,
+         window_low, window_high, window_hits) = continuous_overshoot_backup_mm(
+             gate, uid)
         gate._scan_continuous_overshoot_backed_up = True
         if backup_mm > 0.001:
             move = -backup_mm
@@ -1599,9 +1765,11 @@ def retry_incomplete_decode(gate, now):
             if gate._debug >= 3:
                 logger.info(
                     "[%s]: continuous overshoot backup queued %.1fmm  "
-                    "scan position %.1f / %.1fmm",
+                    "scan position %.1f / %.1fmm target=%.1fmm "
+                    "source=%s hit_window=%.1f..%.1fmm hits=%d",
                     gate._name.capitalize(), move,
-                    gate._scan_mm_total, gate._scan_max_mm)
+                    gate._scan_mm_total, gate._scan_max_mm, center_mm,
+                    backup_source, window_low, window_high, window_hits)
             return True
 
     if (getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous'
@@ -1726,6 +1894,7 @@ def finish(gate):
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
     gate._scan_decode_retry_offset = 0.0
+    gate._scan_continuous_uid_hits = []
     gate._scan_left_neighbor_gate = -1
     gate._scan_left_neighbor_shift_mm = 0.0
     gate._scan_left_neighbor_shifted = False

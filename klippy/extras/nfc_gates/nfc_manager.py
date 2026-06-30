@@ -657,7 +657,7 @@ class NFCGateDefaults:
                                                    minval=0.1, maxval=5.0)
         self.scan_motion_mode = _get_scan_motion_mode(config, 'continuous')
         self.scan_continuous_step_mm = config.getfloat(
-            'scan_continuous_step_mm', 50.0,
+            'scan_continuous_step_mm', 150.0,
             minval=1.0, maxval=500.0)
         self.scan_continuous_speed = config.getfloat(
             'scan_continuous_speed', 150.0,
@@ -668,10 +668,6 @@ class NFCGateDefaults:
         self.scan_continuous_poll_interval = config.getfloat(
             'scan_continuous_poll_interval', 0.05,
             minval=0.01, maxval=5.0)
-        self.scan_continuous_overshoot_backup_mm = config.getfloat(
-            'scan_continuous_overshoot_backup_mm',
-            self.scan_continuous_step_mm * 0.5,
-            minval=0.0, maxval=500.0)
         self.scan_enabled         = config.getboolean('scan_enabled', True)
         self.tag_parsing          = config.getboolean('tag_parsing', False)
         self.tag_max_pages        = config.getint('tag_max_pages', 16,
@@ -816,13 +812,10 @@ class NFCGate:
             self._polling = False
             self._scan_enabled = False
             self._scan_motion_mode = d.scan_motion_mode if d else 'continuous'
-            self._scan_continuous_step_mm = d.scan_continuous_step_mm if d else 50.0
+            self._scan_continuous_step_mm = d.scan_continuous_step_mm if d else 150.0
             self._scan_continuous_speed = d.scan_continuous_speed if d else 150.0
             self._scan_continuous_accel = d.scan_continuous_accel if d else 2000.0
             self._scan_continuous_poll_interval = d.scan_continuous_poll_interval if d else 0.05
-            self._scan_continuous_overshoot_backup_mm = (
-                d.scan_continuous_overshoot_backup_mm
-                if d else self._scan_continuous_step_mm * 0.5)
             self._tag_parsing = False
             self._bambu_reads = False
             self._spoolman_auto_create = False
@@ -972,7 +965,7 @@ class NFCGate:
             config, d.scan_motion_mode if d else 'continuous')
         self._scan_continuous_step_mm = config.getfloat(
             'scan_continuous_step_mm',
-            d.scan_continuous_step_mm if d else 50.0,
+            d.scan_continuous_step_mm if d else 150.0,
             minval=1.0, maxval=500.0)
         self._scan_continuous_speed = config.getfloat(
             'scan_continuous_speed',
@@ -986,11 +979,6 @@ class NFCGate:
             'scan_continuous_poll_interval',
             d.scan_continuous_poll_interval if d else 0.05,
             minval=0.01, maxval=5.0)
-        self._scan_continuous_overshoot_backup_mm = config.getfloat(
-            'scan_continuous_overshoot_backup_mm',
-            (d.scan_continuous_overshoot_backup_mm
-             if d else self._scan_continuous_step_mm * 0.5),
-            minval=0.0, maxval=500.0)
         # scan_enabled: forced false for shared (no physical EMU lane for jog).
         if self._shared:
             self._scan_enabled = False

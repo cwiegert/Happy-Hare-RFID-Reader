@@ -122,11 +122,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   completion logic.
 - Added continuous scan settings:
   `scan_continuous_step_mm`, `scan_continuous_speed`,
-  `scan_continuous_accel`, `scan_continuous_poll_interval`, and
-  `scan_continuous_overshoot_backup_mm`.
+  `scan_continuous_accel`, and `scan_continuous_poll_interval`.
 - Changed the default rich-tag decode retry spacing from 2 mm to 5 mm and added
-  a one-time continuous-mode overshoot backtrack before rich parsing/retries when
-  a UID hit does not resolve through Spoolman.
+  continuous-mode UID hit-window recentering before rich parsing/retries when a
+  UID hit does not resolve through Spoolman.
 - Changed continuous-mode rich tag retry jogs from a ±sweep to a two-phase
   backward/forward walk. After the initial overshoot backup, retries now:
   (1) step backward from the backup point in `scan_decode_retry_mm` increments

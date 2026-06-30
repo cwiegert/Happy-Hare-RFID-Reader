@@ -348,29 +348,24 @@ def continuous_uid_hit_window(gate, uid):
 
 
 def continuous_overshoot_backup_mm(gate, uid):
-    """Choose the rich-read retry point after a continuous UID hit.
+    """Choose the rich-read recenter point after continuous UID hits.
 
     UID-only and Spoolman-resolved scans still finish from the cached UID.  Rich
-    tag parsing needs the spool to be stopped near the readable area; when a
-    continuous move produced several UID hits, use the estimated middle of that
-    hit window instead of blindly backing up half a chunk.
+    tag parsing needs the spool to be stopped near the readable area, so use the
+    estimated middle of the observed UID hit window.  If there is no hit window,
+    the tag was found by a stationary poll and should use the normal small
+    decode-retry sweep instead of a continuous recenter move.
     """
     window = continuous_uid_hit_window(gate, uid)
-    if window is not None:
-        low, high, center, count = window
+    if window is None:
         current = float(getattr(gate, '_scan_mm_total', 0.0))
-        backup_mm = max(0.0, current - center)
-        backup_mm = min(backup_mm, max(0.0, current))
-        return backup_mm, center, "uid_hit_window", low, high, count
+        return 0.0, current, "no_uid_hit_window", current, current, 0
 
-    backup_mm = max(
-        0.0,
-        float(getattr(
-            gate, '_scan_continuous_overshoot_backup_mm',
-            float(getattr(gate, '_scan_continuous_step_mm', 0.0)) * 0.5)))
+    low, high, center, count = window
+    current = float(getattr(gate, '_scan_mm_total', 0.0))
+    backup_mm = max(0.0, current - center)
     backup_mm = min(backup_mm, max(0.0, gate._scan_mm_total))
-    center = max(0.0, gate._scan_mm_total - backup_mm)
-    return backup_mm, center, "configured", center, center, 0
+    return backup_mm, center, "uid_hit_window", low, high, count
 
 
 def log_continuous_uid_hit_window(gate, uid, label):
@@ -405,7 +400,7 @@ def should_backup_before_rich_read(gate, uid):
         low, high, center, count = window
         logger.info(
             "[%s]: continuous scan uid=%s has hit_window=%.1f..%.1fmm "
-            "center=%.1fmm hits=%d; backing up before rich read",
+            "center=%.1fmm hits=%d; recentering before rich read",
             gate._name.capitalize(), uid, low, high, center, count)
     return True
 
@@ -485,7 +480,7 @@ def resolve_continuous_pending_uid(gate, now):
         if gate._debug >= 3:
             logger.info(
                 "[%s]: continuous scan uid=%s not found in Spoolman; "
-                "rich tag parse will run after overshoot backup if enabled",
+                "rich tag parse will run after hit-window recenter if enabled",
                 gate._name.capitalize(), uid)
         return False
     _cache_continuous_resolved_uid(gate, uid, spool_id, 'continuous_uid_lookup')
@@ -525,8 +520,8 @@ def retry_continuous_overshoot_position(gate, now, max_attempts=3):
         return False
     if gate._debug >= 3:
         logger.info(
-            "[%s]: continuous scan uid=%s unresolved at overshoot "
-            "position; retrying rich tag parse attempt %d/%d before backup",
+            "[%s]: continuous scan uid=%s unresolved at current "
+            "position; retrying rich tag parse attempt %d/%d before recenter",
             gate._name.capitalize(), uid, attempts + 1, max_attempts)
     gate._scan_next_chunk_time = (
         gate.reactor.monotonic()
@@ -556,16 +551,16 @@ def queue_continuous_overshoot_backup(gate, now):
         0.0, gate._scan_mm_total - gate._scan_continuous_last_move_mm)
     if gate._spoolman is None:
         msg = ("[WARN] NFC[%s]: uid=%s not resolved after rich tag reads; "
-               "backing up %.1fmm before retry"
+               "recentering %.1fmm before retry"
                % (gate._name.capitalize(), uid, backup_mm))
     else:
         msg = ("[WARN] NFC[%s]: uid=%s not resolved in Spoolman or rich tag reads; "
-               "backing up %.1fmm before retry"
+               "recentering %.1fmm before retry"
                % (gate._name.capitalize(), uid, backup_mm))
     logger.info(msg)
     if gate._debug >= 3:
         logger.info(
-            "[%s]: continuous overshoot backup target %.1fmm "
+            "[%s]: continuous hit-window recenter target %.1fmm "
             "(source=%s current=%.1fmm hit_window=%.1f..%.1fmm hits=%d)",
             gate._name.capitalize(), center_mm, backup_source,
             gate._scan_mm_total, window_low, window_high, window_hits)
@@ -585,7 +580,7 @@ def queue_continuous_overshoot_backup(gate, now):
     gate._scan_next_chunk_time = gate.reactor.monotonic() + DECODE_RETRY_SETTLE_DELAY
     if gate._debug >= 3:
         logger.info(
-            "[%s]: continuous unresolved UID overshoot backup queued %.1fmm  "
+            "[%s]: continuous unresolved UID recenter queued %.1fmm  "
             "scan position %.1f / %.1fmm",
             gate._name.capitalize(), move, gate._scan_mm_total, gate._scan_max_mm)
     return True
@@ -608,7 +603,7 @@ def queue_continuous_post_backup_retry(gate, now):
         return False
     return queue_decode_retry_move(
         gate, now, uid,
-        "no complete tag read after continuous overshoot backup",
+        "no complete tag read after continuous hit-window recenter",
         max_attempts, retry_mm)
 
 
@@ -1642,9 +1637,9 @@ def next_decode_retry_move(gate, max_attempts, retry_mm):
 
 
 def next_continuous_overshoot_retry_move(gate, max_attempts, retry_mm):
-    """Retry around the continuous overshoot backup point.
+    """Retry around the continuous rich-read recenter point.
 
-    The backup point is the best available center after an in-flight UID probe.
+    The recenter point is the best available center after in-flight UID probes.
     Match the normal decode-retry contract here: with retry_mm=2 and 5 rounds,
     target offsets are +2, -2, +4, -4, ... from that center.  The returned
     value is the jog from the current position to the next target offset.
@@ -1745,7 +1740,7 @@ def retry_incomplete_decode(gate, now):
             gate._scan_continuous_chunk_start_mm = max(
                 0.0, gate._scan_mm_total - gate._scan_continuous_last_move_mm)
             msg = ("[WARN] NFC[%s]: tag decode incomplete; backing up %.1fmm "
-                   "after continuous overshoot before retry"
+                   "to continuous hit-window center before retry"
                    % (gate._name.capitalize(), backup_mm))
             logger.info("%s (uid=%s reason=%s)", msg, uid, reason)
             gate._console(msg)
@@ -1764,7 +1759,7 @@ def retry_incomplete_decode(gate, now):
                 gate.reactor.monotonic() + DECODE_RETRY_SETTLE_DELAY)
             if gate._debug >= 3:
                 logger.info(
-                    "[%s]: continuous overshoot backup queued %.1fmm  "
+                    "[%s]: continuous hit-window recenter queued %.1fmm  "
                     "scan position %.1f / %.1fmm target=%.1fmm "
                     "source=%s hit_window=%.1f..%.1fmm hits=%d",
                     gate._name.capitalize(), move,

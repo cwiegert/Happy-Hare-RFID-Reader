@@ -33,6 +33,7 @@ Supported formats
 elegoo          ELEGOO EPC-256 (NTAG213, binary)
 bambu           Bambu Lab (MIFARE Classic 1K, HKDF-derived keys, pycryptodome)
 anycubic_ace    Anycubic ACE (NTAG213/215, binary)
+tigertag        TigerTag / TigerTag+ (NTAG213/215/216, binary)
 creality_cfs    Creality CFS / K1 / K2 (MIFARE Classic, hex-encoded ASCII)
 qidi            QIDI Box (MIFARE Classic 1K, binary codes)
 opentag3d       OpenTag3D (NDEF MIME application/vnd.opentag3d, binary)
@@ -509,6 +510,8 @@ def _detect_bambu(raw: bytes) -> bool:
     """
     if len(raw) == 0:
         return False
+    if _has_tigertag_magic(raw):
+        return False
     # 64 bytes is one MIFARE Classic 1K sector (4 blocks × 16 bytes).
     # A full card dump is 1024 bytes (16 sectors × 4 blocks × 16 bytes).
     if len(raw) % 64 != 0 and len(raw) != 1024:
@@ -908,6 +911,208 @@ def _try_anycubic_ace(raw: bytes) -> Optional[dict]:
             info["diameter_mm"] = round(diam_raw / 100.0, 2)
 
     return info if info.get("material") else None
+
+
+# ---- TigerTag --------------------------------------------------------------
+
+_TIGERTAG_MAGIC = {
+    0x5BF59264: "TigerTag",
+    0xBC0FCB97: "TigerTag+",
+    0x6C41A2E1: "TigerTag Init",
+    # Earlier public database / app variants seen in the reference projects.
+    0x5BF04674: "TigerTag",
+    0xBC0A5927: "TigerTag+",
+    0x6C2B2DF1: "TigerTag Init",
+}
+
+_TIGERTAG_TYPE_FILAMENT = 0x8E
+_TIGERTAG_TYPE_RESIN = 0xAD
+
+_TIGERTAG_MATERIALS: dict[int, str] = {
+    425: "ABS-CF", 735: "ABS-AF", 1173: "PA6-GF", 2053: "PA12-GF",
+    3368: "PC-ABS", 3481: "PCTG-GF", 4587: "PC-PBT", 5733: "TPU-AMS",
+    7649: "PETG-HS", 7951: "PETG-rCF", 8345: "PLA+ Silk",
+    9456: "PLA Marble", 9483: "PVA", 9691: "EVA", 10187: "PHA",
+    10272: "PSU", 10478: "Cast Fil", 10602: "PLA Silk",
+    10738: "PC-PTFE", 11053: "PET-CF", 11506: "PLA-LW",
+    12264: "PA6-CF", 12844: "ASA", 13850: "PPA", 15041: "PCTG",
+    18130: "PS", 18703: "PETP", 18775: "PE-CF", 18922: "PLA-ESD",
+    20073: "PVC", 20562: "ABS", 24115: "SEBS", 24116: "TPC",
+    24270: "PPS-CF", 24629: "PLA-HS", 26029: "HIPS",
+    27268: "PCTPE", 27635: "PE", 27676: "ASA-CF", 28110: "SBC",
+    29815: "PEEK", 30458: "PC", 30594: "PA-GF", 30884: "PP",
+    31011: "ASA-LW", 33958: "TPE", 34049: "BVOH", 34409: "TPS",
+    35100: "ASA-GF", 38219: "PLA", 38256: "PETG", 39667: "PA12-CF",
+    39944: "PA-CF", 42623: "PMMA", 42962: "PP-GF", 43518: "TPU",
+    45962: "PVB", 46154: "PPS", 46276: "PPA-GF", 46591: "PLA+",
+    47651: "PC-PBT-CF", 48001: "PLA Wood", 48047: "TPU-HS",
+    48310: "PLA-CF", 48815: "PAHT-CF", 49074: "ABS-GF",
+    49152: "PPSU", 49804: "ASA-AF", 50206: "POM", 50497: "PP-CF",
+    51007: "Biopolymer", 51861: "PETG-ESD", 52077: "PET",
+    53890: "PCTG-CF", 53970: "PEKK", 54568: "ASA+",
+    55279: "PBT", 55418: "PETG-CF", 55796: "PA12", 56527: "PEI",
+    56666: "PA6", 57469: "PETG-HF", 58142: "TPU-GF",
+    58498: "PEBA", 59328: "PA", 61048: "PVDF",
+    61563: "PC-PBT-GF", 63946: "TPI",
+}
+
+_TIGERTAG_BRANDS: dict[int, str] = {
+    1: "Atome3D", 1068: "SainSmart", 1120: "Proto-Pasta",
+    1421: "3DJake", 2517: "Smart Materials 3D", 2833: "Xstrand",
+    3132: "Hatchbox", 4011: "QIDI Tech", 4048: "Owa",
+    4344: "MatterHackers", 4356: "Landu", 7674: "Extrudr",
+    7812: "Jayo", 7980: "Fillamentum", 8182: "Fiberlogy",
+    8303: "GST3D", 8384: "Taulman3D", 8586: "NinjaTek",
+    8675: "SOVB 3D", 8756: "BlueCast", 8990: "Ice Filaments",
+    9192: "3D Solutech", 9394: "Gizmo Dorks", 9596: "Ziro",
+    9798: "AMOLEN", 11429: "3D4Makers", 11501: "InnovateFil",
+    12345: "MakerBot", 12498: "Forshape", 14982: "3D-Fuel",
+    15899: "Kimya", 15962: "Anycubic", 18629: "PrintoMax 3D",
+    19265: "CC3D", 19961: "Rosa3D", 20523: "Raise3D",
+    20851: "Tronxy", 22652: "Spectrum", 23181: "ArianePlast",
+    23456: "Monoprice", 26595: "Sovol", 26956: "Creality",
+    28055: "TAGin3D", 28136: "Polar Filament", 28940: "Eryone",
+    29045: "Yousu", 29302: "IIIDMAX", 32587: "Amazon",
+    33788: "Verbatim", 34567: "Push Plastic", 35123: "Bambu Lab",
+    36702: "Tianse", 37434: "Winkle", 39382: "Longer",
+    39652: "3DXTech", 41932: "Jamg He", 45670: "Panchroma",
+    45678: "Atomic Filament", 46010: "AceAddity", 46203: "Overture",
+    46392: "Prusament", 47560: "Wanhao", 47930: "eSun",
+    48804: "R3D", 49784: "GIANTARM", 50311: "G3D Pro",
+    50604: "Polymaker", 51443: "BASF", 51857: "Sunlu",
+    52222: "ColorFabb", 52467: "Geeetech", 52757: "Yumi",
+    53043: "FormFutura", 53640: "Magigoo", 53856: "Lattice Medical",
+    54112: "Kexcelled", 55763: "Nanovia", 55869: "Biqu",
+    56780: "Fiberon", 56789: "Coex 3D", 57209: "FrancoFil",
+    57632: "ELEGOO", 58231: "IC3D", 58410: "AzureFilm",
+    60882: "Recreus", 63340: "Flashforge", 65535: "Generic",
+}
+
+_TIGERTAG_ASPECTS: dict[int, str] = {
+    0: "-", 21: "Clear", 24: "Tricolor", 64: "Glitter",
+    67: "Translucent", 91: "Glow in the Dark", 92: "Silk",
+    97: "Lithophane", 104: "Basic", 123: "Wood", 126: "Pearl",
+    129: "Gloss", 134: "Satin", 145: "Rainbow", 168: "Thermoreactif",
+    173: "Stone", 216: "Neon", 220: "Pastel", 226: "Metal",
+    232: "Marble", 238: "Carbon", 247: "Matt", 252: "Bicolor",
+    255: "None",
+}
+
+_TIGERTAG_UNITS: dict[int, str] = {
+    10: "mg", 21: "g", 35: "kg", 48: "ml", 62: "cl", 79: "L",
+    95: "m3", 112: "mm", 130: "cm", 149: "m", 170: "m2",
+}
+
+
+def _has_tigertag_magic(raw: bytes) -> bool:
+    if len(raw) < 4:
+        return False
+    return struct.unpack_from(">I", raw, 0)[0] in _TIGERTAG_MAGIC
+
+
+def _try_tigertag(raw: bytes) -> Optional[dict]:
+    """Parse TigerTag core fields from raw Type-2 user memory.
+
+    TigerTag is a binary NTAG payload beginning at page 0x04.  The first 32
+    bytes contain the fields needed for spool identification and Spoolman
+    creation; later optional data such as message, remaining amount, cloud
+    product details, and signature verification is intentionally ignored here.
+    """
+    if len(raw) < 32 or not _has_tigertag_magic(raw):
+        return None
+
+    magic = struct.unpack_from(">I", raw, 0)[0]
+    version = _TIGERTAG_MAGIC.get(magic, "TigerTag")
+    if "Init" in version:
+        return None
+
+    product_id = struct.unpack_from(">I", raw, 4)[0]
+    material_id = struct.unpack_from(">H", raw, 8)[0]
+    aspect1_id = raw[10]
+    aspect2_id = raw[11]
+    type_id = raw[12]
+    diameter_id = raw[13]
+    brand_id = struct.unpack_from(">H", raw, 14)[0]
+
+    info: dict = {
+        "tag_format": "tigertag",
+        "tigertag_version": version,
+        "tigertag_magic": "0x%08X" % magic,
+        "tigertag_product_id": product_id,
+        "tigertag_material_id": material_id,
+        "tigertag_brand_id": brand_id,
+        "tigertag_type_id": type_id,
+        "tigertag_diameter_id": diameter_id,
+    }
+
+    material = _TIGERTAG_MATERIALS.get(material_id)
+    if material and material != "None":
+        info["material"] = material
+
+    brand = _TIGERTAG_BRANDS.get(brand_id)
+    if brand and brand != "Generic":
+        info["brand"] = brand
+
+    aspect1 = _TIGERTAG_ASPECTS.get(aspect1_id)
+    aspect2 = _TIGERTAG_ASPECTS.get(aspect2_id)
+    if aspect1 and aspect1 not in ("-", "None"):
+        info["tigertag_aspect"] = aspect1
+        if material and material != "None":
+            info["material_detail"] = "%s_%s" % (material, aspect1)
+    if aspect2 and aspect2 not in ("-", "None"):
+        info["tigertag_aspect_2"] = aspect2
+
+    if type_id == _TIGERTAG_TYPE_FILAMENT:
+        info["tigertag_type"] = "Filament"
+    elif type_id == _TIGERTAG_TYPE_RESIN:
+        info["tigertag_type"] = "Resin"
+
+    if diameter_id == 56:
+        info["diameter_mm"] = 1.75
+    elif diameter_id == 221:
+        info["diameter_mm"] = 2.85
+
+    r, g, b, a = raw[16], raw[17], raw[18], raw[19]
+    if r or g or b:
+        info["color_hex"] = "%02X%02X%02X" % (r, g, b)
+        info["tigertag_color_alpha"] = a
+
+    measure = (raw[20] << 16) | (raw[21] << 8) | raw[22]
+    unit_id = raw[23]
+    unit = _TIGERTAG_UNITS.get(unit_id)
+    info["tigertag_unit_id"] = unit_id
+    if unit:
+        info["tigertag_unit"] = unit
+    if measure:
+        info["tigertag_measure"] = measure
+        if unit_id == 21:
+            info["weight_g"] = measure
+
+    min_temp = struct.unpack_from(">H", raw, 24)[0]
+    max_temp = struct.unpack_from(">H", raw, 26)[0]
+    if min_temp:
+        info["min_temp"] = min_temp
+    if max_temp:
+        info["max_temp"] = max_temp
+
+    dry_temp, dry_time_h = raw[28], raw[29]
+    bed_min, bed_max = raw[30], raw[31]
+    if dry_temp:
+        info["drying_temp"] = dry_temp
+    if dry_time_h:
+        info["drying_time_h"] = dry_time_h
+    if bed_min:
+        info["bed_temp"] = bed_min
+        info["bed_temp_min"] = bed_min
+    if bed_max:
+        info["bed_temp_max"] = bed_max
+
+    if product_id == 0xFFFFFFFF:
+        info["tigertag_product_mode"] = "maker"
+    else:
+        info["tigertag_product_mode"] = "cloud"
+
+    return info
 
 
 # ---- Creality CFS ----------------------------------------------------------
@@ -1824,7 +2029,15 @@ def parse_tag(raw, uid_hex: Optional[str] = None, trace=None) -> Optional[dict]:
         trace("info", "parse_tag: matched Anycubic ACE")
         return result
 
-    # 3 — NDEF-based formats (OpenTag3D, OpenSpool, OpenPrintTag, URL, JSON)
+    # 3 — TigerTag binary Type-2 payload
+    trace("debug", "parse_tag: trying TigerTag binary")
+    result = _try_tigertag(raw)
+    if result is not None:
+        _log.debug("rfid: parsed TigerTag tag%s", uid_info)
+        trace("info", "parse_tag: matched TigerTag")
+        return result
+
+    # 4 — NDEF-based formats (OpenTag3D, OpenSpool, OpenPrintTag, URL, JSON)
     ndef_bytes = _find_ndef_tlv(raw)
     if ndef_bytes is not None:
         records = _parse_ndef_records(ndef_bytes)

@@ -198,12 +198,11 @@ These are the defaults shipped in `config/nfc_reader.cfg`:
 | `scan_jog_max` | unset | Optional fixed scan-jog travel limit; leave unset to use the lane Bowden length |
 | `scan_reads_per_position` | `1` | Reads per stopped scan position |
 | `scan_poll_interval` | `0.25` | Read spacing during scan-jog and shared-reader polling cadence |
-| `scan_motion_mode` | `stopped` | `stopped` keeps blocking substep reads; `continuous` queues direct Happy Hare gear moves and polls while each chunk is moving |
-| `scan_continuous_step_mm` | `50.0` | Continuous-mode forward chunk size and maximum intended overrun after tag detection |
-| `scan_continuous_speed` | `150.0` | Continuous-mode gear move speed |
+| `scan_motion_mode` | `continuous` | `continuous` queues direct Happy Hare gear moves and polls while each chunk is moving; `stopped` keeps blocking substep reads |
+| `scan_continuous_step_mm` | `150.0` | Continuous-mode forward chunk size. Rich reads use the observed UID hit-window center, so this no longer needs to be kept small for rich-tag positioning |
+| `scan_continuous_speed` | `200.0` | Continuous-mode gear move speed |
 | `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration |
 | `scan_continuous_poll_interval` | `0.05` | In-flight NFC read cadence while a continuous chunk is estimated to be moving |
-| `scan_continuous_overshoot_backup_mm` | 50% of `scan_continuous_step_mm` | One-time backtrack before rich-tag parsing/retries when a continuous UID hit does not resolve through Spoolman |
 | `debug` | `2` | Warnings and errors in `nfc_reader.log` |
 | `console_output` | `False` | Keep routine NFC logs out of the console |
 
@@ -212,20 +211,19 @@ To try continuous scan-jog:
 ```ini
 [nfc_gate]
 scan_motion_mode: continuous
-scan_continuous_step_mm: 50.0
-scan_continuous_speed: 150.0
+scan_continuous_step_mm: 150.0
+scan_continuous_speed: 200.0
 scan_continuous_accel: 2000.0
 scan_continuous_poll_interval: 0.05
-#scan_continuous_overshoot_backup_mm: 25.0
 ```
 
 Continuous mode preserves the existing tag-found flow: the read-light effect
 plays for about 0.1 second, then NFC rewinds and dispatches the cached tag/spool
 action just like stopped mode.
 If a UID is found during motion, continuous mode waits for the current chunk to
-finish and checks Spoolman first. Only unresolved UIDs backtrack toward the
-reader field before running rich tag parsing and the normal rich-read retry
-sweep.
+finish and checks Spoolman first. If rich tag parsing is still needed, NFC
+recenters to the observed UID hit-window center before running rich parsing and
+the normal rich-read retry sweep.
 
 Set `enabled: False` on a `[nfc_gate laneN]` or `[nfc_gate shared]` section to keep the config block in place without initializing hardware or registering commands for that reader.
 

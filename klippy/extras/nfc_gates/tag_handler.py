@@ -201,7 +201,7 @@ def _parse_attempt_summary(raw):
     if isinstance(raw, dict):
         return ('authenticated MIFARE blocks: Bambu, Creality CFS, '
                 'then QIDI Box')
-    return ('raw bytes: ELEGOO, Anycubic ACE, NDEF MIME/Text/URI, '
+    return ('raw bytes: ELEGOO, Anycubic ACE, TigerTag, NDEF MIME/Text/URI, '
             'Creality CFS, QIDI Box, Bambu heuristic, then raw UTF-8 JSON/URL')
 
 

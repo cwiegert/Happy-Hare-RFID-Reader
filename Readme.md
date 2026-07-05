@@ -70,13 +70,13 @@ Supported tag formats:
 | Tag / data path | PN532 | PN7160 | RC522 | Notes |
 |---|---:|---:|---:|---|
 | Spoolman UID lookup | Yes | Yes | Yes | Default path. The tag only needs a readable factory UID registered in Spoolman's extra field. |
-| NTAG / NFC Type 2 rich tags | Yes | Yes | Yes | NDEF text/URI/MIME/JSON payloads, OpenSpool, OpenTag3D, OpenPrintTag text-compatible payloads, and several manufacturer binary tags. |
+| NTAG / NFC Type 2 rich tags | Yes | Yes | Yes | NDEF text/URI/MIME/JSON payloads, OpenSpool, OpenTag3D, TigerTag, OpenPrintTag text-compatible payloads, and several manufacturer binary tags. |
 | MIFARE Classic rich tags | Yes | Yes | Yes | Bambu factory tags and other MIFARE Classic formats require `tag_parsing: True`; Bambu authenticated reads also require `bambu_reads: True` and `pycryptodome`. |
 | ISO15693 / NFC Type 5 rich tags | No | Yes | No | Used by SLIX2 / OpenPrintTag Type-5 tags. Official OpenPrintTag antenna size is best suited to a shared reader; per-lane use needs hardware testing. |
 
 The vendored parser currently recognizes Bambu Lab, ELEGOO, Anycubic ACE,
-Creality CFS/K1/K2, QIDI Box, SimplyPrint/QIDI URL tags, OpenTag3D, OpenSpool,
-OpenPrintTag, and generic NDEF JSON filament records. See
+TigerTag, Creality CFS/K1/K2, QIDI Box, SimplyPrint/QIDI URL tags, OpenTag3D,
+OpenSpool, OpenPrintTag, and generic NDEF JSON filament records. See
 [Spoolman Integration](docs/shared/spoolman-integration.md) for format details
 and auto-create behavior.
 

@@ -201,7 +201,7 @@ def _parse_attempt_summary(raw):
     if isinstance(raw, dict):
         return ('authenticated MIFARE blocks: Bambu, Creality CFS, '
                 'then QIDI Box')
-    return ('raw bytes: ELEGOO, Anycubic ACE, NDEF MIME/Text/URI, '
+    return ('raw bytes: ELEGOO, Anycubic ACE, TigerTag, NDEF MIME/Text/URI, '
             'Creality CFS, QIDI Box, Bambu heuristic, then raw UTF-8 JSON/URL')
 
 
@@ -572,11 +572,20 @@ def capture_mifare_metadata(gate, tag, sector_keys):
 
 # ── Tag read entry point ──────────────────────────────────────────────────────
 
+def _target_scan_timeout(gate):
+    if getattr(gate, '_scan_motion_mode', 'stopped') != 'continuous':
+        return None
+    if (getattr(gate, '_scan_continuous_pending_uid', None) is None
+            and getattr(gate, '_scan_decode_retry_uid', None) is None):
+        return None
+    return getattr(gate, '_scan_continuous_poll_interval', None)
+
+
 def read_current_tag(gate):
     if not gate._tag_parsing:
         return gate._reader.read_tag()
 
-    target_info = gate._reader.read_target()
+    target_info = gate._reader.read_target(timeout=_target_scan_timeout(gate))
     if target_info is None:
         return None
 

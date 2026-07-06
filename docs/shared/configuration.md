@@ -211,11 +211,10 @@ scan_decode_retry_mm:     5.0
 scan_decode_retry_rounds: 5
 scan_poll_interval:    0.25
 scan_motion_mode: continuous
-scan_continuous_step_mm: 50.0
+scan_continuous_step_mm: 150.0
 scan_continuous_speed: 200.0
 scan_continuous_accel: 2000.0
 scan_continuous_poll_interval: 0.05
-#scan_continuous_overshoot_backup_mm: 25.0
 ```
 
 | Setting | Default | Description |
@@ -229,11 +228,10 @@ scan_continuous_poll_interval: 0.05
 | `scan_decode_retry_rounds` | `5` | Nearby retry rounds before accepting the current UID/metadata result. Each round probes both sides of the first UID hit. |
 | `scan_poll_interval` | `0.25` | Seconds between stopped-position NFC read attempts during scan-jog. The shared reader also uses this value as its active polling cadence. Since Happy Hare `MMU_TEST_MOVE` blocks by default, this is not a read-while-moving interval. |
 | `scan_motion_mode` | `continuous` | `continuous` (default) queues the forward search chunk through Happy Hare's MMU toolhead and polls NFC while that chunk is estimated to be moving. `stopped` uses blocking MMU_TEST_MOVE substeps with reads at each stopped spool position — use this for marginal reader or tag alignment. |
-| `scan_continuous_step_mm` | `50.0` | Continuous-mode forward search chunk size. This is also the maximum intended overrun after a tag is detected because the current chunk is allowed to finish before rewind. |
+| `scan_continuous_step_mm` | `150.0` | Continuous-mode forward search chunk size. Rich tag reads use the observed UID hit-window center, so this value no longer needs to be kept small just to avoid overshooting the ideal metadata-read position. |
 | `scan_continuous_speed` | `200.0` | Continuous-mode gear move speed in mm/s. |
-| `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration in mm/s^2. At `50mm`, `200mm/s`, `2000mm/s^2`, each move takes about `0.35s`. |
+| `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration in mm/s^2. At `150mm`, `200mm/s`, `2000mm/s^2`, each move takes about `0.85s` before NFC read time is included. |
 | `scan_continuous_poll_interval` | `0.05` | NFC read cadence while a continuous chunk is estimated to be in flight. When the chunk completes with no tag, NFC queues the next chunk. |
-| `scan_continuous_overshoot_backup_mm` | 50% of `scan_continuous_step_mm` | One-time backtrack distance before rich-tag parsing/retries in continuous mode. Used after the current chunk finishes when a captured UID does not resolve through Spoolman and rich tag parsing is needed. |
 
 There is no user setting for left-neighbor interference. During scan-jog, gate
 `N` checks only the cached UID on gate `N - 1`; if it exactly matches the UID
@@ -245,9 +243,9 @@ cached until after rewind, the 0.1 second read-light hold still plays before the
 rewind effect, and `_scan_mm_total` still drives the final rewind distance.
 If a continuous scan sees a UID during motion, NFC waits for the chunk to
 finish, checks whether Spoolman already knows the UID, and stops the scan if it
-does. Only unresolved UIDs use `scan_continuous_overshoot_backup_mm` to back up
-toward the reader before rich tag parsing and the normal
-`scan_decode_retry_mm` left/right retry sweep.
+does. If the UID does not resolve through Spoolman and rich tag parsing is
+enabled, NFC backs up to the observed UID hit-window center before rich parsing
+and the normal `scan_decode_retry_mm` left/right retry sweep.
 
 **Happy Hare post-preload hook (alternative to automatic polling):**
 

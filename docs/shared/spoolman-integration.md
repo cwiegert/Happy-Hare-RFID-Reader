@@ -200,7 +200,7 @@ Restart Klipper, then run `NFC GATE=0 POLL=1`.
 
 ## Creating a rich tag (examples and required fields)
 
-A "rich" tag carries NDEF metadata the vendored parser understands (OpenSpool/OpenPrintTag/Bambu/Elegoo/etc.). To have Spoolman auto-create records from a tag, the tag should include at least the `material` field. Recommended additional fields:
+A "rich" tag carries structured metadata the vendored parser understands (OpenSpool/OpenPrintTag/TigerTag/Bambu/Elegoo/etc.). To have Spoolman auto-create records from a tag, the tag should include at least the `material` field. Recommended additional fields:
 - `brand` or `vendor` (string)
 - `material` (string) — required for auto-create
 - `color_hex` (string, `#RRGGBB`) — optional but recommended
@@ -218,6 +218,7 @@ The bundled rich-tag parser currently recognizes these manufacturer spool tag fo
 | Bambu Lab | Factory MIFARE Classic 1K spool tags; requires `bambu_reads: True` and `pycryptodome` |
 | ELEGOO | EPC-256 binary tags on NTAG213 |
 | Anycubic | ACE binary tags on NTAG213/215 |
+| TigerTag | TigerTag / TigerTag+ binary tags on NTAG213/215/216; local core metadata only, no cloud lookup or signature verification |
 | Creality | CFS / K1 / K2 MIFARE Classic tags |
 | QIDI | QIDI Box MIFARE Classic tags |
 | SimplyPrint / QIDI standard URL | NDEF URI/Text tags with supported filament query fields |
@@ -229,7 +230,7 @@ Reader compatibility:
 | Tag capability | PN532 | PN7160 | RC522 | Notes |
 |---|---:|---:|---:|---|
 | UID lookup through Spoolman | Yes | Yes | Yes | Factory UID matching works on all supported readers. |
-| NTAG / Type-2 rich tags | Yes | Yes | Yes | Used by common NDEF text, JSON, OpenSpool, and several manufacturer tags. |
+| NTAG / Type-2 rich tags | Yes | Yes | Yes | Used by common NDEF text, JSON, OpenSpool, TigerTag, and several manufacturer tags. |
 | Bambu / MIFARE Classic rich reads | Yes | Yes | Yes | Requires `tag_parsing: True`, `bambu_reads: True`, and `pycryptodome`. |
 | ISO15693 / Type-5 rich tags | No | Yes | No | Used by SLIX2/OpenPrintTag-style Type-5 tags. |
 

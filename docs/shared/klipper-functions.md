@@ -332,24 +332,22 @@ Default continuous scan settings:
 ```ini
 [nfc_gate]
 scan_motion_mode: continuous
-scan_continuous_step_mm: 50.0
+scan_continuous_step_mm: 150.0
 scan_continuous_speed: 200.0
 scan_continuous_accel: 2000.0
 scan_continuous_poll_interval: 0.05
-#scan_continuous_overshoot_backup_mm: 25.0
 ```
 
-With those values, a 50 mm forward chunk takes about `0.35s`. NFC polls every
+With those values, a 150 mm forward chunk takes about `0.85s` before NFC read
+time is included. NFC polls every
 `0.05s` during that estimated motion window, then queues the next chunk if no
-tag has been found. Effective scan advance is roughly `143mm/s` before NFC read
-time is included.
+tag has been found.
 
 If a continuous UID hit occurs during motion, NFC waits for the current chunk to
 finish and checks Spoolman first. If the UID resolves, scan-jog finishes without
 a rich read. If the UID does not resolve and rich parsing is enabled, NFC backs
-up by `scan_continuous_overshoot_backup_mm` before running rich tag parsing and
-the normal `scan_decode_retry_mm` left/right retry sweep. By default, the backup
-is 50% of `scan_continuous_step_mm`.
+up to the observed UID hit-window center before running rich tag parsing and the
+normal `scan_decode_retry_mm` left/right retry sweep.
 
 Scan-jog always clears the Happy Hare gate cache and runs the pre-scan
 `MMU_SPOOLMAN SYNC=1` before moving filament. When launched from a Happy Hare

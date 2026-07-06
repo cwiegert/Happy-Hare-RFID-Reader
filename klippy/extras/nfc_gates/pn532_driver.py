@@ -986,7 +986,7 @@ class PN532Driver(_PN532Base):
             self._sleep(poll_interval)
 
         if self._debug >= 4:
-            logger.debug("_read_ack: gate %d (PN532) timeout after %.1fs",
+            logger.debug("_read_ack: gate %d (PN532) timeout after %.3fs",
                          self._gate, timeout)
         return False
 
@@ -1055,7 +1055,7 @@ class PN532Driver(_PN532Base):
             self._sleep(poll_interval)
 
         if self._debug >= 4:
-            logger.debug("_recv: gate %d (PN532) timeout after %.1fs waiting for ready",
+            logger.debug("_recv: gate %d (PN532) timeout after %.3fs waiting for ready",
                          self._gate, timeout)
         return None
 
@@ -1282,7 +1282,7 @@ class PN532SPIDriver(_PN532Base):
             self._sleep(poll_interval)
 
         if self._debug >= 4:
-            logger.debug("_read_ack: gate %d (PN532 SPI) timeout after %.1fs",
+            logger.debug("_read_ack: gate %d (PN532 SPI) timeout after %.3fs",
                          self._gate, timeout)
         return False
 
@@ -1348,7 +1348,7 @@ class PN532SPIDriver(_PN532Base):
             self._sleep(poll_interval)
 
         if self._debug >= 4:
-            logger.debug("_recv: gate %d (PN532 SPI) timeout after %.1fs",
+            logger.debug("_recv: gate %d (PN532 SPI) timeout after %.3fs",
                          self._gate, timeout)
         return None
 

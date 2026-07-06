@@ -125,7 +125,7 @@ _scan_step_event  (continuous mode)
   └─ _poll()
        └─ UID found while chunk is moving? → wait for current chunk to finish
        └─ Spoolman UID lookup succeeds? → existing _finish_scan()
-       └─ UID unresolved and rich parsing enabled? → back up from continuous overshoot
+       └─ UID unresolved and rich parsing enabled? → back up to UID hit-window center
        └─ rich payload incomplete? → retry around backed-up position
        └─ tag found after chunk is done? → existing _finish_scan()
             └─ 0.1 second read-light hold
@@ -133,22 +133,21 @@ _scan_step_event  (continuous mode)
             └─ dispatch cached tag/spool event
   └─ current chunk still estimated in flight? → poll again after scan_continuous_poll_interval
   └─ scan limit reached? → rewind and exit
-  └─ queue direct Happy Hare MMU-toolhead gear move for the next 50mm chunk
+  └─ queue direct Happy Hare MMU-toolhead gear move for the next 150mm chunk
   └─ poll again after scan_continuous_poll_interval
 ```
 
-The shipped continuous defaults are 50 mm chunks at 150 mm/s and 2000 mm/s^2,
-with a 0.05 s in-flight read cadence. That profile spends most of the move at
-speed: about 0.408 s moving, or roughly 123 mm/s before NFC read time is
-included. Continuous mode bypasses the public `MMU_TEST_MOVE` G-code wrapper for
-the forward search path and queues the move through Happy Hare's MMU toolhead.
+The shipped continuous config uses 150 mm chunks at 200 mm/s and 2000 mm/s^2,
+with a 0.05 s in-flight read cadence. Continuous mode bypasses the public
+`MMU_TEST_MOVE` G-code wrapper for the forward search path and queues the move
+through Happy Hare's MMU toolhead.
 During in-flight continuous motion, NFC uses a UID-only probe and avoids rich tag
 parsing. After the current chunk finishes, Spoolman UID lookup runs first. If
 the UID resolves, scan-jog can finish without any rich read. If the UID does not
-resolve and rich parsing is enabled, NFC backs up by
-`scan_continuous_overshoot_backup_mm` to recover from chunk overshoot. After
-that one-time recenter move, decode retry moves for incomplete rich tag reads
-stay on the existing stopped/blocking retry path.
+resolve and rich parsing is enabled, NFC backs up to the observed UID hit-window
+center before rich parsing. After that one-time recenter move, decode retry
+moves for incomplete rich tag reads stay on the existing stopped/blocking retry
+path.
 
 ### Class-level scan lock
 

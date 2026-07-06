@@ -5,7 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased] - Continuous Scan - WoodWorker
+## [1.0.0] - 07/06/2026 - WoodWorker
+
+### Happy Hare V4 Compatibility
+
+- Added Happy Hare v4 scan-jog compatibility. NFC now allows scan-jog to start
+  while Happy Hare reports `action=checking` on v4+ installs, because the
+  post-preload hook runs inside Happy Hare's checking loop. Older or unknown
+  Happy Hare versions still require `action=idle`.
+- Added Happy Hare version detection with a lazy refresh fallback. If the MMU
+  object was not available when NFC initialized, NFC checks again before making
+  version-gated scan-jog decisions.
+- Reimplemented the Happy Hare v4 scan-safe check from `cwiegert/NFC-Reader`
+  commit `f4da218` in this repo's current NFC manager and scan-jog layout.
+- Documented the v4 `checking` behavior in README and shared setup docs.
 
 ### Spoolman-Disabled Support
 

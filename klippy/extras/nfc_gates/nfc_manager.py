@@ -760,9 +760,11 @@ class NFCGate:
     _active_scan_gate = None  # class-level scan lock; shared across all instances
 
     def __init__(self, config, defaults=None):
+        self._HAPPY_HARE_VERSION = None
         self.printer  = config.get_printer()
         self.reactor  = self.printer.get_reactor()
         self._name    = config.get_name().split()[-1]
+        self._refresh_happy_hare_version()
 
         d = defaults
         self._defaults = defaults
@@ -1147,6 +1149,38 @@ class NFCGate:
 
     def _cmd_NFC_STATUS_fallback(self, gcmd):
         gcmd.respond_info('\n'.join(_lane_status_lines(self.printer)))
+
+    def _refresh_happy_hare_version(self):
+        try:
+            mmu = self.printer.lookup_object('mmu', None)
+            self._HAPPY_HARE_VERSION = (
+                getattr(mmu, 'version', None) if mmu is not None else None)
+        except Exception:
+            self._HAPPY_HARE_VERSION = None
+        return self._HAPPY_HARE_VERSION
+
+    def _happy_hare_version(self):
+        if getattr(self, '_HAPPY_HARE_VERSION', None) is None:
+            self._refresh_happy_hare_version()
+        return getattr(self, '_HAPPY_HARE_VERSION', None)
+
+    def _happy_hare_major_version(self):
+        version = self._happy_hare_version()
+        if version is None:
+            return None
+        m = re.match(r'\s*(\d+)', str(version))
+        if not m:
+            return None
+        try:
+            return int(m.group(1))
+        except ValueError:
+            return None
+
+    def _happy_hare_allows_scan_action(self, action):
+        if action == 'idle':
+            return True
+        major = self._happy_hare_major_version()
+        return major is not None and major >= 4 and action == 'checking'
 
     def _cmd_NFC_HELP_fallback(self, gcmd):
         gcmd.respond_info('\n'.join(_nfc_help(gcmd)))
@@ -2273,18 +2307,19 @@ class NFCGate:
                     if self._debug >= 3:
                         logger.info(
                             "[%s]: gate %d — gate loaded; "
-                            "waiting for Happy Hare idle before scan",
+                            "waiting for Happy Hare scan-safe state before scan",
                             self._name, self._gate)
-                # Fire scan once Happy Hare is idle and gate is confirmed loaded
+                # Fire scan once Happy Hare is scan-safe and gate is confirmed
+                # loaded. Happy Hare v4 wraps post-preload hooks in action=checking.
                 if (getattr(self, '_scan_pending', False) and curr >= 1
-                        and hh.idle
+                        and self._happy_hare_allows_scan_action(hh.action)
                         and not self._is_printing()):
                     now = self.reactor.monotonic()
                     if self._scan_idle_ready_time <= 0.0:
                         self._scan_idle_ready_time = now + 0.1
                         if self._debug >= 3:
                             logger.info(
-                                "[%s]: gate %d — Happy Hare idle; "
+                                "[%s]: gate %d — Happy Hare scan-safe; "
                                 "waiting 0.1s before scan-jog",
                                 self._name, self._gate)
                         return self._scan_idle_ready_time

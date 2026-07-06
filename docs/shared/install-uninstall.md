@@ -169,6 +169,10 @@ Happy Hare appends `GATE=<n>` automatically. `_NFC_SCAN_JOG_PRELOAD` calls `NFC 
 scan_enabled: False
 ```
 
+Happy Hare v4 runs this post-preload hook while its action is `checking`; NFC
+treats `checking` as scan-safe on v4+ installs. Older or unknown Happy Hare
+versions still require `action=idle`.
+
 Without this hook wired, scan-jog falls back to triggering on gate status change (`scan_enabled: True`), which is less reliable than the preload hook.
 
 ---

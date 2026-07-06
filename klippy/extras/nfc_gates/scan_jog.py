@@ -123,7 +123,8 @@ def manual_jog_scan(gate, gcmd):
         gcmd.respond_info(_color_tags(msg))
         return
     hh = gate._read_hh_status()
-    if hh.present and not hh.idle:
+    if (hh.present
+            and not gate._happy_hare_allows_scan_action(hh.action)):
         msg = ("[WARN] NFC[%s]: Happy Hare is busy (action=%s) — "
                "wait for idle before starting scan-jog"
                % (gate._name, hh.action))

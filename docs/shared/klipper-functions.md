@@ -374,6 +374,10 @@ NFC GATE=<n> JOG_SCAN=1
 
 NFC starts the configured scan-jog LED effect from the Python scan timer before motion begins.
 
+Happy Hare v4 runs the post-preload hook while its action is `checking`; NFC
+accepts `checking` as scan-safe on v4+ installs. Older or unknown Happy Hare
+versions still require `action=idle`.
+
 Recommended NFC config when using the hook — disables gate-status polling so HH is the sole trigger:
 
 ```ini

@@ -9,16 +9,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Happy Hare V4 Compatibility
 
-- Added Happy Hare v4 scan-jog compatibility. NFC now allows scan-jog to start
-  while Happy Hare reports `action=checking` on v4+ installs, because the
-  post-preload hook runs inside Happy Hare's checking loop. Older or unknown
-  Happy Hare versions still require `action=idle`.
-- Added Happy Hare version detection with a lazy refresh fallback. If the MMU
-  object was not available when NFC initialized, NFC checks again before making
-  version-gated scan-jog decisions.
-- Reimplemented the Happy Hare v4 scan-safe check from `cwiegert/NFC-Reader`
-  commit `f4da218` in this repo's current NFC manager and scan-jog layout.
-- Documented the v4 `checking` behavior in README and shared setup docs.
+Two independent fixes, for two different scan-jog trigger paths, both landed on
+the same underlying symptom: scan-jog could fail to start on Happy Hare v4 while
+Happy Hare reports `action=checking`.
+
+- **Automatic gate-status polling trigger** (`scan_enabled: True`, no hook):
+  added Happy Hare version detection
+  (`_happy_hare_version`/`_refresh_happy_hare_version`/
+  `_happy_hare_major_version`, with a lazy refresh fallback if the MMU object
+  was not available yet at init) and `_happy_hare_allows_scan_action()`. The
+  poll timer now treats `action=checking` as scan-safe when Happy Hare reports
+  major version `>= 4`; older or unknown versions still require strict
+  `action=idle`.
+- **Hook-triggered / manual `JOG_SCAN=1`** (`_NFC_SCAN_JOG_PRELOAD`, Happy
+  Hare's `user_post_preload_extension` hook): Happy Hare v4 invokes this hook
+  while still running its own load sequence, before it unwinds back to `idle`,
+  so requiring strict idle there could never succeed. The macro now sends
+  `NFC GATE=<n> JOG_SCAN=1 SOURCE=AUTO`; NFC only relaxes the busy check for
+  calls carrying `SOURCE=AUTO`, checking those against a narrower list of
+  actions that genuinely conflict with scan-jog's own gear motion (`loading`,
+  `loading_extruder`, `unloading_extruder`, `forming_tip`, `homing`,
+  `cutting_tip`, `cutting_filament`, `purging`) instead of requiring idle.
+  Manual/console `JOG_SCAN=1` with no `SOURCE=AUTO` is unaffected and still
+  requires strict `action == idle` on any Happy Hare version.
+- Documented both mechanisms in README, `docs/shared/klipper-functions.md`, and
+  `docs/shared/install-uninstall.md`.
 
 ### Spoolman-Disabled Support
 

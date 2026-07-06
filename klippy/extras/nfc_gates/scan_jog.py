@@ -108,7 +108,16 @@ def _led_release(gate):
 
 
 def manual_jog_scan(gate, gcmd):
-    """Start scan-and-jog on demand, matching the automatic trigger path."""
+    """Start scan-and-jog on demand, matching the automatic trigger path.
+
+    SOURCE=AUTO identifies the trusted call from Happy Hare's
+    post_preload_extension hook (_NFC_SCAN_JOG_PRELOAD). That call always
+    lands while Happy Hare itself reports a non-idle action, so it is checked
+    against a narrower "genuinely conflicts with gear motion" blocklist
+    instead of requiring strict idle. Any other caller -- manual console
+    command, button, macro -- gets no such context guarantee and still
+    requires strict idle.
+    """
     if gate._failed:
         msg = ("[ERROR] NFC[%s]: reader failed - "
                "run NFC GATE=%d INIT=1 first"
@@ -122,15 +131,18 @@ def manual_jog_scan(gate, gcmd):
         logger.warning(msg)
         gcmd.respond_info(_color_tags(msg))
         return
+    trusted_auto = str(gcmd.get('SOURCE', '') or '').strip().upper() == 'AUTO'
     hh = gate._read_hh_status()
-    if (hh.present
-            and not gate._happy_hare_allows_scan_action(hh.action)):
-        msg = ("[WARN] NFC[%s]: Happy Hare is busy (action=%s) — "
-               "wait for idle before starting scan-jog"
-               % (gate._name, hh.action))
-        logger.warning(msg)
-        gcmd.respond_info(_color_tags(msg))
-        return
+    if hh.present:
+        busy = (hh.action in hh_status.AUTO_JOG_SCAN_BLOCKING_ACTIONS
+                if trusted_auto else not hh.idle)
+        if busy:
+            msg = ("[WARN] NFC[%s]: Happy Hare is busy (action=%s) — "
+                   "wait for idle before starting scan-jog"
+                   % (gate._name, hh.action))
+            logger.warning(msg)
+            gcmd.respond_info(_color_tags(msg))
+            return
     if hh.present and hh.status == hh_status.GATE_EMPTY:
         msg = ("[ERROR] NFC[%s]: jog_scan is not enabled for an empty gate"
                % gate._name)

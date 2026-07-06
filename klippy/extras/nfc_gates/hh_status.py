@@ -7,6 +7,18 @@ GATE_AVAILABLE = 1
 GATE_INBUFFER = 2
 FILAMENT_POS_UNLOADED = 0
 
+# Actions that genuinely conflict with scan-jog's own gear motion. Used only
+# for SOURCE=AUTO jog-scan requests (the Happy Hare post_preload_extension
+# hook), which are always invoked while Happy Hare itself reports a non-idle
+# action (typically 'checking') as part of its own post-preload sequence.
+# Manual/unlabeled callers get no such context guarantee and still require
+# strict idle.
+ACTION_IDLE = 'idle'
+AUTO_JOG_SCAN_BLOCKING_ACTIONS = frozenset((
+    'loading', 'loading_extruder', 'unloading_extruder', 'forming_tip',
+    'homing', 'cutting_tip', 'cutting_filament', 'purging',
+))
+
 
 class HHGateStatus:
     def __init__(self, present=False, gate=-1, spool=-1, status=0,

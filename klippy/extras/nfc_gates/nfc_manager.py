@@ -366,6 +366,33 @@ def _raw_klipper_config(printer):
         return {}
 
 
+def _detect_happy_hare_version(printer):
+    """Return the Happy Hare software version string, or None if unavailable."""
+    try:
+        mmu = printer.lookup_object('mmu', None)
+        if mmu is None:
+            return None
+        version = getattr(mmu, 'version', None)
+        if version is None:
+            mmu_machine = getattr(mmu, 'mmu_machine', None)
+            version = getattr(mmu_machine, 'happy_hare_version', None)
+        return version
+    except Exception:
+        return None
+
+
+def _happy_hare_major_from_version(version):
+    if version is None:
+        return None
+    m = re.match(r'\s*v?(\d+)', str(version), re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
 def _shared_preload_hook_message(hook, name='shared'):
     hook = str(hook or '').strip()
     if '_NFC_SHARED_PRELOAD' in hook:
@@ -473,6 +500,20 @@ def _doctor_lines(printer):
         lines.append("  [OK] shared reader: configured but disabled")
     else:
         lines.append("  [OK] shared reader: not configured")
+
+    hh_version = _detect_happy_hare_version(printer)
+    hh_major = _happy_hare_major_from_version(hh_version)
+    if hh_major is None:
+        lines.append("  [WARN] Happy Hare version: unknown "
+                     "(scan-jog accepts action=idle only until version is detected)")
+    elif hh_major >= 4:
+        lines.append("  [OK] Happy Hare version: %s "
+                     "(scan-jog accepts action=idle or action=checking)" %
+                     hh_version)
+    else:
+        lines.append("  [OK] Happy Hare version: %s "
+                     "(scan-jog accepts action=idle only)" %
+                     hh_version)
 
     defaults = printer.lookup_object('nfc_gate', None)
     spoolman = getattr(defaults, '_spoolman', None)
@@ -1151,15 +1192,7 @@ class NFCGate:
         gcmd.respond_info('\n'.join(_lane_status_lines(self.printer)))
 
     def _refresh_happy_hare_version(self):
-        try:
-            mmu = self.printer.lookup_object('mmu', None)
-            version = getattr(mmu, 'version', None) if mmu is not None else None
-            if version is None and mmu is not None:
-                mmu_machine = getattr(mmu, 'mmu_machine', None)
-                version = getattr(mmu_machine, 'happy_hare_version', None)
-            self._HAPPY_HARE_VERSION = version
-        except Exception:
-            self._HAPPY_HARE_VERSION = None
+        self._HAPPY_HARE_VERSION = _detect_happy_hare_version(self.printer)
         return self._HAPPY_HARE_VERSION
 
     def _happy_hare_version(self):
@@ -1168,16 +1201,7 @@ class NFCGate:
         return getattr(self, '_HAPPY_HARE_VERSION', None)
 
     def _happy_hare_major_version(self):
-        version = self._happy_hare_version()
-        if version is None:
-            return None
-        m = re.match(r'\s*v?(\d+)', str(version), re.IGNORECASE)
-        if not m:
-            return None
-        try:
-            return int(m.group(1))
-        except ValueError:
-            return None
+        return _happy_hare_major_from_version(self._happy_hare_version())
 
     def _happy_hare_allows_scan_action(self, action):
         if action == 'idle':

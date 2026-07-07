@@ -187,9 +187,12 @@ Runs a no-motion setup check. It does not scan tags or move filament.
 NFC_DOCTOR
 ```
 
-It reports enabled/disabled lane readers, shared-reader state, Spoolman
-availability, the shared-reader preload hook, and static config warnings such as
-`bambu_reads: True` without `tag_parsing: True`.
+It reports enabled/disabled lane readers, shared-reader state, detected Happy
+Hare version, Spoolman availability, the shared-reader preload hook, and static
+config warnings such as `bambu_reads: True` without `tag_parsing: True`.
+Doctor also prints the scan-jog action rule for the detected Happy Hare version:
+v4 accepts `action=idle` or `action=checking`; v3/pre-v4 and unknown versions
+accept only `action=idle`.
 
 ---
 
@@ -397,7 +400,7 @@ scan_enabled:    False
 
 The scan-safe check differs by caller:
 
-- **`SOURCE=AUTO`** (only `_NFC_SCAN_JOG_PRELOAD`, Happy Hare's own hook, sets this): Happy Hare v4 can call the hook while it still reports `action=checking`. NFC allows `checking` only when the detected Happy Hare major version is 4 or newer; older or unknown versions still require `idle`.
+- **`SOURCE=AUTO`** (only `_NFC_SCAN_JOG_PRELOAD`, Happy Hare's own hook, sets this): Happy Hare v4 accepts `action=idle` or `action=checking`. Happy Hare v3/pre-v4 and unknown versions accept only `action=idle`.
 - **Any other caller** (manual console command, macro, button; no `SOURCE=AUTO`): requires strict `action == idle`. NFC cannot verify why the command was sent, so an unlabeled call gets no benefit of the doubt.
 
 Do not add `SOURCE=AUTO` to a manually typed `JOG_SCAN=1`; it exists only to

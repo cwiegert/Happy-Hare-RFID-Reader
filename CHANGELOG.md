@@ -33,6 +33,9 @@ Happy Hare reports `action=checking`.
 - Fixed Happy Hare version detection to read
   `mmu.mmu_machine.happy_hare_version`, matching the current Happy Hare object
   model, while keeping the older `mmu.version` fallback.
+- Added Happy Hare version reporting to `NFC_DOCTOR`, including whether v4
+  `checking` scan-jog compatibility is enabled: v4 accepts `action=idle` or
+  `action=checking`; v3/pre-v4 and unknown versions accept only `action=idle`.
 - Documented both mechanisms in README, `docs/shared/klipper-functions.md`, and
   `docs/shared/install-uninstall.md`.
 

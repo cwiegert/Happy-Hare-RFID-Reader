@@ -882,30 +882,52 @@ def resume_poll_after_rewind(gate):
 
 
 def _hh_drive_position(mmu):
-    """Best-effort read of Happy Hare's raw drive position for diagnostics."""
-    if mmu is None or not hasattr(mmu, 'drive'):
+    """Best-effort read of Happy Hare's raw gear position for diagnostics.
+
+    HH v3 (mmu.py monolith) exposes this as mmu_toolhead.get_position()[1]
+    (see _get_filament_position()); scan_jog.mmu_gear_position() already
+    reads the same value for jog-delta measurement.
+    """
+    mmu_toolhead = getattr(mmu, 'mmu_toolhead', None) if mmu is not None else None
+    if mmu_toolhead is None:
         return None
     try:
-        return mmu.drive().get_filament_position()
+        return float(mmu_toolhead.get_position()[1])
     except Exception:
         return None
+
+
+def _hh_reset_filament_position(mmu):
+    """Reset Happy Hare's raw gear position counter and report which API fired.
+
+    HH v3 names this _initialize_filament_position (single-underscore
+    "private" convention used throughout the v3 mmu.py monolith); HH v4's
+    split-module drive() rewrite renamed it to initialize_filament_position.
+    Try both so this keeps working across HH versions.
+    """
+    for name in ('_initialize_filament_position', 'initialize_filament_position'):
+        fn = getattr(mmu, name, None)
+        if fn is not None:
+            fn()
+            return name
+    return None
 
 
 def start(gate, max_mm=None):
     if max_mm is not None:
         gate._scan_max_mm = float(max_mm)
-    # Happy Hare's own MMU_LOAD/MMU_EJECT sequences zero this counter
-    # (mmu.initialize_filament_position()) before they issue any gear moves.
-    # Scan-jog drives the gear directly through the low-level _MMU_STEP_*
-    # primitives instead of those sequences, so without this reset HH's
-    # tracked gear position (shown as the "UNLOADED N.Nmm" console readout)
-    # keeps accumulating every jog from every past scan-jog run forever.
+    # Happy Hare's own MMU_LOAD/MMU_EJECT sequences zero this counter before
+    # they issue any gear moves. Scan-jog drives the gear directly through
+    # the low-level _MMU_STEP_* primitives instead of those sequences, so
+    # without this reset HH's tracked gear position (shown as the
+    # "UNLOADED N.Nmm" console readout) keeps accumulating every jog from
+    # every past scan-jog run forever.
     mmu = gate.printer.lookup_object('mmu', None)
-    has_reset_fn = mmu is not None and hasattr(mmu, 'initialize_filament_position')
     before_pos = _hh_drive_position(mmu)
-    if has_reset_fn:
+    reset_fn_used = None
+    if mmu is not None:
         try:
-            mmu.initialize_filament_position()
+            reset_fn_used = _hh_reset_filament_position(mmu)
         except Exception:
             logger.exception(
                 "[%s]: gate %d scan mode — failed to reset Happy Hare "
@@ -913,8 +935,8 @@ def start(gate, max_mm=None):
                 gate._name, gate._gate)
     after_pos = _hh_drive_position(mmu)
     diag = ("[WARN] NFC[%s]: HH filament-position reset check — "
-            "mmu_found=%s has_reset_fn=%s before=%s after=%s"
-            % (gate._name.capitalize(), mmu is not None, has_reset_fn,
+            "mmu_found=%s reset_fn=%s before=%s after=%s"
+            % (gate._name.capitalize(), mmu is not None, reset_fn_used,
                before_pos, after_pos))
     logger.info(diag)
     gate._console(diag)

@@ -7,6 +7,7 @@
 #      git pull + Klipper restart is all that is needed to update the code.
 #      Two symlinks are created:
 #        nfc_gate.py   — entry point for [nfc_gate laneN]
+#        mmu_nfc_endstop.py — virtual endstop wrapper for lane readers
 #        nfc_gates/    — shared implementation package
 #
 #   2. Installs config files into ~/printer_data/config/nfc/ using a
@@ -213,6 +214,7 @@ remove_legacy_klipper_symlinks() {
     local target
     for target in \
         "${KLIPPER_EXTRAS}/nfc_gate.py" \
+        "${KLIPPER_EXTRAS}/mmu_nfc_endstop.py" \
         "${KLIPPER_EXTRAS}/nfc_gates" \
         "${KLIPPER_EXTRAS}/nfc_gates.py"
     do
@@ -804,6 +806,9 @@ with open(path, 'w') as f:
     f.write("#\n")
     f.write("# Each [nfc_gate laneN] section maps:\n")
     f.write("#   Happy Hare gate number -> Klipper lane MCU -> NFC reader hardware.\n")
+    f.write("# Each [mmu_nfc_endstop laneN] section seeds Happy Hare with a homeable\n")
+    f.write("# virtual endstop that uses the matching lane reader. Use ENDSTOP=nfc_laneN\n")
+    f.write("# in Happy Hare homing/test moves.\n")
     f.write("# Set enabled: False on a lane to keep the template without creating hardware.\n")
     f.write("#\n")
     f.write("# i2c_mcu: is consumed by Klipper's I2C bus layer (MCU_I2C_from_config),\n")
@@ -830,6 +835,11 @@ with open(path, 'w') as f:
         f.write(f"mmu_gate:                {lane}\n")
         f.write(f"i2c_mcu:                 {mcu}\n")
         f.write(f"startup_poll_delay:      {startup_delay}\n\n")
+        f.write(f"[mmu_nfc_endstop lane{lane}]\n")
+        f.write(f"nfc_gate:                lane{lane}\n")
+        f.write(f"endstop_name:            nfc_lane{lane}\n")
+        f.write("poll_interval:           0.05\n")
+        f.write("register_sensor:         True\n\n")
 
     example_lane = lane_count
     f.write("# =============================================================================\n")
@@ -842,6 +852,12 @@ with open(path, 'w') as f:
     f.write(f"# mmu_gate:                {example_lane}\n")
     f.write(f"# i2c_mcu:                 {lane_mcu_prefix}{example_lane}\n")
     f.write(f"# startup_poll_delay:      {example_lane * 0.5:.1f}\n")
+    f.write("#\n")
+    f.write(f"# [mmu_nfc_endstop lane{example_lane}]\n")
+    f.write(f"# nfc_gate:                lane{example_lane}\n")
+    f.write(f"# endstop_name:            nfc_lane{example_lane}\n")
+    f.write("# poll_interval:           0.05\n")
+    f.write("# register_sensor:         True\n")
 PYEOF
 }
 
@@ -1531,6 +1547,9 @@ fi
 echo "Linking nfc_gate.py..."
 ln -sfn "${REPO_DIR}/klippy/extras/nfc_gate.py" "${KLIPPER_EXTRAS}/nfc_gate.py"
 
+echo "Linking mmu_nfc_endstop.py..."
+ln -sfn "${REPO_DIR}/klippy/extras/mmu_nfc_endstop.py" "${KLIPPER_EXTRAS}/mmu_nfc_endstop.py"
+
 echo "Linking nfc_gates/ package..."
 ln -sfn "${REPO_DIR}/klippy/extras/nfc_gates" "${KLIPPER_EXTRAS}/nfc_gates"
 
@@ -1817,6 +1836,7 @@ echo "    spool_auto_create:  ${SPOOLMAN_AUTO_CREATE}"
 echo ""
 echo "  Python extras (symlinked — auto-updates with git pull):"
 echo "    ${KLIPPER_EXTRAS}/nfc_gate.py  ->  ${REPO_DIR}/klippy/extras/nfc_gate.py"
+echo "    ${KLIPPER_EXTRAS}/mmu_nfc_endstop.py  ->  ${REPO_DIR}/klippy/extras/mmu_nfc_endstop.py"
 echo "    ${KLIPPER_EXTRAS}/nfc_gates    ->  ${REPO_DIR}/klippy/extras/nfc_gates/"
 echo ""
 echo "  Config files in ${NFC_CONFIG_DIR}/:"

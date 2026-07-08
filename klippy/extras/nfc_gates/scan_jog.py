@@ -182,20 +182,18 @@ def manual_jog_scan(gate, gcmd):
         if getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous':
             logger.info(
                 "[%s]: continuous scan-jog settings — "
-                "max=%.0fmm step=%.1fmm speed=%.1fmm/s "
+                "homing_max=%.0fmm speed=%.1fmm/s "
                 "accel=%.1fmm/s^2 poll=%.2fs",
                 gate._name, gate._scan_max_mm,
-                gate._scan_continuous_step_mm,
                 gate._scan_continuous_speed,
                 gate._scan_continuous_accel,
                 gate._scan_continuous_poll_interval)
         else:
             logger.info(
                 "[%s]: stopped scan-jog settings — "
-                "max=%.0fmm chunk=%.1fmm substep=%.1fmm "
+                "homing_max=%.0fmm "
                 "reads=%d poll=%.2fs",
                 gate._name, gate._scan_max_mm,
-                gate._scan_jog_mm, substep_distance(gate),
                 max(1, int(getattr(gate, '_scan_reads_per_position', 3))),
                 gate._scan_poll_interval)
 
@@ -823,20 +821,19 @@ def start(gate, max_mm=None):
         if getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous':
             logger.info(
                 "[%s]: gate %d continuous scan mode started — "
-                "step=%.1fmm max=%.1fmm speed=%.1fmm/s accel=%.1fmm/s^2 "
+                "homing_max=%.1fmm speed=%.1fmm/s accel=%.1fmm/s^2 "
                 "gap=%.2fs",
                 gate._name, gate._gate,
-                gate._scan_continuous_step_mm, gate._scan_max_mm,
+                gate._scan_max_mm,
                 gate._scan_continuous_speed, gate._scan_continuous_accel,
                 gate._scan_continuous_poll_interval)
             return
         logger.info(
             "[%s]: gate %d scan mode started — "
-            "chunk=%.1fmm substep=%.1fmm max=%.1fmm speed=%.1fmm/s "
+            "homing_max=%.1fmm speed=%.1fmm/s "
             "reads_per_position=%d poll=%.2fs",
             gate._name, gate._gate,
-            gate._scan_jog_mm, substep_distance(gate), gate._scan_max_mm,
-            get_speed(gate),
+            gate._scan_max_mm, get_speed(gate),
             max(1, int(getattr(gate, '_scan_reads_per_position', 3))),
             gate._scan_poll_interval)
 
@@ -962,35 +959,39 @@ def stopped_step_event(gate, eventtime):
         gate._rewind_and_exit_scan()
         return gate.reactor.NEVER
 
-    # MMU_TEST_MOVE blocks until the move completes, so reads are placed at
-    # stopped positions.  Queue one physical substep after the configured
-    # number of reads at the current position has been exhausted.
+    # NFC virtual homing moves block until the tag trips the lane endstop or
+    # the full scan travel completes.  Use the whole remaining travel here;
+    # the reader is the endstop that stops the move early.
     if now >= gate._scan_next_chunk_time:
         remaining = gate._scan_max_mm - gate._scan_mm_total
-        chunk = min(substep_distance(gate), remaining)
+        chunk = remaining
         next_position = gate._scan_mm_total + chunk
-        msg = ("[SCAN] NFC[%s]: moving %.1fmm  scan position %.1f / %.1fmm "
-               "(substep of %.1fmm)"
-               % (gate._name.capitalize(), chunk, next_position, gate._scan_max_mm,
-                  gate._scan_jog_mm))
+        msg = ("[SCAN] NFC[%s]: homing up to %.1fmm  "
+               "scan position %.1f / %.1fmm"
+               % (gate._name.capitalize(), chunk, next_position,
+                  gate._scan_max_mm))
         logger.info(msg)
         gate._console(msg)
         if gate._debug >= 4:
-            logger.debug("[%s]: run_script MMU_TEST_MOVE MOVE=%.2f QUIET=1",
-                         gate._name.capitalize(), chunk)
+            logger.debug("[%s]: run_script %s",
+                         gate._name.capitalize(),
+                         homing_jog_command(gate, chunk))
         gate._run_jog(chunk)
+        actual = scan_last_jog_actual(gate, chunk)
         # MMU_TEST_MOVE causes Happy Hare to update its LED state. Re-assert now and
         # once more after Happy Hare's own LED refresh has had time to land.
         effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
         _led_effect(gate, effect_name)
         _schedule_led_reassert(gate, effect_name)
-        gate._scan_mm_total += chunk
+        gate._scan_mm_total += max(0.0, actual)
         gate._scan_position_reads_done = 0
         gate._scan_next_chunk_time = (
             gate.reactor.monotonic() + gate._scan_poll_interval)
         logger.info(
-            "[%s]: move queued %.1fmm  scan position %.1f / %.1fmm",
-            gate._name.capitalize(), chunk, gate._scan_mm_total, gate._scan_max_mm)
+            "[%s]: homing move completed %.1fmm requested %.1fmm  "
+            "scan position %.1f / %.1fmm",
+            gate._name.capitalize(), actual, chunk,
+            gate._scan_mm_total, gate._scan_max_mm)
 
     return gate._scan_next_chunk_time
 
@@ -1145,7 +1146,7 @@ def continuous_step_event(gate, eventtime):
         return gate.reactor.NEVER
 
     remaining = gate._scan_max_mm - gate._scan_mm_total
-    move = min(gate._scan_continuous_step_mm, remaining)
+    move = remaining
     if move <= 0.0:
         gate._rewind_and_exit_scan()
         return gate.reactor.NEVER
@@ -1159,24 +1160,25 @@ def continuous_step_event(gate, eventtime):
     gate_was_selected = getattr(gate, '_scan_gate_selected', False)
     command_start = gate.reactor.monotonic()
     move_path = run_continuous_jog(gate, move)
+    actual_move = max(0.0, scan_last_jog_actual(gate, move))
     move_source = continuous_move_source(move_path)
     if gate._debug >= 4:
         logger.debug(
             "[%s]: continuous scan move submitted via %s: "
-            "move=%.2fmm speed=%.1fmm/s accel=%.1fmm/s^2",
-            gate._name.capitalize(), move_source, move,
+            "move=%.2fmm requested=%.2fmm speed=%.1fmm/s accel=%.1fmm/s^2",
+            gate._name.capitalize(), move_source, actual_move, move,
             gate._scan_continuous_speed, gate._scan_continuous_accel)
     msg = ("[SCAN] NFC[%s]: continuous %s %.1fmm  "
            "scan position %.1f / %.1fmm"
-           % (gate._name.capitalize(), move_source, move,
-              next_position, gate._scan_max_mm))
+           % (gate._name.capitalize(), move_source, actual_move,
+              gate._scan_mm_total + actual_move, gate._scan_max_mm))
     logger.info(msg)
     gate._console(msg)
     if gate._debug >= 4:
         logger.debug(
             "[%s]: continuous scan move timing source=%s "
-            "move=%.2fmm speed=%.1fmm/s accel=%.1fmm/s^2",
-            gate._name.capitalize(), move_source, move,
+            "move=%.2fmm requested=%.2fmm speed=%.1fmm/s accel=%.1fmm/s^2",
+            gate._name.capitalize(), move_source, actual_move, move,
             gate._scan_continuous_speed, gate._scan_continuous_accel)
     command_elapsed = max(0.0, gate.reactor.monotonic() - command_start)
     expected_duration = continuous_chunk_interval(gate, move)
@@ -1187,7 +1189,10 @@ def continuous_step_event(gate, eventtime):
     # for the first chunk.
     gate_selected_this_call = (
         not gate_was_selected and getattr(gate, '_scan_gate_selected', False))
-    if move_source == "Direct Move":
+    if move_source == "NFC Homing Move":
+        remaining_duration = 0.0
+        timing_basis = "blocking_homing"
+    elif move_source == "Direct Move":
         # For the direct Happy Hare path, command_elapsed is mostly Klipper/HH
         # queueing work and is not reliable motion progress. Use Klipper's
         # queued MMU move time instead so tag handling waits for real move end.
@@ -1202,15 +1207,15 @@ def continuous_step_event(gate, eventtime):
     effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
     _led_effect(gate, effect_name)
     _schedule_led_reassert(gate, effect_name)
-    gate._scan_mm_total += move
+    gate._scan_mm_total += actual_move
     gate._scan_continuous_uid_hits = []
     if gate._debug >= 4:
         logger.debug(
             "[%s]: continuous UID hit window reset for new %.1fmm chunk "
             "%.1f..%.1fmm",
-            gate._name.capitalize(), move,
-            gate._scan_mm_total - move, gate._scan_mm_total)
-    gate._scan_continuous_last_move_mm = move
+            gate._name.capitalize(), actual_move,
+            gate._scan_mm_total - actual_move, gate._scan_mm_total)
+    gate._scan_continuous_last_move_mm = actual_move
     gate._scan_continuous_probe_due = True
     gate._scan_continuous_move_inflight = True
     gate._scan_continuous_move_source = move_source
@@ -1221,9 +1226,9 @@ def continuous_step_event(gate, eventtime):
         + gate._scan_continuous_poll_interval)
     logger.info(
         "[%s]: continuous %s queued %.1fmm  scan position %.1f / %.1fmm "
-        "(next read in %.2fs; call returned in %.2fs, remaining move %.2fs, "
-        "basis=%s)",
-        gate._name.capitalize(), move_source, move,
+        "(requested %.1fmm; next read in %.2fs; call returned in %.2fs, "
+        "remaining move %.2fs, basis=%s)",
+        gate._name.capitalize(), move_source, actual_move, move,
         gate._scan_mm_total, gate._scan_max_mm,
         gate._scan_next_chunk_time - gate.reactor.monotonic(),
         command_elapsed, remaining_duration, timing_basis)
@@ -1981,16 +1986,88 @@ def console(gate, msg):
 
 
 def run_jog(gate, mm):
+    gate._scan_last_jog_actual_mm = mm
+    if mm > 0.0:
+        return run_homing_jog(gate, mm)
     gcode = gate.printer.lookup_object('gcode')
+    before = mmu_gear_position(gate)
     if not gate._scan_gate_selected:
         gate._scan_gate_selected = True
         gcode.run_script("MMU_SELECT GATE=%d\nMMU_TEST_MOVE MOVE=%.2f QUIET=1"
                          % (gate._gate, mm))
     else:
         gcode.run_script("MMU_TEST_MOVE MOVE=%.2f QUIET=1" % mm)
+    gate._scan_last_jog_actual_mm = measured_jog_delta(gate, before, mm)
+
+
+def mmu_gear_position(gate):
+    mmu = gate.printer.lookup_object('mmu', None)
+    mmu_toolhead = getattr(mmu, 'mmu_toolhead', None) if mmu is not None else None
+    if mmu_toolhead is None:
+        return None
+    try:
+        pos = mmu_toolhead.get_position()
+        return float(pos[1])
+    except Exception:
+        return None
+
+
+def measured_jog_delta(gate, before, fallback):
+    after = mmu_gear_position(gate)
+    if before is None or after is None:
+        return fallback
+    actual = after - before
+    if fallback < 0.0 and actual > 0.0:
+        return -actual
+    if fallback > 0.0 and actual < 0.0:
+        return -actual
+    return actual
+
+
+def scan_last_jog_actual(gate, fallback):
+    try:
+        return float(getattr(gate, '_scan_last_jog_actual_mm', fallback))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def nfc_endstop_name(gate):
+    return "nfc_lane%d" % gate._gate
+
+
+def homing_jog_command(gate, mm, speed=None, accel=None):
+    parts = [
+        "_MMU_STEP_HOMING_MOVE",
+        "MOVE=%.2f" % mm,
+        "ENDSTOP=%s" % nfc_endstop_name(gate),
+        "STOP_ON_ENDSTOP=1",
+        "MOTOR=gear",
+    ]
+    if speed is not None:
+        parts.append("SPEED=%.1f" % speed)
+    if accel is not None:
+        parts.append("ACCEL=%.1f" % accel)
+    parts.append("ALLOW_BYPASS=1")
+    return " ".join(parts)
+
+
+def run_homing_jog(gate, mm, speed=None, accel=None):
+    gate._scan_last_jog_actual_mm = mm
+    gcode = gate.printer.lookup_object('gcode')
+    cmd = homing_jog_command(gate, mm, speed=speed, accel=accel)
+    before = mmu_gear_position(gate)
+    if not gate._scan_gate_selected:
+        gate._scan_gate_selected = True
+        gcode.run_script("MMU_SELECT GATE=%d\n%s" % (gate._gate, cmd))
+    else:
+        gcode.run_script(cmd)
+    gate._scan_last_jog_actual_mm = measured_jog_delta(gate, before, mm)
+    return "homing"
 
 
 def continuous_move_source(move_path):
+    if move_path == "homing":
+        return "NFC Homing Move"
     if move_path == "direct":
         return "Direct Move"
     if move_path == "gcode":
@@ -2072,15 +2149,11 @@ def refresh_continuous_move_complete(gate, move_inflight, complete_time):
 
 
 def run_continuous_jog(gate, mm):
-    if (getattr(gate, '_scan_continuous_direct_available', True)
-            and run_direct_continuous_jog(gate, mm)):
-        return "direct"
-    if getattr(gate, '_scan_continuous_direct_available', True):
-        gate._scan_continuous_direct_available = False
-        logger.warning(
-            "[%s]: direct Happy Hare continuous move unavailable; "
-            "falling back to MMU_TEST_MOVE WAIT=0 for this scan",
-            gate._name.capitalize())
+    if mm > 0.0:
+        return run_homing_jog(
+            gate, mm,
+            speed=gate._scan_continuous_speed,
+            accel=gate._scan_continuous_accel)
     gcode = gate.printer.lookup_object('gcode')
     cmd = ("MMU_TEST_MOVE MOVE=%.2f SPEED=%.1f ACCEL=%.1f WAIT=0 QUIET=1"
            % (mm, gate._scan_continuous_speed, gate._scan_continuous_accel))

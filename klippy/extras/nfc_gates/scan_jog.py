@@ -622,6 +622,42 @@ def retry_continuous_overshoot_position(gate, now, max_attempts=3):
     return True
 
 
+def queue_continuous_homing_backtrack_retry(gate, now, reason):
+    uid = getattr(gate, '_scan_continuous_pending_uid', None)
+    if not uid:
+        return False
+    if getattr(gate, '_scan_motion_mode', 'stopped') != 'continuous':
+        return False
+    if getattr(gate, '_scan_continuous_move_source', None) != "NFC Homing Move":
+        return False
+    if not getattr(gate, '_tag_parsing', False):
+        return False
+
+    max_attempts = max(0, int(getattr(gate, '_scan_decode_retry_rounds', 5)))
+    retry_mm = max(0.0, float(getattr(gate, '_scan_decode_retry_mm', 5.0)))
+    if max_attempts <= 0 or retry_mm <= 0.0:
+        return False
+
+    gate._scan_decode_retry_mode = 'homing_backtrack'
+    gate._scan_decode_retry_uid = uid
+    gate._scan_decode_retry_attempts = 0
+    gate._scan_decode_retry_offset = 0.0
+    gate._scan_continuous_overshoot_backed_up = True
+    gate._scan_continuous_overshoot_uid = uid
+    gate._scan_continuous_overshoot_origin_mm = gate._scan_mm_total
+    gate._scan_continuous_overshoot_start_mm = gate._scan_mm_total
+    gate._scan_continuous_chunk_start_mm = gate._scan_mm_total
+    if gate._debug >= 3:
+        logger.info(
+            "[%s]: continuous NFC homing uid=%s did not resolve at stop "
+            "position %.1fmm; starting one-way backtrack rich-read retry "
+            "(step=%.1fmm attempts=%d reason=%s)",
+            gate._name.capitalize(), uid, gate._scan_mm_total,
+            retry_mm, max_attempts, reason)
+    return queue_decode_retry_move(
+        gate, now, uid, reason, max_attempts, retry_mm)
+
+
 def queue_continuous_overshoot_backup(gate, now):
     uid = getattr(gate, '_scan_continuous_pending_uid', None)
     if not uid:
@@ -963,6 +999,7 @@ def start(gate, max_mm=None):
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
     gate._scan_decode_retry_offset = 0.0
+    gate._scan_decode_retry_mode = None
     gate._scan_left_neighbor_gate = -1
     gate._scan_left_neighbor_shift_mm = 0.0
     gate._scan_left_neighbor_shifted = False
@@ -1210,6 +1247,10 @@ def continuous_step_event(gate, eventtime):
                                 + gate._scan_continuous_poll_interval)
                 elif full_poll_after_continuous_probe_resolved(gate):
                     tag_found = True
+                elif queue_continuous_homing_backtrack_retry(
+                        gate, now,
+                        "no complete tag read at NFC homing stop"):
+                    return gate.reactor.monotonic() + gate._scan_continuous_poll_interval
                 elif retry_continuous_overshoot_position(gate, now):
                     return gate.reactor.monotonic() + gate._scan_continuous_poll_interval
                 elif queue_continuous_overshoot_backup(gate, now):
@@ -1509,6 +1550,7 @@ def clear_false_scan_result(gate):
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
     gate._scan_decode_retry_offset = 0.0
+    gate._scan_decode_retry_mode = None
 
 
 def shift_left_neighbor(gate, left_gate, identity):
@@ -1682,6 +1724,7 @@ def disconnect_cleanup(gate):
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
     gate._scan_decode_retry_offset = 0.0
+    gate._scan_decode_retry_mode = None
     gate._scan_continuous_uid_hits = []
     gate._scan_left_neighbor_gate = -1
     gate._scan_left_neighbor_shift_mm = 0.0
@@ -1700,7 +1743,10 @@ def reset_uid_only_read(gate, uid):
 
 def decode_retry_config(gate):
     max_rounds = max(0, int(getattr(gate, '_scan_decode_retry_rounds', 5)))
-    max_attempts = max_rounds * 2
+    if getattr(gate, '_scan_decode_retry_mode', None) == 'homing_backtrack':
+        max_attempts = max_rounds
+    else:
+        max_attempts = max_rounds * 2
     retry_mm = max(0.0, float(getattr(gate, '_scan_decode_retry_mm', 5.0)))
     return max_attempts, retry_mm
 
@@ -1711,7 +1757,7 @@ def decode_retry_in_progress(gate):
         max_attempts > 0 and retry_mm > 0.0
         and gate._scan_decode_retry_uid is not None
         and gate._scan_decode_retry_attempts > 0
-        and gate._scan_decode_retry_attempts < max_attempts)
+        and gate._scan_decode_retry_attempts <= max_attempts)
 
 
 def decode_retry_exhausted(gate):
@@ -1724,6 +1770,8 @@ def decode_retry_exhausted(gate):
 
 def fail_continuous_uid_resolution_after_retries(gate):
     if getattr(gate, '_scan_motion_mode', 'stopped') != 'continuous':
+        return False
+    if getattr(gate, '_scan_decode_retry_mode', None) == 'homing_backtrack':
         return False
     uid = getattr(gate, '_scan_decode_retry_uid', None)
     if not uid:
@@ -1757,6 +1805,7 @@ def resume_scan_after_decode_retry(gate, now):
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
     gate._scan_decode_retry_offset = 0.0
+    gate._scan_decode_retry_mode = None
     gate._scan_next_chunk_time = now
 
 
@@ -1833,13 +1882,26 @@ def next_decode_retry_move(gate, max_attempts, retry_mm):
 
 
 def next_continuous_overshoot_retry_move(gate, max_attempts, retry_mm):
-    """Retry around the continuous rich-read recenter point.
+    """Retry from the best continuous rich-read position.
 
-    The recenter point is the best available center after in-flight UID probes.
-    Match the normal decode-retry contract here: with retry_mm=2 and 5 rounds,
-    target offsets are +2, -2, +4, -4, ... from that center.  The returned
-    value is the jog from the current position to the next target offset.
+    NFC homing moves stop after the first UID hit, so there is no hit window to
+    center around.  In that mode, walk back along the just-scanned direction:
+    with retry_mm=5 and rounds=5, target offsets are -5, -10, -15, -20, -25mm.
+    The older direct/probe path below still retries around the hit-window
+    center with +step, -step, +2step, -2step, ...
     """
+    if getattr(gate, '_scan_decode_retry_mode', None) == 'homing_backtrack':
+        while gate._scan_decode_retry_attempts < max_attempts:
+            move = -retry_mm
+            next_total = gate._scan_mm_total + move
+            if next_total < 0.0:
+                move = -gate._scan_mm_total
+            gate._scan_decode_retry_attempts += 1
+            if abs(move) > 0.001:
+                return move
+            gate._scan_decode_retry_offset += move
+        return 0.0
+
     start_mm = getattr(
         gate, '_scan_continuous_overshoot_start_mm', gate._scan_mm_total)
     current_offset = gate._scan_mm_total - start_mm
@@ -2134,6 +2196,7 @@ def rewind_and_exit(gate):
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
     gate._scan_decode_retry_offset = 0.0
+    gate._scan_decode_retry_mode = None
     gate._scan_left_neighbor_gate = -1
     gate._scan_left_neighbor_shift_mm = 0.0
     gate._scan_left_neighbor_shifted = False

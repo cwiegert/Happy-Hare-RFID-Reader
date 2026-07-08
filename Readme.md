@@ -27,6 +27,20 @@ Practical hardware choices:
 - **Single shared reader:** PN532 or PN7160 can be mounted inside the MMU body
   and used as a tap-before-loading reader.
 
+## Virtual Endstop — How Scan-Jog Finds the Tag
+
+Per-lane installs register each lane's NFC reader as a real Klipper/Happy Hare
+homing endstop (`mmu_nfc_endstop.py`, `[mmu_nfc_endstop laneN]`) — no extra
+hardware or wiring, it borrows the reader the matching `[nfc_gate laneN]`
+section already owns. When scan-jog searches for the tag, the forward search
+is a genuine Klipper homing move (`ENDSTOP=nfc_lane<N>`) that stops the
+instant the tag is detected, instead of jogging a fixed chunk and polling
+afterward and hoping the tag was somewhere in that chunk. This is generated
+automatically for every enabled lane by `install.sh` — there is nothing extra
+to configure. See [How It Works](docs/shared/how-it-works.md) for the full
+scan loop and [Configuration Reference](docs/shared/configuration.md) for the
+`[mmu_nfc_endstop laneN]` keys.
+
 ## Operating Modes
 
 | Mode | Hardware | Best For | Flow |
@@ -210,7 +224,7 @@ These are the defaults shipped in `config/nfc_reader.cfg`:
 | `scan_jog_max` | unset | Optional fixed scan-jog travel limit; leave unset to use the lane Bowden length |
 | `scan_reads_per_position` | `1` | Reads per stopped scan position |
 | `scan_poll_interval` | `0.25` | Read spacing during scan-jog and shared-reader polling cadence |
-| `scan_motion_mode` | `continuous` | `continuous` queues direct Happy Hare gear moves and polls while each chunk is moving; `stopped` keeps blocking substep reads |
+| `scan_motion_mode` | `continuous` | `continuous` homes the forward search against the lane's virtual NFC endstop, stopping the instant the tag is detected; `stopped` keeps blocking substep reads |
 | `scan_continuous_step_mm` | `150.0` | Continuous-mode forward chunk size. Rich reads use the observed UID hit-window center, so this no longer needs to be kept small for rich-tag positioning |
 | `scan_continuous_speed` | `200.0` | Continuous-mode gear move speed |
 | `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration |

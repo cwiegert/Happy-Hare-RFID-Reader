@@ -412,6 +412,38 @@ mmu_gate: 4
 i2c_mcu:  mmu4
 ```
 
+### `[mmu_nfc_endstop laneN]`
+
+`install.sh` writes one of these alongside every enabled `[nfc_gate laneN]`
+section. It registers that lane's reader with Happy Hare as a gear-rail
+homing endstop (`ENDSTOP=nfc_lane<N>`) — no new hardware, it borrows the same
+reader the matching `[nfc_gate laneN]` section owns. This is what lets
+scan-jog's forward search stop the instant the tag is detected instead of
+jogging a fixed distance and polling afterward. See
+[Virtual Endstop](klipper-functions.md#virtual-endstop) for how scan-jog uses it.
+
+```ini
+[mmu_nfc_endstop lane0]
+nfc_gate:                lane0
+endstop_name:            nfc_lane0
+poll_interval:           0.05
+register_sensor:         True
+```
+
+| Key | Required | Description |
+|---|:---:|---|
+| `nfc_gate` | Yes | Name of the matching `[nfc_gate laneN]` section this endstop borrows a reader from. |
+| `endstop_name` | — | Endstop name Happy Hare homing moves reference as `ENDSTOP=<name>`. Defaults to the section name (`lane0`, `lane1`, ...); the installer writes `nfc_lane0`, `nfc_lane1`, etc. explicitly. |
+| `poll_interval` | — | Seconds between NFC reads while a homing move against this endstop is in progress. Default `0.05`. |
+| `register_sensor` | — | `True` by default. Also registers this endstop as a `filament_switch_sensor`-style presence sensor so Happy Hare's runout tooling can see it. |
+
+`[mmu_nfc_endstop laneN]` has no `enabled` flag of its own, and it requires
+its matching `[nfc_gate laneN]` to be enabled with a working reader — Klipper
+raises a config error at startup (`mmu_nfc_endstop <name> references disabled
+[nfc_gate <name>]`) if the lane is disabled while its endstop section is
+still present. Comment out (or remove) `[mmu_nfc_endstop laneN]` too when
+setting `enabled: False` on a lane.
+
 ---
 
 ## `nfc_macros.cfg` — Event Macros

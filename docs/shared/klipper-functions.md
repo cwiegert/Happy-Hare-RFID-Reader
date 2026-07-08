@@ -321,14 +321,30 @@ Starts the scan-and-jog sequence on demand, identical to the automatic pre-load 
 NFC GATE=0 JOG_SCAN=1
 ```
 
-**What it does:** Selects the gate, then jogs the filament forward until the NFC tag is read or the scan limit is reached. When the tag is found it rewinds toward the parked position, leaves `scan_rewind_buffer_mm` for Happy Hare's final gate parking step, and runs `_MMU_STEP_UNLOAD_GATE`. If `scan_jog_max` is set, that distance is the scan limit; otherwise the lane's Happy Hare Bowden calibration length is used. When the limit is reached without a read, NFC follows the same rewind-and-park path and exits scan mode.
+**What it does:** Selects the gate, then homes the filament forward against the lane's virtual NFC endstop (`ENDSTOP=nfc_lane<N>`, see [Virtual Endstop](#virtual-endstop) below) until the tag is read or the scan limit is reached — the homing move stops the instant the tag is detected. When the tag is found it rewinds toward the parked position, leaves `scan_rewind_buffer_mm` for Happy Hare's final gate parking step, and runs `_MMU_STEP_UNLOAD_GATE`. If `scan_jog_max` is set, that distance is the scan limit; otherwise the lane's Happy Hare Bowden calibration length is used. When the limit is reached without a read, NFC follows the same rewind-and-park path and exits scan mode.
 
-Scan-jog supports two motion modes:
+#### Virtual Endstop
+
+Per-lane installs register each lane's NFC reader as a real Klipper/Happy Hare
+gear-rail endstop via `mmu_nfc_endstop.py` (`[mmu_nfc_endstop laneN]`,
+generated automatically by `install.sh` alongside each `[nfc_gate laneN]`
+section — no extra hardware or config to add). It borrows the reader the
+`[nfc_gate laneN]` section already owns: while Happy Hare homes against
+`ENDSTOP=nfc_lane<N>`, a reactor timer polls that reader every
+`poll_interval` (default `0.05s`) and reports the endstop triggered the
+instant a tag UID is read. This is what lets scan-jog's forward search stop
+exactly at the tag instead of jogging a fixed distance and polling
+afterward. See [`[mmu_nfc_endstop laneN]`](configuration.md#mmu_nfc_endstop-lanen)
+for the config keys.
+
+Scan-jog supports two motion modes. Both home against the virtual endstop for
+the forward search — the difference is whether NFC also polls the reader
+while that homing move is still in flight:
 
 | Mode | Config | Behavior |
 |---|---|---|
-| Continuous | `scan_motion_mode: continuous` | **Default.** Queues each forward search chunk through Happy Hare's MMU toolhead and polls NFC every `scan_continuous_poll_interval` while that chunk is estimated to be moving. If a tag is found during motion, the current chunk is allowed to finish before the existing 0.1 second read-light hold, rewind, and completion logic run. |
-| Stopped | `scan_motion_mode: stopped` | Divides each `scan_jog_mm` chunk into three blocking `MMU_TEST_MOVE` substeps, then reads at stopped spool positions. `scan_reads_per_position` and `scan_poll_interval` control the stopped-position reads. More reliable for marginal reader or tag alignment at the cost of scan speed. |
+| Continuous | `scan_motion_mode: continuous` | **Default.** Polls NFC every `scan_continuous_poll_interval` while the homing move is still in flight, recording a UID hit-window used to recenter before rich tag parsing. If a tag is found during motion, the homing move is allowed to finish before the existing 0.1 second read-light hold, rewind, and completion logic run. |
+| Stopped | `scan_motion_mode: stopped` | Waits for the homing move to finish (or fail to trigger, meaning no tag was found), then reads once at that position. `scan_reads_per_position` and `scan_poll_interval` control repeat reads at that stopped position. More reliable for marginal reader or tag alignment at the cost of scan speed, since there is no in-flight UID hit-window to recenter from before a rich read. |
 
 Default continuous scan settings:
 
@@ -341,12 +357,13 @@ scan_continuous_accel: 2000.0
 scan_continuous_poll_interval: 0.05
 ```
 
-With those values, a 150 mm forward chunk takes about `0.85s` before NFC read
-time is included. NFC polls every
-`0.05s` during that estimated motion window, then queues the next chunk if no
-tag has been found.
+The forward search homes for the full remaining scan distance in one move —
+`scan_continuous_step_mm` no longer chunks that search (it's unused by the
+current homing-move implementation; left in config for now). NFC polls the
+reader every `0.05s` while that homing move is estimated to be in flight,
+building a UID hit-window if a tag is detected before the move stops.
 
-If a continuous UID hit occurs during motion, NFC waits for the current chunk to
+If a continuous UID hit occurs during motion, NFC waits for the homing move to
 finish and checks Spoolman first. If the UID resolves, scan-jog finishes without
 a rich read. If the UID does not resolve and rich parsing is enabled, NFC backs
 up to the observed UID hit-window center before running rich tag parsing and the

@@ -3,12 +3,13 @@
 # EMU NFC Gate Reader — Uninstall Script
 # =============================================================================
 # What this script does automatically:
-#   1. Removes ~/klipper/klippy/extras/nfc_gate.py  (symlink)
-#   2. Removes ~/klipper/klippy/extras/nfc_gates    (symlink to package dir)
-#   3. Removes ~/klipper/klippy/extras/nfc_gates.py (flat file, if present
+#   1. Removes ~/klipper/klippy/extras/nfc_gate.py         (symlink)
+#   2. Removes ~/klipper/klippy/extras/nfc_gates           (symlink to package dir)
+#   3. Removes ~/klipper/klippy/extras/nfc_gates.py        (flat file, if present
 #      from a previous install)
-#   4. Backs up ~/printer_data/config/nfc/ to nfc_removed_<timestamp>/
-#   5. Restarts Klipper
+#   4. Removes ~/klipper/klippy/extras/mmu_nfc_endstop.py  (symlink)
+#   5. Backs up ~/printer_data/config/nfc/ to nfc_removed_<timestamp>/
+#   6. Restarts Klipper
 #
 # What you must do manually afterward:
 #   - Remove the [include nfc/...] lines from printer.cfg
@@ -123,7 +124,8 @@ echo "Removing Klipper extra symlinks..."
 for target in \
     "${KLIPPER_EXTRAS}/nfc_gate.py" \
     "${KLIPPER_EXTRAS}/nfc_gates" \
-    "${KLIPPER_EXTRAS}/nfc_gates.py"
+    "${KLIPPER_EXTRAS}/nfc_gates.py" \
+    "${KLIPPER_EXTRAS}/mmu_nfc_endstop.py"
 do
     if [ -L "$target" ]; then
         rm "$target"

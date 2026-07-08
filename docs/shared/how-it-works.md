@@ -92,66 +92,81 @@ _poll_timer_event  (every poll_interval seconds)
 
 Initialization sets `_prev_gate_status = -1` so a cold-start with status already at 1 (from a previous session) does not trigger scan mode — only a fresh 0→1 transition fires it.
 
+### Virtual endstop
+
+`mmu_nfc_endstop.py` wraps a lane's existing `[nfc_gate laneN]` reader as a
+Happy Hare gear-rail endstop (`ENDSTOP=nfc_lane<N>`) — no extra hardware. While
+Happy Hare is homing against it, a reactor timer polls the lane's NFC reader
+every `poll_interval` (default `0.05s`) and reports the endstop triggered the
+instant a tag UID is read. Both scan-jog motion modes use this: the forward
+search is a real Klipper homing move for the full remaining scan distance
+(`_MMU_STEP_HOMING_MOVE ENDSTOP=nfc_lane<N> STOP_ON_ENDSTOP=1 MOTOR=gear`, or
+the direct `mmu.move_filament(homing_move=1, endstop_name=...)` equivalent
+when available), which physically stops the instant the tag is detected —
+scan-jog gets the tag's real position from the homing result, not from an
+estimate after a fixed-length jog.
+
 ### Scan loop
 
 ```
-_scan_step_event  (stopped mode: after each jog substep completes)
+_scan_step_event  (stopped mode)
   └─ print started?  →  rewind and exit
+  └─ homing move for the remaining scan distance, ENDSTOP=nfc_lane<N>
+       (stops early the instant the virtual endstop trips)
   └─ _poll()
        └─ tag found?  →  _finish_scan()
             └─ dispatch spool to Happy Hare (already done inside _poll)
-            └─ MMU_SELECT_GATE GATE=N + MMU_UNLOAD restore=0  (rewind to parked)
+            └─ rewind to parked position, hand final parking to Happy Hare
             └─ resume poll timer
   └─ scan_mm_total >= scan_jog_max or lane Bowden length?  →  rewind and exit (no tag found)
-  └─ MMU_SELECT_GATE GATE=N + MMU_TEST_MOVE MOVE=scan_jog_mm  (advance one step)
-  └─ reschedule after scan_jog_mm / gear_short_move_speed
 ```
 
 `_poll()` during a scan step is identical to a normal poll — I2C read, Spoolman lookup, `GateState.process_read`, macro dispatch. The only difference is that `GateState.miss_count` does not increment on a no-read during scan (a blank read while the spool rotates is not an absence event).
 
-`scan_motion_mode: continuous` is the default. It changes only the forward search
-jog — tag-found actions, the 0.1 second read-light hold, rewind, and completion
-logic are identical in both modes:
+`scan_motion_mode: continuous` is the default. It changes only how NFC reacts
+while the homing move is in flight — tag-found actions, the 0.1 second
+read-light hold, rewind, and completion logic are identical in both modes.
 
-`scan_motion_mode: stopped` is the alternative. It uses blocking `MMU_TEST_MOVE`
-substeps and reads only while the spool is stopped. Use this for marginal reader
-or tag alignment where continuous polling misses the tag.
+`scan_motion_mode: stopped` is the alternative: it waits for the homing move
+to finish (or fail to trigger, at which point NFC rewinds with no tag found),
+then reads once. Use this for marginal reader or tag alignment where the
+in-flight continuous probing below misses the tag.
 
-Continuous mode forward search:
+Continuous mode additionally polls the reader *while* the homing move is
+still moving, building a UID hit-window (the mm range where the UID was
+observed) used later to recenter before rich tag parsing:
 
 ```
 _scan_step_event  (continuous mode)
   └─ print started? → rewind and exit
-  └─ _poll()
-       └─ UID found while chunk is moving? → wait for current chunk to finish
+  └─ homing move for the remaining scan distance, ENDSTOP=nfc_lane<N> (in flight)
+       └─ UID found while still moving? → keep probing, record hit-window, wait for move to finish
+  └─ move complete →
        └─ Spoolman UID lookup succeeds? → existing _finish_scan()
        └─ UID unresolved and rich parsing enabled? → back up to UID hit-window center
        └─ rich payload incomplete? → retry around backed-up position
-       └─ tag found after chunk is done? → existing _finish_scan()
+       └─ tag found → existing _finish_scan()
             └─ 0.1 second read-light hold
             └─ rewind
             └─ dispatch cached tag/spool event
-  └─ current chunk still estimated in flight? → poll again after scan_continuous_poll_interval
-  └─ scan limit reached? → rewind and exit
-  └─ queue direct Happy Hare MMU-toolhead gear move for the next 150mm chunk
-  └─ poll again after scan_continuous_poll_interval
+  └─ scan limit reached with no tag? → rewind and exit
 ```
 
-The shipped continuous config uses 150 mm chunks at 200 mm/s and 2000 mm/s^2,
-with a 0.05 s in-flight read cadence. Continuous mode bypasses the public
-`MMU_TEST_MOVE` G-code wrapper for the forward search path and queues the move
-through Happy Hare's MMU toolhead.
-During in-flight continuous motion, NFC uses a UID-only probe and avoids rich tag
-parsing. After the current chunk finishes, Spoolman UID lookup runs first. If
-the UID resolves, scan-jog can finish without any rich read. If the UID does not
-resolve and rich parsing is enabled, NFC backs up to the observed UID hit-window
-center before rich parsing. After that one-time recenter move, decode retry
-moves for incomplete rich tag reads stay on the existing stopped/blocking retry
-path.
+The shipped continuous config probes at 200 mm/s and 2000 mm/s^2 with a
+0.05 s in-flight read cadence. During in-flight motion NFC uses a UID-only
+probe and avoids rich tag parsing. Once the homing move completes, Spoolman
+UID lookup runs first; if it resolves, scan-jog can finish without any rich
+read. If the UID does not resolve and rich parsing is enabled, NFC backs up
+to the observed UID hit-window center before rich parsing. After that
+one-time recenter move, decode retry moves for incomplete rich tag reads stay
+on the existing stopped/blocking retry path. Continuous mode's rewind leg
+still uses a queued Happy Hare MMU-toolhead move (bypassing the public
+`MMU_TEST_MOVE` G-code wrapper) rather than a homing move, since there is no
+tag to home against on the way back.
 
 ### Class-level scan lock
 
-All lane instances share one class variable, `NFCGate._active_scan_gate`. Because Klipper's reactor is single-threaded, reads and writes are atomic with respect to timer callbacks — no mutex needed. Only one gate may scan at a time; a second gate that detects a 0→1 edge while the lock is held re-arms its pending flag and retries on the next poll tick.
+All lane instances share one class variable, `NFCGate._active_scan_gate`. Because Klipper's reactor is single-threaded, reads and writes are atomic with respect to timer callbacks — no mutex needed. Only one gate may scan at a time; a second gate that detects a 0→1 edge while the lock is held re-arms its pending flag and retries on the next poll tick. The lock is held until a scan's rewind, Happy Hare dispatch, poll resume, and LED release have all completed — releasing it any earlier let a second `JOG_SCAN=1` start while the previous session's own Happy Hare interaction was still in flight.
 
 ---
 

@@ -15,13 +15,19 @@ The installer creates **symlinks** — it does not copy Python files into the Kl
 **What gets created:**
 
 ```
-~/klipper/klippy/extras/nfc_gate.py    →  symlink → repo/klippy/extras/nfc_gate.py
-~/klipper/klippy/extras/nfc_gates/     →  symlink → repo/klippy/extras/nfc_gates/
+~/klipper/klippy/extras/nfc_gate.py         →  symlink → repo/klippy/extras/nfc_gate.py
+~/klipper/klippy/extras/nfc_gates/          →  symlink → repo/klippy/extras/nfc_gates/
+~/klipper/klippy/extras/mmu_nfc_endstop.py  →  symlink → repo/klippy/extras/mmu_nfc_endstop.py
 ~/printer_data/config/nfc/nfc_reader.cfg
 ~/printer_data/config/nfc/nfc_macros.cfg
 ~/printer_data/config/nfc/nfc_reader_hw.cfg
 ~/printer_data/config/nfc/nfc_reader_shared.cfg
 ```
+
+`mmu_nfc_endstop.py` registers each enabled lane's NFC reader as a Happy Hare
+gear-rail homing endstop. `nfc_reader_hw.cfg` gets one `[mmu_nfc_endstop
+laneN]` section per enabled lane automatically, alongside the matching
+`[nfc_gate laneN]` — see [Virtual Endstop](../shared/klipper-functions.md#virtual-endstop).
 
 Config files use a non-destructive merge: if a section already exists in your file, it is left alone. Only missing sections are appended.
 
@@ -254,8 +260,9 @@ The uninstaller:
 1. Removes the `nfc_gate.py` symlink from Klipper extras
 2. Removes the `nfc_gates/` symlink from Klipper extras
 3. Removes legacy `~/pn532_scan.py` if an older installer placed it there
-4. Moves `~/printer_data/config/nfc/` to `nfc_removed_<timestamp>/` (your config is preserved, not deleted)
-5. Restarts Klipper
+4. Removes the `mmu_nfc_endstop.py` symlink from Klipper extras
+5. Moves `~/printer_data/config/nfc/` to `nfc_removed_<timestamp>/` (your config is preserved, not deleted)
+6. Restarts Klipper
 
 At the end, it prompts whether to remove the local repo checkout at
 `~/rfid-reader`. The default answer is yes. Answer `n` to keep the checkout.

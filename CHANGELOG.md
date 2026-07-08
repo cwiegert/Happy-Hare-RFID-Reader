@@ -5,6 +5,108 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.1.0] - 07/07/2026 - WoodWorker
+
+### Virtual Endstop — Scan-Jog Now Homes to the Tag Instead of Jogging Past It
+
+Scan-jog's forward search used to be a blind jog-then-poll loop, so the tag's
+real position was only ever known as "somewhere in the last chunk."
+
+- Added `mmu_nfc_endstop.py`, a Klipper extra that wraps an existing
+  `[nfc_gate laneN]` reader as a Happy Hare gear-rail endstop
+  (`mmu.gear_rail.add_extra_endstop`, standard MCU endstop interface). While
+  Happy Hare homes against it, a reactor timer polls the lane's NFC reader
+  every `poll_interval` (default `0.05s`) and reports triggered the instant a
+  tag UID is read — no new hardware or wiring, it borrows the reader the
+  matching `[nfc_gate laneN]` already owns.
+- Added `[mmu_nfc_endstop laneN]` to `nfc_reader_hw.cfg` (generated
+  automatically by `install.sh` for every enabled lane) and symlinked
+  `mmu_nfc_endstop.py` into Klipper's extras directory.
+- Both scan-jog motion modes now search with a genuine Klipper homing move
+  (`_MMU_STEP_HOMING_MOVE ENDSTOP=nfc_lane<N> STOP_ON_ENDSTOP=1 MOTOR=gear`,
+  or the direct `mmu.move_filament(homing_move=1, endstop_name=...)`
+  equivalent) for the full remaining scan distance, instead of jogging a fixed
+  chunk and polling afterward. The move physically stops the instant the
+  endstop trips. `continuous` additionally polls the reader while the move is
+  in flight to build a UID hit-window, used to recenter before rich tag
+  parsing; `stopped` waits for the homing move to finish, then reads once.
+- Continuous scan now starts by moving on the first step instead of a
+  stationary 0.0 mm poll. The previously-cached UID/spool is still stashed at
+  scan start, and a UID matching that stashed UID resolves directly from the
+  stashed spool instead of re-running Spoolman/rich-tag resolution.
+- Fixed `uninstall.sh` to also remove the `mmu_nfc_endstop.py` symlink from
+  Klipper extras; it previously only cleaned up `nfc_gate.py`/`nfc_gates/`,
+  leaving the endstop extra behind after uninstall.
+- Documented across `Readme.md`, `docs/shared/how-it-works.md`,
+  `docs/shared/klipper-functions.md`, `docs/shared/configuration.md`,
+  `docs/shared/install-uninstall.md`, and `docs/shared/architecture-decisions.md`.
+
+### Happy Hare Filament-Position Counter Drift
+
+Repeated `JOG_SCAN=1` runs on the same lane left Happy Hare's gear position
+readout (`UNLOADED N.Nmm` in the visual status banner) drifting further from
+zero every cycle, because that counter is a running total that scan-jog never
+re-zeroes.
+
+- Root cause: Happy Hare's real `MMU_LOAD`/`MMU_EJECT` sequences call
+  `mmu._initialize_filament_position()` (v3's monolithic `mmu.py`; v4 renamed
+  it to the public `initialize_filament_position()`) once at the start,
+  before any gear moves, resetting the raw driving-stepper position
+  (`mmu_toolhead.get_position()[1]`) to `0.0`. Scan-jog never calls either
+  sequence — it drives the gear through Happy Hare's low-level composable
+  primitives (`_MMU_STEP_HOMING_MOVE`, `_MMU_STEP_MOVE`,
+  `_MMU_STEP_UNLOAD_GATE`) instead, so the reset never happens on either
+  Happy Hare version.
+- Fixed by calling Happy Hare's position-reset method once, at the start of
+  every scan-jog session (`scan_jog.start()`). `_hh_reset_filament_position()`
+  tries `_initialize_filament_position` (v3) then `initialize_filament_position`
+  (v4), so the fix works on either version without needing to know which is
+  installed.
+- Diagnosed against the wrong Happy Hare reference tree at first — an initial
+  attempt targeted v4's `mmu.drive().get_filament_position()`, which doesn't
+  exist on v3 (confirmed via a console diagnostic showing `has_reset_fn=False`
+  against a live `mmu_found=True` install). Re-verified against the actually
+  installed v3 API before landing the real fix.
+
+### Scan-Jog Class-Level Lock Released Too Early
+
+- Fixed `_active_scan_gate` — the "only one gate scans at a time" guard
+  checked by `manual_jog_scan()` — being cleared in `finish()` and
+  `rewind_and_exit()` before those functions had finished their own cleanup
+  (Happy Hare dispatch, left-neighbor restore, poll resume, LED release). A
+  second `JOG_SCAN=1` issued during that window could start a new scan session
+  — including its own filament-position reset and gear moves — while the
+  first session's Happy Hare interaction was still in flight, corrupting
+  both. `_active_scan_gate = None` now runs as the last line of both
+  functions, after all other cleanup.
+
+### Happy Hare `MMU_SELECT` Visual Banner During Scan-Jog
+
+Every scan-jog gate selection ran `MMU_SELECT GATE=<n> QUIET=1`, which printed
+Happy Hare's full gate-table + visual banner on every jog regardless of
+`QUIET=1` or `wrap_suppress_visual_log()`.
+
+- Root cause: Happy Hare v3's `cmd_MMU_SELECT` selects the gate via
+  `mmu.select_gate()`, then unconditionally logs the banner through
+  `self.log_info(...)` — that print reads no `QUIET` parameter and is gated
+  only by `mmu.log_level`, a separate switch from the `log_visual` flag that
+  `wrap_suppress_visual_log()` controls.
+  - A first pass temporarily zeroed `mmu.log_level` around every Happy Hare
+    call scan-jog makes. It worked but was reverted as unnecessarily broad —
+    it silenced all of Happy Hare's info-level logging, not just this one
+    print, for the duration of every `MMU_SELECT`/`_MMU_STEP_*` call.
+  - Replaced with `select_gate_quiet()`: calls `mmu.select_gate(gate_num)`
+    directly through Python (the same call `cmd_MMU_SELECT` itself makes),
+    falling back to the gcode form only if that method isn't available. Every
+    `MMU_SELECT` gcode call in `scan_jog.py` now goes through this helper,
+    mirroring the direct-Python pattern `run_direct_continuous_jog` already
+    used for gate selection.
+- `wrap_suppress_visual_log()` is still used for `_MMU_STEP_*` calls, where it
+  correctly suppresses `_display_visual_state()` on filament-pos-state
+  transitions.
+
+---
+
 ## [1.0.0] - 07/06/2026 - WoodWorker
 
 ### Happy Hare V4 Compatibility

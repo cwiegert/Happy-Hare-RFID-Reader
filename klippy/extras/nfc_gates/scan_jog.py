@@ -2051,6 +2051,27 @@ def homing_jog_command(gate, mm, speed=None, accel=None):
     return " ".join(parts)
 
 
+def run_direct_homing_jog(gate, mm, speed=None, accel=None):
+    mmu = gate.printer.lookup_object('mmu', None)
+    if (mmu is None or not hasattr(mmu, 'move_filament')
+            or not hasattr(mmu, 'wrap_sync_gear_to_extruder')):
+        return False
+    move_speed = get_speed(gate) if speed is None else speed
+    move_accel = accel
+    with mmu.wrap_sync_gear_to_extruder():
+        actual, _homed, _measured, _delta = mmu.move_filament(
+            "NFC scan homing move",
+            mm,
+            speed=move_speed,
+            accel=move_accel,
+            motor="gear",
+            homing_move=(1 if mm >= 0.0 else -1),
+            endstop_name=nfc_endstop_name(gate),
+            wait=True)
+    gate._scan_last_jog_actual_mm = actual
+    return True
+
+
 def run_homing_jog(gate, mm, speed=None, accel=None):
     gate._scan_last_jog_actual_mm = mm
     gcode = gate.printer.lookup_object('gcode')
@@ -2058,9 +2079,14 @@ def run_homing_jog(gate, mm, speed=None, accel=None):
     before = mmu_gear_position(gate)
     if not gate._scan_gate_selected:
         gate._scan_gate_selected = True
-        gcode.run_script("MMU_SELECT GATE=%d\n%s" % (gate._gate, cmd))
+        gcode.run_script("MMU_SELECT GATE=%d" % gate._gate)
     else:
-        gcode.run_script(cmd)
+        gcode = None
+    if run_direct_homing_jog(gate, mm, speed=speed, accel=accel):
+        return "homing"
+    if gcode is None:
+        gcode = gate.printer.lookup_object('gcode')
+    gcode.run_script(cmd)
     gate._scan_last_jog_actual_mm = measured_jog_delta(gate, before, mm)
     return "homing"
 

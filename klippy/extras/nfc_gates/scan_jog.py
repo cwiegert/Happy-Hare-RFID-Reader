@@ -2,8 +2,6 @@
 #
 # Scan-and-jog mode helpers for NFCGate.
 
-import contextlib
-
 from . import hh_status
 from .LED_effect_mgr import (
     EVENT_REWIND, EVENT_SCAN_START, EVENT_TAG_READ, LEDEffectManager)
@@ -841,7 +839,7 @@ def restore_active_gate(gate):
     if gcode is None:
         return
     try:
-        run_hh_script(gate, "MMU_SELECT GATE=%d QUIET=1" % previous_gate)
+        select_gate_quiet(gate, previous_gate)
     except Exception as e:
         logger.warning(
             "[%s]: gate %d scan mode — failed to restore "
@@ -852,8 +850,8 @@ def restore_active_gate(gate):
 def run_hh_script(gate, script, suppress_visual=True):
     gcode = gate.printer.lookup_object('gcode')
     mmu = gate.printer.lookup_object('mmu', None)
-    if suppress_visual and mmu is not None:
-        with suppress_hh_visual_log(mmu), _suppress_hh_log_level(mmu):
+    if suppress_visual and mmu is not None and hasattr(mmu, 'wrap_suppress_visual_log'):
+        with mmu.wrap_suppress_visual_log():
             gcode.run_script(script)
     else:
         gcode.run_script(script)
@@ -873,26 +871,28 @@ def suppress_hh_visual_log(mmu):
     return _NoopContext()
 
 
-@contextlib.contextmanager
-def _suppress_hh_log_level(mmu):
-    """Silence HH's own log_info() console echoes for one internal call.
+def select_gate_quiet(gate, gate_num):
+    """Select gate_num without HH's cmd_MMU_SELECT gate-table/visual banner.
 
-    cmd_MMU_SELECT (HH v3 mmu.py) unconditionally prints the full gate-table
-    + visual-state banner via self.log_info(...) after selecting a gate --
-    it ignores QUIET=1 and isn't covered by wrap_suppress_visual_log() (that
-    only gates the separate log_visual flag used by _display_visual_state()).
-    log_info() is gated solely by mmu.log_level, so drop that to 0 for the
-    duration of scan-jog's own MMU_SELECT/_MMU_STEP_*/etc. calls.
+    cmd_MMU_SELECT (the MMU_SELECT gcode command) calls mmu.select_gate()
+    to do the physical selection, then unconditionally prints the full
+    gate-table + visual-state banner -- that print isn't gated by QUIET=1
+    or by wrap_suppress_visual_log() at all. mmu.select_gate() is the same
+    call the gcode command makes for the actual selection and has no such
+    print, so calling it directly (already the pattern run_direct_continuous_jog
+    uses) selects the gate with nothing to suppress.
     """
-    if mmu is None or not hasattr(mmu, 'log_level'):
-        yield
-        return
-    previous = mmu.log_level
-    mmu.log_level = 0
-    try:
-        yield
-    finally:
-        mmu.log_level = previous
+    mmu = gate.printer.lookup_object('mmu', None)
+    if mmu is not None and hasattr(mmu, 'select_gate'):
+        try:
+            mmu.select_gate(gate_num)
+            return
+        except Exception:
+            logger.exception(
+                "[%s]: gate %d scan mode — direct select_gate(%d) failed; "
+                "falling back to MMU_SELECT gcode",
+                gate._name, gate._gate, gate_num)
+    run_hh_script(gate, "MMU_SELECT GATE=%d QUIET=1" % gate_num)
 
 
 def resume_poll_after_rewind(gate):
@@ -1516,12 +1516,12 @@ def shift_left_neighbor(gate, left_gate, identity):
     if gcode is None:
         return False
     try:
+        select_gate_quiet(gate, left_gate)
         run_hh_script(gate,
-            "MMU_SELECT GATE=%d QUIET=1\n"
             "MMU_TEST_MOVE MOVE=%.2f QUIET=1\n"
-            "M400\n"
-            "MMU_SELECT GATE=%d QUIET=1"
-            % (left_gate, LEFT_NEIGHBOR_CLEARANCE_MM, gate._gate))
+            "M400"
+            % LEFT_NEIGHBOR_CLEARANCE_MM)
+        select_gate_quiet(gate, gate._gate)
     except Exception as e:
         logger.warning(
             "[%s]: gate %d scan mode — failed to clear left "
@@ -1564,11 +1564,10 @@ def restore_left_neighbor(gate):
            % left_gate)
     logger.info(msg)
     try:
-        run_hh_script(gate, "MMU_SELECT GATE=%d QUIET=1" % left_gate)
+        select_gate_quiet(gate, left_gate)
         gate._console(msg)
-        run_hh_script(gate,
-            "_MMU_STEP_UNLOAD_GATE\n"
-            "MMU_SELECT GATE=%d QUIET=1" % gate._gate)
+        run_hh_script(gate, "_MMU_STEP_UNLOAD_GATE")
+        select_gate_quiet(gate, gate._gate)
     except Exception as e:
         logger.warning(
             "[%s]: gate %d scan mode — failed to restore left "
@@ -2175,16 +2174,11 @@ def run_jog(gate, mm):
     gate._scan_last_jog_actual_mm = mm
     if mm > 0.0:
         return run_homing_jog(gate, mm)
-    gcode = gate.printer.lookup_object('gcode')
     before = mmu_gear_position(gate)
     if not gate._scan_gate_selected:
         gate._scan_gate_selected = True
-        run_hh_script(
-            gate,
-            "MMU_SELECT GATE=%d QUIET=1\nMMU_TEST_MOVE MOVE=%.2f QUIET=1"
-            % (gate._gate, mm))
-    else:
-        run_hh_script(gate, "MMU_TEST_MOVE MOVE=%.2f QUIET=1" % mm)
+        select_gate_quiet(gate, gate._gate)
+    run_hh_script(gate, "MMU_TEST_MOVE MOVE=%.2f QUIET=1" % mm)
     gate._scan_last_jog_actual_mm = measured_jog_delta(gate, before, mm)
 
 
@@ -2290,18 +2284,13 @@ def run_direct_homing_jog(gate, mm, speed=None, accel=None):
 
 def run_homing_jog(gate, mm, speed=None, accel=None):
     gate._scan_last_jog_actual_mm = mm
-    gcode = gate.printer.lookup_object('gcode')
     cmd = homing_jog_command(gate, mm, speed=speed, accel=accel)
     before = mmu_gear_position(gate)
     if not gate._scan_gate_selected:
         gate._scan_gate_selected = True
-        run_hh_script(gate, "MMU_SELECT GATE=%d QUIET=1" % gate._gate)
-    else:
-        gcode = None
+        select_gate_quiet(gate, gate._gate)
     if run_direct_homing_jog(gate, mm, speed=speed, accel=accel):
         return "homing"
-    if gcode is None:
-        gcode = gate.printer.lookup_object('gcode')
     start_time = gate.reactor.monotonic()
     run_hh_script(gate, cmd)
     gate._scan_last_jog_actual_mm = measured_jog_delta(gate, before, mm)
@@ -2402,14 +2391,12 @@ def run_continuous_jog(gate, mm):
             gate, mm,
             speed=gate._scan_continuous_speed,
             accel=gate._scan_continuous_accel)
-    gcode = gate.printer.lookup_object('gcode')
     cmd = ("MMU_TEST_MOVE MOVE=%.2f SPEED=%.1f ACCEL=%.1f WAIT=0 QUIET=1"
            % (mm, gate._scan_continuous_speed, gate._scan_continuous_accel))
     if not gate._scan_gate_selected:
         gate._scan_gate_selected = True
-        run_hh_script(gate, "MMU_SELECT GATE=%d QUIET=1\n%s" % (gate._gate, cmd))
-    else:
-        run_hh_script(gate, cmd)
+        select_gate_quiet(gate, gate._gate)
+    run_hh_script(gate, cmd)
     return "gcode"
 
 

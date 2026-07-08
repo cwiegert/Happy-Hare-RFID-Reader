@@ -47,6 +47,8 @@ class MmuNfcEndstop:
         self._steppers = []
         self._trigger_completion = None
         self._last_trigger_time = None
+        self._last_trigger_reactor_time = None
+        self._last_home_elapsed = None
         self._home_start_print_time = None
         self._home_start_reactor_time = None
         self._homing = False
@@ -137,6 +139,10 @@ class MmuNfcEndstop:
         if (self._homing and state == self._triggered
                 and self._trigger_completion is not None
                 and self._last_trigger_time is None):
+            self._last_trigger_reactor_time = eventtime
+            if self._home_start_reactor_time is not None:
+                self._last_home_elapsed = max(
+                    0.0, eventtime - self._home_start_reactor_time)
             self._last_trigger_time = self._reactor_to_print_time(eventtime)
             self._homing = False
             self._trigger_completion.complete(True)
@@ -158,10 +164,15 @@ class MmuNfcEndstop:
     def get_steppers(self):
         return list(self._steppers)
 
+    def get_last_home_elapsed(self):
+        return self._last_home_elapsed
+
     def home_start(self, print_time, sample_time, sample_count, rest_time,
                    triggered):
         self._trigger_completion = self.reactor.completion()
         self._last_trigger_time = None
+        self._last_trigger_reactor_time = None
+        self._last_home_elapsed = None
         self._last_poll_error = None
         self._home_start_print_time = print_time
         self._home_start_reactor_time = self.reactor.monotonic()

@@ -160,16 +160,6 @@ def manual_jog_scan(gate, gcmd):
         logger.warning(msg)
         gcmd.respond_info(_color_tags(msg))
         return
-    force = bool(gcmd.get_int("FORCE", 0, minval=0, maxval=1))
-    if (not trusted_auto and not force
-            and gate._state.current_spool is not None
-            and gate._state.current_spool is not DIRECT_METADATA_SPOOL):
-        msg = ("[OK] NFC[%s]: spool %s already detected; "
-               "jog_scan skipped (use FORCE=1 to rescan)"
-               % (gate._name, gate._state.current_spool))
-        logger.info(msg)
-        gcmd.respond_info(_color_tags(msg))
-        return
     ok, reason, max_mm = gate._prepare_scan_jog()
     if not ok:
         msg = "[WARN] NFC[%s]: scan-jog not available while %s" % (
@@ -557,6 +547,18 @@ def resolve_continuous_pending_uid(gate, now):
     uid = getattr(gate, '_scan_continuous_pending_uid', None)
     if not uid:
         return False
+    previous_uid = getattr(gate, '_scan_previous_uid', None)
+    previous_spool = getattr(gate, '_scan_previous_spool', None)
+    if (uid == previous_uid and previous_spool is not None
+            and previous_spool is not DIRECT_METADATA_SPOOL):
+        _cache_continuous_resolved_uid(
+            gate, uid, previous_spool, 'scan_previous_uid')
+        if gate._debug >= 3:
+            logger.info(
+                "[%s]: continuous scan uid=%s matched stashed UID; "
+                "using stashed spool_id=%s",
+                gate._name.capitalize(), uid, previous_spool)
+        return True
     if gate._spoolman is None:
         return False
     try:
@@ -1178,6 +1180,12 @@ def continuous_step_event(gate, eventtime):
                 # The in-flight UID probe already checked this chunk.  If it
                 # found nothing, queue the next chunk instead of inserting a
                 # stopped, full-timeout poll that breaks continuous motion.
+                tag_found = False
+            elif gate._scan_mm_total <= 0.001:
+                # Continuous scan should start by moving. The virtual endstop
+                # handles in-motion UID capture, and this preserves the
+                # scan-jog stash semantics from the stopped path: the previous
+                # UID is moved off the reader before any found UID is accepted.
                 tag_found = False
             else:
                 tag_found = gate._poll()

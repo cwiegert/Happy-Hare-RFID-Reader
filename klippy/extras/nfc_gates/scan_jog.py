@@ -1106,8 +1106,10 @@ def continuous_step_event(gate, eventtime):
 
     run_pending_hh_prep(gate)
 
+    handled_pending_tag = False
     pending_tag = getattr(gate, '_scan_continuous_tag_pending', False)
     if pending_tag and move_complete:
+        handled_pending_tag = True
         gate._scan_continuous_tag_pending = False
         log_continuous_uid_hit_window(
             gate, getattr(gate, '_scan_continuous_pending_uid', None),
@@ -1130,6 +1132,11 @@ def continuous_step_event(gate, eventtime):
                 tag_found = (
                     cache_continuous_uid_only_if_needed(gate)
                     or full_poll_after_continuous_probe(gate))
+        if tag_found:
+            gate._scan_continuous_move_inflight = False
+            gate._scan_continuous_probe_due = False
+            move_inflight = False
+            probe_due = False
     else:
         try:
             if probe_due:
@@ -1157,7 +1164,8 @@ def continuous_step_event(gate, eventtime):
             gate._console(msg)
             tag_found = False
 
-    if tag_found and move_inflight and (probe_due or not move_complete):
+    if (tag_found and not handled_pending_tag
+            and move_inflight and (probe_due or not move_complete)):
         gate._scan_continuous_tag_pending = True
         if move_complete:
             logger.info(

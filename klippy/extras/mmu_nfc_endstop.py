@@ -8,7 +8,10 @@
 
 import logging
 
-from .mmu_sensors import MmuRunoutHelper
+from .nfc_gates.happy_hare_compat import (
+    create_mmu_runout_helper,
+    register_nfc_endstop,
+)
 
 
 class MmuNfcEndstop:
@@ -28,15 +31,8 @@ class MmuNfcEndstop:
         self._filament_present = False
         self.runout_helper = None
         if self._register_sensor:
-            self.runout_helper = MmuRunoutHelper(
-                self.printer,
-                self.endstop_name,
-                event_delay=0,
-                gcodes={},
-                insert_remove_in_print=False,
-                button_handler=None,
-                switch_pin=None,
-            )
+            self.runout_helper = create_mmu_runout_helper(
+                self.printer, self.endstop_name)
             self.get_status = self.runout_helper.get_status
             sensor_obj_name = "filament_switch_sensor %s" % self.endstop_name
             if self.printer.lookup_object(sensor_obj_name, None) is None:
@@ -70,14 +66,15 @@ class MmuNfcEndstop:
                 % (self.name, self._nfc_gate_name))
 
         mmu = self.printer.lookup_object('mmu')
-        mmu.gear_rail.add_extra_endstop(
-            "virtual_endstop:%s" % self.endstop_name,
-            self.endstop_name,
-            mcu_endstop=self,
-        )
+        try:
+            rail_description = register_nfc_endstop(mmu, nfc_gate, self)
+        except RuntimeError as e:
+            raise self.config.error(
+                "mmu_nfc_endstop %s could not register with Happy Hare: %s"
+                % (self.name, str(e)))
         logging.info(
-            "MMU: Registered NFC virtual endstop '%s' from [nfc_gate %s]",
-            self.endstop_name, self._nfc_gate_name)
+            "MMU: Registered NFC virtual endstop '%s' from [nfc_gate %s] on %s",
+            self.endstop_name, self._nfc_gate_name, rail_description)
 
     def _get_nfc_gate(self):
         if self._nfc_gate is None:

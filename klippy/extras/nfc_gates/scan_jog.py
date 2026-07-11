@@ -2277,12 +2277,17 @@ def scan_last_jog_actual(gate, fallback):
 
 
 def nfc_endstop_name(gate):
-    return "nfc_lane%d" % gate._gate
+    endstop = nfc_endstop_object(gate)
+    endstop_name = getattr(endstop, 'endstop_name', None)
+    if not endstop_name:
+        raise RuntimeError(
+            "No NFC virtual endstop is registered for Happy Hare gate %d"
+            % gate._gate)
+    return endstop_name
 
 
 def nfc_endstop_object(gate):
-    return gate.printer.lookup_object(
-        "mmu_nfc_endstop lane%d" % gate._gate, None)
+    return getattr(gate, '_mmu_nfc_endstop', None)
 
 
 def nfc_homing_elapsed(gate, fallback):

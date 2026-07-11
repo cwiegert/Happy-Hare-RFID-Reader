@@ -7,6 +7,7 @@
 #      git pull + Klipper restart is all that is needed to update the code.
 #      Two symlinks are created:
 #        nfc_gate.py   — entry point for [nfc_gate laneN]
+#        mmu_nfc_endstop.py — virtual endstop wrapper for lane readers
 #        nfc_gates/    — shared implementation package
 #
 #   2. Installs config files into ~/printer_data/config/nfc/ using a
@@ -213,6 +214,7 @@ remove_legacy_klipper_symlinks() {
     local target
     for target in \
         "${KLIPPER_EXTRAS}/nfc_gate.py" \
+        "${KLIPPER_EXTRAS}/mmu_nfc_endstop.py" \
         "${KLIPPER_EXTRAS}/nfc_gates" \
         "${KLIPPER_EXTRAS}/nfc_gates.py"
     do
@@ -794,7 +796,8 @@ with open(path, 'w') as f:
     f.write("# Supported documented path:\n")
     f.write("#   one NFC reader module per lane MCU / EBB42 board.\n")
     f.write("#   PN532 is the default reader; PN7160 may be selected per lane with\n")
-    f.write("#   reader_type: pn7160.\n")
+    f.write("#   reader_type: pn7160. RC522 may be selected with reader_type: rc522\n")
+    f.write("#   for UID-only SPI reads.\n")
     f.write("#\n")
     f.write("# Include after nfc_reader.cfg and nfc_macros.cfg:\n")
     f.write("#   [include nfc/nfc_reader.cfg]\n")
@@ -803,6 +806,9 @@ with open(path, 'w') as f:
     f.write("#\n")
     f.write("# Each [nfc_gate laneN] section maps:\n")
     f.write("#   Happy Hare gate number -> Klipper lane MCU -> NFC reader hardware.\n")
+    f.write("# Each [mmu_nfc_endstop laneN] section seeds Happy Hare with a homeable\n")
+    f.write("# virtual endstop that uses the matching lane reader. Use ENDSTOP=nfc_laneN\n")
+    f.write("# in Happy Hare homing/test moves.\n")
     f.write("# Set enabled: False on a lane to keep the template without creating hardware.\n")
     f.write("#\n")
     f.write("# i2c_mcu: is consumed by Klipper's I2C bus layer (MCU_I2C_from_config),\n")
@@ -824,11 +830,16 @@ with open(path, 'w') as f:
         f.write("# =============================================================================\n")
         f.write(f"[nfc_gate lane{lane}]\n")
         f.write("enabled:                True\n")
-        f.write("# reader_type:            pn532  # For PN7160 hardware, use: pn7160\n")
+        f.write("# reader_type:            pn532  # PN7160: pn7160; UID-only RC522 SPI: rc522\n")
         f.write("# i2c_address:            36     # PN7160 valid addresses are 40-43 (0x28-0x2B)\n")
         f.write(f"mmu_gate:                {lane}\n")
         f.write(f"i2c_mcu:                 {mcu}\n")
         f.write(f"startup_poll_delay:      {startup_delay}\n\n")
+        f.write(f"[mmu_nfc_endstop lane{lane}]\n")
+        f.write(f"nfc_gate:                lane{lane}\n")
+        f.write(f"endstop_name:            nfc_lane{lane}\n")
+        f.write("poll_interval:           0.05\n")
+        f.write("register_sensor:         True\n\n")
 
     example_lane = lane_count
     f.write("# =============================================================================\n")
@@ -836,11 +847,17 @@ with open(path, 'w') as f:
     f.write("# =============================================================================\n")
     f.write(f"# [nfc_gate lane{example_lane}]\n")
     f.write("# enabled:                False\n")
-    f.write("# reader_type:            pn532  # For PN7160 hardware, use: pn7160\n")
+    f.write("# reader_type:            pn532  # PN7160: pn7160; UID-only RC522 SPI: rc522\n")
     f.write("# i2c_address:            36     # PN7160 valid addresses are 40-43 (0x28-0x2B)\n")
     f.write(f"# mmu_gate:                {example_lane}\n")
     f.write(f"# i2c_mcu:                 {lane_mcu_prefix}{example_lane}\n")
     f.write(f"# startup_poll_delay:      {example_lane * 0.5:.1f}\n")
+    f.write("#\n")
+    f.write(f"# [mmu_nfc_endstop lane{example_lane}]\n")
+    f.write(f"# nfc_gate:                lane{example_lane}\n")
+    f.write(f"# endstop_name:            nfc_lane{example_lane}\n")
+    f.write("# poll_interval:           0.05\n")
+    f.write("# register_sensor:         True\n")
 PYEOF
 }
 
@@ -1201,7 +1218,7 @@ with open(path, 'w') as f:
     f.write("# =============================================================================\n\n")
     f.write("[nfc_gate shared]\n")
     f.write("enabled:                True\n")
-    f.write("# reader_type:            pn532  # For PN7160 hardware, use: pn7160\n")
+    f.write("# reader_type:            pn532  # PN7160: pn7160; UID-only RC522 SPI: rc522\n")
     f.write("# i2c_address:            36     # PN7160 valid addresses are 40-43 (0x28-0x2B)\n")
     f.write(f"i2c_mcu:                {i2c_mcu}\n")
     f.write(f"i2c_bus:                {i2c_bus}\n")
@@ -1304,17 +1321,20 @@ if [ "${READER_TYPE}" = "lane" ]; then
     done
 
     echo "3. Spoolman connection"
-    echo "   $(choice_style auto auto)   = read the URL from Moonraker's [spoolman] section (recommended)"
-    echo "   $(choice_style direct auto) = enter a fixed URL such as http://127.0.0.1:7912"
+    echo "   $(choice_style auto auto)     = read the URL from Moonraker's [spoolman] section (recommended)"
+    echo "   $(choice_style direct auto)   = enter a fixed URL such as http://127.0.0.1:7912"
+    echo "   $(choice_style disabled auto) = no Spoolman — resolve by tag metadata or UID only"
     prompt_choice SPOOLMAN_MODE \
         "   Select Spoolman connection mode" \
         "auto" \
-        "auto" "direct"
+        "auto" "direct" "disabled"
     SPOOLMAN_URL="auto"
     if [ "${SPOOLMAN_MODE}" = "direct" ]; then
         prompt_with_default SPOOLMAN_URL \
             "   Enter the direct Spoolman URL" \
             "http://127.0.0.1:7912"
+    elif [ "${SPOOLMAN_MODE}" = "disabled" ]; then
+        SPOOLMAN_URL="disabled"
     fi
 
     prompt_yes_no STARTUP_POLLING \
@@ -1339,11 +1359,16 @@ if [ "${READER_TYPE}" = "lane" ]; then
     echo ""
 
     echo "9. Tag read mode"
-    echo "   $(choice_style spoolman spoolman) = UID-only lookup in Spoolman's extra field (default)"
+    echo "   $(choice_style spoolman spoolman) = UID-only lookup in Spoolman's extra field"
     echo "   $(choice_style rich spoolman)     = read tag metadata, then resolve/create Spoolman records"
+    if [ "${SPOOLMAN_MODE}" = "disabled" ]; then
+        echo ""
+        echo "   NOTE: Spoolman is disabled. Set rich to read material/color/brand from the tag"
+        echo "   and send that data to Happy Hare. Without rich mode only a UID is recorded."
+    fi
     prompt_choice TAG_MODE \
         "   Select tag read mode" \
-        "spoolman" \
+        "$( [ "${SPOOLMAN_MODE}" = "disabled" ] && echo "rich" || echo "spoolman" )" \
         "spoolman" "rich"
 
     BAMBU_READS="no"
@@ -1357,9 +1382,11 @@ if [ "${READER_TYPE}" = "lane" ]; then
         prompt_yes_no BAMBU_READS \
             "10. Will you read factory-tagged Bambu spools with rich metadata?" \
             "no"
-        prompt_yes_no SPOOLMAN_AUTO_CREATE \
-            "11. Auto-create missing Spoolman spools from rich tag metadata?" \
-            "yes"
+        if [ "${SPOOLMAN_MODE}" != "disabled" ]; then
+            prompt_yes_no SPOOLMAN_AUTO_CREATE \
+                "11. Auto-create missing Spoolman spools from rich tag metadata?" \
+                "yes"
+        fi
     fi
 
     I2C_MCU=""   # not applicable for lane installs
@@ -1376,17 +1403,20 @@ else
     SCAN_ENABLED="no"   # always disabled for shared reader
 
     echo "2. Spoolman connection"
-    echo "   $(choice_style auto auto)   = read the URL from Moonraker's [spoolman] section (recommended)"
-    echo "   $(choice_style direct auto) = enter a fixed URL such as http://127.0.0.1:7912"
+    echo "   $(choice_style auto auto)     = read the URL from Moonraker's [spoolman] section (recommended)"
+    echo "   $(choice_style direct auto)   = enter a fixed URL such as http://127.0.0.1:7912"
+    echo "   $(choice_style disabled auto) = no Spoolman — resolve by tag metadata or UID only"
     prompt_choice SPOOLMAN_MODE \
         "   Select Spoolman connection mode" \
         "auto" \
-        "auto" "direct"
+        "auto" "direct" "disabled"
     SPOOLMAN_URL="auto"
     if [ "${SPOOLMAN_MODE}" = "direct" ]; then
         prompt_with_default SPOOLMAN_URL \
             "   Enter the direct Spoolman URL" \
             "http://127.0.0.1:7912"
+    elif [ "${SPOOLMAN_MODE}" = "disabled" ]; then
+        SPOOLMAN_URL="disabled"
     fi
 
     prompt_yes_no STARTUP_POLLING \
@@ -1403,11 +1433,16 @@ else
     prompt_i2c_bus_select I2C_BUS "${I2C_MCU}" "${PRINTER_CONFIG}" "${DEFAULT_I2C_BUS}"
 
     echo "6. Tag read mode"
-    echo "   $(choice_style spoolman spoolman) = UID-only lookup in Spoolman's extra field (default)"
+    echo "   $(choice_style spoolman spoolman) = UID-only lookup in Spoolman's extra field"
     echo "   $(choice_style rich spoolman)     = read tag metadata, then resolve/create Spoolman records"
+    if [ "${SPOOLMAN_MODE}" = "disabled" ]; then
+        echo ""
+        echo "   NOTE: Spoolman is disabled. Set rich to read material/color/brand from the tag"
+        echo "   and send that data to Happy Hare. Without rich mode only a UID is recorded."
+    fi
     prompt_choice TAG_MODE \
         "   Select tag read mode" \
-        "spoolman" \
+        "$( [ "${SPOOLMAN_MODE}" = "disabled" ] && echo "rich" || echo "spoolman" )" \
         "spoolman" "rich"
 
     BAMBU_READS="no"
@@ -1421,9 +1456,11 @@ else
         prompt_yes_no BAMBU_READS \
             "7. Will you read factory-tagged Bambu spools with rich metadata?" \
             "no"
-        prompt_yes_no SPOOLMAN_AUTO_CREATE \
-            "8. Auto-create missing Spoolman spools from rich tag metadata?" \
-            "yes"
+        if [ "${SPOOLMAN_MODE}" != "disabled" ]; then
+            prompt_yes_no SPOOLMAN_AUTO_CREATE \
+                "8. Auto-create missing Spoolman spools from rich tag metadata?" \
+                "yes"
+        fi
     fi
 
 fi
@@ -1509,6 +1546,9 @@ fi
 
 echo "Linking nfc_gate.py..."
 ln -sfn "${REPO_DIR}/klippy/extras/nfc_gate.py" "${KLIPPER_EXTRAS}/nfc_gate.py"
+
+echo "Linking mmu_nfc_endstop.py..."
+ln -sfn "${REPO_DIR}/klippy/extras/mmu_nfc_endstop.py" "${KLIPPER_EXTRAS}/mmu_nfc_endstop.py"
 
 echo "Linking nfc_gates/ package..."
 ln -sfn "${REPO_DIR}/klippy/extras/nfc_gates" "${KLIPPER_EXTRAS}/nfc_gates"
@@ -1796,6 +1836,7 @@ echo "    spool_auto_create:  ${SPOOLMAN_AUTO_CREATE}"
 echo ""
 echo "  Python extras (symlinked — auto-updates with git pull):"
 echo "    ${KLIPPER_EXTRAS}/nfc_gate.py  ->  ${REPO_DIR}/klippy/extras/nfc_gate.py"
+echo "    ${KLIPPER_EXTRAS}/mmu_nfc_endstop.py  ->  ${REPO_DIR}/klippy/extras/mmu_nfc_endstop.py"
 echo "    ${KLIPPER_EXTRAS}/nfc_gates    ->  ${REPO_DIR}/klippy/extras/nfc_gates/"
 echo ""
 echo "  Config files in ${NFC_CONFIG_DIR}/:"

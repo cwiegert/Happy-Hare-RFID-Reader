@@ -7,6 +7,8 @@ GATE_AVAILABLE = 1
 GATE_INBUFFER = 2
 FILAMENT_POS_UNLOADED = 0
 
+ACTION_IDLE = 'idle'
+
 
 class HHGateStatus:
     def __init__(self, present=False, gate=-1, spool=-1, status=0,

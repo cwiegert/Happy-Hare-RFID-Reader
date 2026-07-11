@@ -1,6 +1,6 @@
 # Happy Hare RFID/NFC Reader
 
-NFC spool identification for Happy Hare. Use one NFC reader on each EMU lane, one shared reader inside the MMU body, or both. PN532 remains the default reader; PN7160 is also supported with `reader_type: pn7160`.
+NFC spool identification for Happy Hare. Use one NFC reader on each EMU lane, one shared reader inside the MMU body, or both. PN532 remains the default reader; PN7160 is also supported with `reader_type: pn7160`; RC522 is supported as an SPI reader with `reader_type: rc522`.
 
 This is a system-level Klipper integration, not a plug-and-play appliance. It touches Klipper extras, Happy Hare macros, lane MCU firmware, I2C wiring, Spoolman, and optional LED effects. If you are not comfortable recovering from a Klipper config error, reflashing lane MCUs, and reading logs, expect a learning curve.
 
@@ -27,6 +27,20 @@ Practical hardware choices:
 - **Single shared reader:** PN532 or PN7160 can be mounted inside the MMU body
   and used as a tap-before-loading reader.
 
+## Virtual Endstop — How Scan-Jog Finds the Tag
+
+Per-lane installs register each lane's NFC reader as a real Klipper/Happy Hare
+homing endstop (`mmu_nfc_endstop.py`, `[mmu_nfc_endstop laneN]`) — no extra
+hardware or wiring, it borrows the reader the matching `[nfc_gate laneN]`
+section already owns. When scan-jog searches for the tag, the forward search
+is a genuine Klipper homing move (`ENDSTOP=nfc_lane<N>`) that stops the
+instant the tag is detected, instead of jogging a fixed chunk and polling
+afterward and hoping the tag was somewhere in that chunk. This is generated
+automatically for every enabled lane by `install.sh` — there is nothing extra
+to configure. See [How It Works](docs/shared/how-it-works.md) for the full
+scan loop and [Configuration Reference](docs/shared/configuration.md) for the
+`[mmu_nfc_endstop laneN]` keys.
+
 ## Operating Modes
 
 | Mode | Hardware | Best For | Flow |
@@ -41,8 +55,8 @@ The shared reader can stage only a real Spoolman spool ID. UID lookup, embedded 
 
 - Voron/EMU setup running the [igiannakas IG-dev branch of Happy Hare](https://github.com/igiannakas/Happy-Hare/tree/IG-dev), which provides `variable_user_post_preload_extension`
 - One Klipper MCU per filament lane for per-lane reader installs, or one MCU hosting the shared NFC reader
-- Supported NFC reader hardware configured for I2C
-- Hardware I2C bus on the MCU hosting the NFC reader
+- Supported NFC reader hardware configured for its bus
+- Hardware I2C or SPI bus on the MCU hosting the NFC reader
 - Klipper version requirements:
   - Strongly recommended: use the latest Klipper on the host and every MCU
     hosting an NFC reader. The NFC drivers use Klipper's newer low-level
@@ -57,25 +71,38 @@ The shared reader can stage only a real Spoolman spool ID. UID lookup, embedded 
 - NFC tags on spools: NTAG213/215/216, MIFARE Classic, or supported rich-tag formats
 - Lane MCU firmware rebuilt from the same Klipper checkout as the host
 
+## Happy Hare V4 Compatibility
+
+Happy Hare v4 can run the post-preload hook while the MMU reports
+`action=checking`. For automatic gate-status polling, NFC treats `checking` as
+scan-safe only when the detected Happy Hare major version is 4 or newer. For
+the post-preload hook, `_NFC_SCAN_JOG_PRELOAD` sends
+`NFC GATE=<n> JOG_SCAN=1 SOURCE=AUTO`; that trusted hook path uses the same
+version-aware scan-safe check: Happy Hare v4 accepts `action=idle` or
+`action=checking`; Happy Hare v3/pre-v4 and unknown versions accept only
+`action=idle`. Manual or console `JOG_SCAN=1` commands without `SOURCE=AUTO`
+stay conservative and always require `action=idle`.
+
 Supported readers:
 
-| Reader | `reader_type` | I2C address | Notes |
+| Reader | `reader_type` | Bus / address | Notes |
 |---|---|---|---|
 | PN532 | `pn532` | `36` (`0x24`) | Default reader and documented PN532 wiring path |
 | PN7160 | `pn7160` | `40-43` (`0x28-0x2B`) | Supports NTAG/Type2, ISO15693/Type5, and authenticated Bambu/MIFARE reads |
+| RC522 | `rc522` | SPI (`cs_pin` + `spi_bus`/software SPI pins) | UID lookup, NTAG/Type-2 rich reads, and authenticated MIFARE/Bambu reads; no ISO15693 |
 
 Supported tag formats:
 
-| Tag / data path | PN532 | PN7160 | Notes |
-|---|---:|---:|---|
-| Spoolman UID lookup | Yes | Yes | Default path. The tag only needs a readable factory UID registered in Spoolman's extra field. |
-| NTAG / NFC Type 2 rich tags | Yes | Yes | NDEF text/URI/MIME/JSON payloads, OpenSpool, OpenTag3D, OpenPrintTag text-compatible payloads, and several manufacturer binary tags. |
-| MIFARE Classic rich tags | Yes | Yes | Bambu factory tags and other MIFARE Classic formats require `tag_parsing: True`; Bambu authenticated reads also require `bambu_reads: True` and `pycryptodome`. |
-| ISO15693 / NFC Type 5 rich tags | No | Yes | Used by SLIX2 / OpenPrintTag Type-5 tags. Official OpenPrintTag antenna size is best suited to a shared reader; per-lane use needs hardware testing. |
+| Tag / data path | PN532 | PN7160 | RC522 | Notes |
+|---|---:|---:|---:|---|
+| Spoolman UID lookup | Yes | Yes | Yes | Default path. The tag only needs a readable factory UID registered in Spoolman's extra field. |
+| NTAG / NFC Type 2 rich tags | Yes | Yes | Yes | NDEF text/URI/MIME/JSON payloads, OpenSpool, OpenTag3D, TigerTag, OpenPrintTag text-compatible payloads, and several manufacturer binary tags. |
+| MIFARE Classic rich tags | Yes | Yes | Yes | Bambu factory tags and other MIFARE Classic formats require `tag_parsing: True`; Bambu authenticated reads also require `bambu_reads: True` and `pycryptodome`. |
+| ISO15693 / NFC Type 5 rich tags | No | Yes | No | Used by SLIX2 / OpenPrintTag Type-5 tags. Official OpenPrintTag antenna size is best suited to a shared reader; per-lane use needs hardware testing. |
 
 The vendored parser currently recognizes Bambu Lab, ELEGOO, Anycubic ACE,
-Creality CFS/K1/K2, QIDI Box, SimplyPrint/QIDI URL tags, OpenTag3D, OpenSpool,
-OpenPrintTag, and generic NDEF JSON filament records. See
+TigerTag, Creality CFS/K1/K2, QIDI Box, SimplyPrint/QIDI URL tags, OpenTag3D,
+OpenSpool, OpenPrintTag, and generic NDEF JSON filament records. See
 [Spoolman Integration](docs/shared/spoolman-integration.md) for format details
 and auto-create behavior.
 
@@ -197,9 +224,9 @@ These are the defaults shipped in `config/nfc_reader.cfg`:
 | `scan_jog_max` | unset | Optional fixed scan-jog travel limit; leave unset to use the lane Bowden length |
 | `scan_reads_per_position` | `1` | Reads per stopped scan position |
 | `scan_poll_interval` | `0.25` | Read spacing during scan-jog and shared-reader polling cadence |
-| `scan_motion_mode` | `stopped` | `stopped` keeps blocking substep reads; `continuous` queues direct Happy Hare gear moves and polls while each chunk is moving |
-| `scan_continuous_step_mm` | `50.0` | Continuous-mode forward chunk size and maximum intended overrun after tag detection |
-| `scan_continuous_speed` | `150.0` | Continuous-mode gear move speed |
+| `scan_motion_mode` | `continuous` | `continuous` homes the forward search against the lane's virtual NFC endstop, stopping the instant the tag is detected; `stopped` keeps blocking substep reads |
+| `scan_continuous_step_mm` | `150.0` | Continuous-mode forward chunk size. Rich reads use the observed UID hit-window center, so this no longer needs to be kept small for rich-tag positioning |
+| `scan_continuous_speed` | `200.0` | Continuous-mode gear move speed |
 | `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration |
 | `scan_continuous_poll_interval` | `0.05` | In-flight NFC read cadence while a continuous chunk is estimated to be moving |
 | `debug` | `2` | Warnings and errors in `nfc_reader.log` |
@@ -210,8 +237,8 @@ To try continuous scan-jog:
 ```ini
 [nfc_gate]
 scan_motion_mode: continuous
-scan_continuous_step_mm: 50.0
-scan_continuous_speed: 150.0
+scan_continuous_step_mm: 150.0
+scan_continuous_speed: 200.0
 scan_continuous_accel: 2000.0
 scan_continuous_poll_interval: 0.05
 ```
@@ -219,6 +246,10 @@ scan_continuous_poll_interval: 0.05
 Continuous mode preserves the existing tag-found flow: the read-light effect
 plays for about 0.1 second, then NFC rewinds and dispatches the cached tag/spool
 action just like stopped mode.
+If a UID is found during motion, continuous mode waits for the current chunk to
+finish and checks Spoolman first. If rich tag parsing is still needed, NFC
+recenters to the observed UID hit-window center before running rich parsing and
+the normal rich-read retry sweep.
 
 Set `enabled: False` on a `[nfc_gate laneN]` or `[nfc_gate shared]` section to keep the config block in place without initializing hardware or registering commands for that reader.
 

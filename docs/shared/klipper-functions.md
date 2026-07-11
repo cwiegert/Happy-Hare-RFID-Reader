@@ -105,8 +105,15 @@ klippy:connect  →  _handle_connect()  →  schedule _delayed_init() (2 s)
 _delayed_init()
   1. Initialise NFC reader
   2. Read Happy Hare gate map  →  seed this lane's local cache
-  3. Start background polling  (if startup_polling: 1)
+  3. If Spoolman is disabled, schedule a delayed unknown-gate check
+  4. Start background polling  (if startup_polling: 1)
 ```
+
+When Spoolman is disabled and Happy Hare still reports this lane as unknown
+(`gate_status=-1`) after the delayed timer, NFC runs
+`MMU_CHECK_GATE GATE=<n>`. NFC uses an internal delayed/staggered timer so lanes
+do not all check at once. The check is skipped while printing, while Happy Hare
+is busy, or while filament is not parked.
 
 **Step 2 is the key one.** NFC_Manager calls `mmu.get_status()` directly to read `gate_spool_id` for this gate. The result is stored as a one-shot seed. On the very first poll:
 
@@ -180,9 +187,12 @@ Runs a no-motion setup check. It does not scan tags or move filament.
 NFC_DOCTOR
 ```
 
-It reports enabled/disabled lane readers, shared-reader state, Spoolman
-availability, the shared-reader preload hook, and static config warnings such as
-`bambu_reads: True` without `tag_parsing: True`.
+It reports enabled/disabled lane readers, shared-reader state, detected Happy
+Hare version, Spoolman availability, the shared-reader preload hook, and static
+config warnings such as `bambu_reads: True` without `tag_parsing: True`.
+Doctor also prints the scan-jog action rule for the detected Happy Hare version:
+v4 accepts `action=idle` or `action=checking`; v3/pre-v4 and unknown versions
+accept only `action=idle`.
 
 ---
 
@@ -311,30 +321,53 @@ Starts the scan-and-jog sequence on demand, identical to the automatic pre-load 
 NFC GATE=0 JOG_SCAN=1
 ```
 
-**What it does:** Selects the gate, then jogs the filament forward until the NFC tag is read or the scan limit is reached. When the tag is found it rewinds toward the parked position, leaves `scan_rewind_buffer_mm` for Happy Hare's final gate parking step, and runs `_MMU_STEP_UNLOAD_GATE`. If `scan_jog_max` is set, that distance is the scan limit; otherwise the lane's Happy Hare Bowden calibration length is used. When the limit is reached without a read, NFC follows the same rewind-and-park path and exits scan mode.
+**What it does:** Selects the gate, then homes the filament forward against the lane's virtual NFC endstop (`ENDSTOP=nfc_lane<N>`, see [Virtual Endstop](#virtual-endstop) below) until the tag is read or the scan limit is reached — the homing move stops the instant the tag is detected. When the tag is found it rewinds toward the parked position, leaves `scan_rewind_buffer_mm` for Happy Hare's final gate parking step, and runs `_MMU_STEP_UNLOAD_GATE`. If `scan_jog_max` is set, that distance is the scan limit; otherwise the lane's Happy Hare Bowden calibration length is used. When the limit is reached without a read, NFC follows the same rewind-and-park path and exits scan mode.
 
-Scan-jog supports two motion modes:
+#### Virtual Endstop
+
+Per-lane installs register each lane's NFC reader as a real Klipper/Happy Hare
+gear-rail endstop via `mmu_nfc_endstop.py` (`[mmu_nfc_endstop laneN]`,
+generated automatically by `install.sh` alongside each `[nfc_gate laneN]`
+section — no extra hardware or config to add). It borrows the reader the
+`[nfc_gate laneN]` section already owns: while Happy Hare homes against
+`ENDSTOP=nfc_lane<N>`, a reactor timer polls that reader every
+`poll_interval` (default `0.05s`) and reports the endstop triggered the
+instant a tag UID is read. This is what lets scan-jog's forward search stop
+exactly at the tag instead of jogging a fixed distance and polling
+afterward. See [`[mmu_nfc_endstop laneN]`](configuration.md#mmu_nfc_endstop-lanen)
+for the config keys.
+
+Scan-jog supports two motion modes. Both home against the virtual endstop for
+the forward search — the difference is whether NFC also polls the reader
+while that homing move is still in flight:
 
 | Mode | Config | Behavior |
 |---|---|---|
-| Stopped | `scan_motion_mode: stopped` | Default. Divides each `scan_jog_mm` chunk into three blocking `MMU_TEST_MOVE` substeps, then reads at stopped spool positions. `scan_reads_per_position` and `scan_poll_interval` control the stopped-position reads. |
-| Continuous | `scan_motion_mode: continuous` | Experimental. Queues each forward search chunk through Happy Hare's MMU toolhead and polls NFC every `scan_continuous_poll_interval` while that chunk is estimated to be moving. If a tag is found during motion, the current chunk is allowed to finish before the existing 0.1 second read-light hold, rewind, and completion logic run. |
+| Continuous | `scan_motion_mode: continuous` | **Default.** Polls NFC every `scan_continuous_poll_interval` while the homing move is still in flight, recording a UID hit-window used to recenter before rich tag parsing. If a tag is found during motion, the homing move is allowed to finish before the existing 0.1 second read-light hold, rewind, and completion logic run. |
+| Stopped | `scan_motion_mode: stopped` | Waits for the homing move to finish (or fail to trigger, meaning no tag was found), then reads once at that position. `scan_reads_per_position` and `scan_poll_interval` control repeat reads at that stopped position. More reliable for marginal reader or tag alignment at the cost of scan speed, since there is no in-flight UID hit-window to recenter from before a rich read. |
 
-Continuous scan example:
+Default continuous scan settings:
 
 ```ini
 [nfc_gate]
 scan_motion_mode: continuous
-scan_continuous_step_mm: 50.0
-scan_continuous_speed: 150.0
+scan_continuous_step_mm: 150.0
+scan_continuous_speed: 200.0
 scan_continuous_accel: 2000.0
 scan_continuous_poll_interval: 0.05
 ```
 
-With those values, a 50 mm forward chunk takes about `0.408s`. NFC polls every
-`0.05s` during that estimated motion window, then queues the next chunk if no
-tag has been found. Effective scan advance is roughly `123mm/s` before NFC read
-time is included.
+The forward search homes for the full remaining scan distance in one move —
+`scan_continuous_step_mm` no longer chunks that search (it's unused by the
+current homing-move implementation; left in config for now). NFC polls the
+reader every `0.05s` while that homing move is estimated to be in flight,
+building a UID hit-window if a tag is detected before the move stops.
+
+If a continuous UID hit occurs during motion, NFC waits for the homing move to
+finish and checks Spoolman first. If the UID resolves, scan-jog finishes without
+a rich read. If the UID does not resolve and rich parsing is enabled, NFC backs
+up to the observed UID hit-window center before running rich tag parsing and the
+normal `scan_decode_retry_mm` left/right retry sweep.
 
 Scan-jog always clears the Happy Hare gate cache and runs the pre-scan
 `MMU_SPOOLMAN SYNC=1` before moving filament. When launched from a Happy Hare
@@ -356,10 +389,14 @@ variable_user_post_preload_extension: '_NFC_SCAN_JOG_PRELOAD'
 Happy Hare appends `GATE=<n>` automatically after a successful preload. `_NFC_SCAN_JOG_PRELOAD` starts scan-jog with:
 
 ```gcode
-NFC GATE=<n> JOG_SCAN=1
+NFC GATE=<n> JOG_SCAN=1 SOURCE=AUTO
 ```
 
 NFC starts the configured scan-jog LED effect from the Python scan timer before motion begins.
+
+`SOURCE=AUTO` identifies this as Happy Hare's own hook call. Happy Hare v4 runs
+the hook while its action is often still `checking`, before it unwinds back to
+`idle`, so NFC runs hook calls through the version-aware scan-safe check.
 
 Recommended NFC config when using the hook — disables gate-status polling so HH is the sole trigger:
 
@@ -369,14 +406,22 @@ startup_polling: 0
 scan_enabled:    False
 ```
 
-**Preconditions** (same as the automatic path — the command checks all of these and reports a plain-language error if any fail):
+**Preconditions** (the command checks all of these and reports a plain-language error if any fail):
 
 | Check | What it guards |
 |---|---|
 | Reader not in failed state | Reader must have initialised successfully |
 | No active print | Scan cannot move filament during a print |
-| Happy Hare `action == idle` | HH must not be loading, unloading, or homing |
+| Happy Hare scan-safe check | See below |
 | No other gate currently scanning | Only one gate may hold the MMU at a time |
+
+The scan-safe check differs by caller:
+
+- **`SOURCE=AUTO`** (only `_NFC_SCAN_JOG_PRELOAD`, Happy Hare's own hook, sets this): Happy Hare v4 accepts `action=idle` or `action=checking`. Happy Hare v3/pre-v4 and unknown versions accept only `action=idle`.
+- **Any other caller** (manual console command, macro, button; no `SOURCE=AUTO`): requires strict `action == idle`. NFC cannot verify why the command was sent, so an unlabeled call gets no benefit of the doubt.
+
+Do not add `SOURCE=AUTO` to a manually typed `JOG_SCAN=1`; it exists only to
+identify the trusted hook call, not to bypass the busy check generally.
 
 **When to use:**
 - Filament was loaded manually and the automatic trigger didn't fire (e.g. `scan_enabled: False`, or the 0→1 edge was missed)
@@ -394,8 +439,8 @@ Continuous-mode success output uses the same start/rewind messages but includes
 continuous move messages while searching:
 
 ```
-NFC[lane0]: scan-jog started for gate 0 (max=600mm  poll=0.25s)
-NFC[Lane0]: continuous move 50.0mm  scan position 50.0 / 600.0mm
+NFC[lane0]: continuous scan-jog started for gate 0
+NFC[Lane0]: continuous Direct Move 50.0mm  scan position 50.0 / 600.0mm
 NFC[Lane0]: tag found
 NFC[Lane0]: rewinding 20.0mm (scan=50.0mm buffer=30.0mm)
 ```
@@ -606,18 +651,22 @@ The macro also checks `printer.mmu.action` — if the MMU is mid-load, unload, o
 
 ### `_NFC_TAG_NO_SPOOL`
 
-Fires when a tag UID is detected but no matching spool is found in Spoolman.
+Fires when a tag UID is detected but cannot be resolved to a spool.
 
 ```gcode
-_NFC_TAG_NO_SPOOL GATE=<gate> UID=<uid> [SCAN_FINISH=1]
+_NFC_TAG_NO_SPOOL GATE=<gate> UID=<uid> [SPOOLMAN_DISABLED=1] [SCAN_FINISH=1]
 ```
 
 Parameters:
 - `GATE` — Happy Hare gate number
 - `UID` — the unrecognized tag UID
+- `SPOOLMAN_DISABLED` — `1` when this is the no-Spoolman metadata path
 - `SCAN_FINISH` — `1` when the event came from scan-jog after rewind; accepted as a compatibility marker by the default macro
 
-Default behavior: prints a message to the console with the UID and instructions to register it, clears stale visible filament fields, and keeps the gate loaded/available.
+Default behavior: with Spoolman enabled, prints a message with the UID and
+instructions to register it. With Spoolman disabled, prints a warning that the
+tag was read but no rich metadata or spool assignment was available. Both paths
+clear stale visible filament fields and keep the gate loaded/available.
 
 ```gcode
 MMU_GATE_MAP GATE={gate} SPOOLID=-1 NAME=Unknown MATERIAL=Unknown COLOR=FFFFFF TEMP=0 AVAILABLE=1 SYNC=1 QUIET=1

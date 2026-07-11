@@ -12,8 +12,9 @@ except ImportError:
 
 from .pn532_driver import PN532Driver
 from .pn7160_driver import PN7160Driver
+from .rc522_driver import RC522Driver
 
-SUPPORTED_READER_TYPES = ('pn532', 'pn7160')
+SUPPORTED_READER_TYPES = ('pn532', 'pn7160', 'rc522')
 DEFAULT_READER_TYPE = 'pn532'
 DEFAULT_I2C_ADDRESS = {
     'pn532': 0x24,
@@ -22,6 +23,9 @@ DEFAULT_I2C_ADDRESS = {
 DEFAULT_I2C_SPEED = {
     'pn532': 100000,
     'pn7160': 100000,
+}
+DEFAULT_SPI_SPEED = {
+    'rc522': 1000000,
 }
 PN7160_I2C_ADDRESSES = (0x28, 0x29, 0x2A, 0x2B)
 
@@ -64,6 +68,10 @@ def default_i2c_speed(reader_type):
     return DEFAULT_I2C_SPEED.get(reader_type, DEFAULT_I2C_SPEED['pn532'])
 
 
+def default_spi_speed(reader_type):
+    return DEFAULT_SPI_SPEED.get(reader_type, 1000000)
+
+
 def validate_reader_i2c_address(config, reader_type, address):
     if reader_type == 'pn7160' and address not in PN7160_I2C_ADDRESSES:
         allowed = ', '.join("%d" % addr for addr in PN7160_I2C_ADDRESSES)
@@ -76,6 +84,15 @@ def validate_reader_i2c_address(config, reader_type, address):
 def create_reader(config, defaults, reader_type, gate, debug,
                   low_level_debug=False, sleep_fn=None,
                   transceive_delay=0.250, crc_delay=0.050):
+    if reader_type == 'rc522':
+        spi = bus_module.MCU_SPI_from_config(
+            config, 0, default_speed=default_spi_speed(reader_type))
+        rc522_delay = config.getfloat(
+            'rc522_transceive_delay', 0.035, minval=0.001, maxval=1.0)
+        return RC522Driver(
+            spi, gate, transceive_delay=rc522_delay, debug=debug,
+            sleep_fn=sleep_fn)
+
     default_addr = (defaults.i2c_address if defaults is not None
                     else default_i2c_address(reader_type))
     i2c_address = config.getint('i2c_address', default_addr,

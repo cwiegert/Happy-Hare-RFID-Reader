@@ -69,6 +69,20 @@ This also makes the integration boundary visible. Anyone debugging a Happy Hare 
 
 **Corollary:** If a Happy Hare version requires a different synchronization command, adjust `nfc_macros.cfg`. Do not add it to `PN532Driver` or `SpoolmanClient`.
 
+**Exception — scan-jog's motion path:** `scan_jog.py` calls Happy Hare's Python
+motion API directly in several places (`mmu.move_filament()`,
+`mmu.select_gate()`, `mmu._initialize_filament_position()`/
+`initialize_filament_position()`), rather than going exclusively through
+gcode macros. Motion needs return values on the same call — actual distance
+homed, whether the move triggered an endstop — that a fire-and-forget gcode
+macro dispatch can't hand back cleanly, and gate selection specifically needs
+to avoid `cmd_MMU_SELECT`'s own unconditional console print (see
+`select_gate_quiet()`). Every direct call has a gcode fallback
+(`_MMU_STEP_HOMING_MOVE`, `_MMU_STEP_MOVE`, `MMU_SELECT`) for Happy Hare
+installs that don't expose the Python method, so the version-fragility this
+decision is meant to avoid is still contained — just pushed into a
+`hasattr()` check in `scan_jog.py` instead of a macro file.
+
 ---
 
 ## Decision: Removal Is Debounced
@@ -150,6 +164,49 @@ Gating them behind a config flag means they are discoverable for bring-up but ca
 **Why:** Config files in `~/printer_data/config/nfc/` are part of the user's printer configuration. Overwriting them on update would destroy local customizations — particularly in `nfc_macros.cfg` where users may have adapted the Happy Hare calls for their version, and in `nfc_reader_hw.cfg` where the exact lane names and MCU names are specific to each user's hardware.
 
 The merge strategy (copy-if-absent, append-missing-sections) means that new features that add new config sections are picked up on the next `install.sh` run, while existing customizations survive.
+
+---
+
+## Decision: NFC Tag Detection Is a Klipper Homing Endstop, Not a Poll Loop
+
+**What we decided:** Per-lane scan-jog's forward search does not jog a fixed
+distance and then poll the reader to see if it got lucky. `mmu_nfc_endstop.py`
+registers the lane's existing NFC reader as a real Klipper/Happy Hare
+gear-rail endstop (`ENDSTOP=nfc_lane<N>`), and the forward search is a genuine
+homing move against it — Klipper's own homing machinery stops the move the
+instant the endstop trips, using the same mechanism a physical limit switch
+would.
+
+**Why:** A jog-then-poll loop only ever knows the tag was "somewhere in the
+last chunk" — the actual position is an estimate reconstructed from move
+timing and speed/accel profiles after the fact (see
+`homing_distance_from_elapsed`/`corrected_homing_actual` in `scan_jog.py`,
+still used as a fallback when the direct Happy Hare motion API isn't
+available). A homing move reports the real, physically-measured trigger
+position directly from Klipper's stepper/endstop code — the same accuracy
+guarantee any other homed axis gets. Continuous mode's UID hit-window
+recentering before rich tag parsing exists specifically to correct for the
+residual uncertainty of *where within the tag's read range* it triggered, not
+to compensate for chunk-boundary guessing.
+
+**How it works:** `mmu_nfc_endstop.py` implements Klipper's standard MCU
+endstop interface (`home_start`/`home_wait`/`query_endstop`/`get_steppers`).
+It does not add any new hardware or wiring — `home_start()` just starts a
+reactor timer that polls the *same* reader object the matching `[nfc_gate
+laneN]` section already owns, at `poll_interval` (default `0.05s`), and calls
+back into Klipper's homing completion the moment a read succeeds.
+
+**Trade-off accepted:** The endstop's trigger latency is bounded by
+`poll_interval`, not by hardware response time like a real switch. At the
+default `0.05s` and typical scan speeds this is well inside the reader's own
+practical read-range tolerance, but it means homing accuracy here is
+software-timed, not electrically-timed — worth knowing if `poll_interval` is
+tuned much higher.
+
+**Corollary:** `[mmu_nfc_endstop laneN]` requires its matching `[nfc_gate
+laneN]` to be enabled with a working reader at Klipper connect time — it
+raises a config error rather than silently no-op'ing if the lane is disabled,
+so both sections must be enabled or disabled together.
 
 ---
 

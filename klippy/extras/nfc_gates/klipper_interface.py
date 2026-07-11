@@ -13,7 +13,7 @@
 #   _NFC_SPOOL_CHANGED  GATE=<n>  [NAME=<str>]  [MATERIAL=<str>]  [COLOR=<hex>]  [TEMP=<int>]  UID=<hex>
 #                       [SCAN_FINISH=1]
 #   _NFC_SPOOL_REMOVED  GATE=<n>
-#   _NFC_TAG_NO_SPOOL   GATE=<n>  UID=<hex>  [SCAN_FINISH=1]
+#   _NFC_TAG_NO_SPOOL   GATE=<n>  UID=<hex>  [SPOOLMAN_DISABLED=1] [SCAN_FINISH=1]
 
 import re
 
@@ -23,11 +23,13 @@ from .log import logger
 
 
 class KlipperInterface:
-    def __init__(self, printer, reactor, debug=2, name=''):
+    def __init__(self, printer, reactor, debug=2, name='',
+                 spoolman_enabled=True):
         self._printer = printer
         self._reactor = reactor
         self._debug = debug
         self._name = name
+        self._spoolman_enabled = spoolman_enabled
 
     def dispatch(self, event_type, gate, uid_hex, spool_id, meta=None,
                  auto_created=False, scan_finish=False):
@@ -71,19 +73,24 @@ class KlipperInterface:
                             gate, spool_id, uid_hex,
                             " [auto-created]" if auto_created else "")
                 else:
-                    name     = self._metadata_name(meta or {})
-                    material = self._macro_value((meta or {}).get('material', ''))
-                    color    = self._macro_value((meta or {}).get('color_hex', ''))
-                    temp     = (meta or {}).get('max_temp')
+                    m        = meta or {}
+                    name     = self._metadata_name(m)
+                    material = self._macro_value(m.get('material', ''))
+                    color    = self._macro_value(m.get('color_hex', ''))
+                    brand    = self._macro_value(m.get('brand') or m.get('vendor') or '')
+                    min_temp = m.get('min_temp')
+                    max_temp = m.get('max_temp')
+                    diameter = m.get('diameter_mm')
+                    weight   = m.get('weight_g') or m.get('spool_weight_g')
                     parts = ['_NFC_SPOOL_CHANGED', 'GATE={}'.format(gate), 'READER={}'.format(self._name)]
-                    if name:
-                        parts.append('NAME={}'.format(name))
-                    if material:
-                        parts.append('MATERIAL={}'.format(material))
-                    if color:
-                        parts.append('COLOR={}'.format(color))
-                    if temp is not None:
-                        parts.append('TEMP={}'.format(int(temp)))
+                    parts.append('NAME={}'.format(name))
+                    parts.append('MATERIAL={}'.format(material))
+                    parts.append('COLOR={}'.format(color))
+                    parts.append('BRAND={}'.format(brand))
+                    parts.append('MIN_TEMP={}'.format(int(min_temp) if min_temp is not None else ''))
+                    parts.append('TEMP={}'.format(int(max_temp) if max_temp is not None else ''))
+                    parts.append('DIAMETER={}'.format(diameter if diameter is not None else ''))
+                    parts.append('WEIGHT={}'.format(int(weight) if weight is not None else ''))
                     parts.append('UID={}'.format(uid_hex))
                     if scan_finish:
                         parts.append('SCAN_FINISH=1')
@@ -91,15 +98,26 @@ class KlipperInterface:
                     if self._debug >= 3:
                         logger.info(
                             "nfc_gates: gate %d → tag %s metadata-only "
-                            "(name=%s material=%s color=%s temp=%s)",
-                            gate, uid_hex, name, material, color, temp)
+                            "(name=%s material=%s color=%s brand=%s "
+                            "min_temp=%s max_temp=%s diameter=%s weight=%s)",
+                            gate, uid_hex, name, material, color, brand,
+                            min_temp, max_temp, diameter, weight)
             elif event_type == EVENT_UID_ONLY:
-                script = "_NFC_TAG_NO_SPOOL GATE={} READER={} UID={}{}".format(
-                    gate, self._name, uid_hex, " SCAN_FINISH=1" if scan_finish else "")
+                script = "_NFC_TAG_NO_SPOOL GATE={} READER={} UID={}{}{}".format(
+                    gate, self._name, uid_hex,
+                    " SPOOLMAN_DISABLED=1" if not self._spoolman_enabled else "",
+                    " SCAN_FINISH=1" if scan_finish else "")
                 if self._debug >= 3:
-                    logger.info(
-                        "nfc_gates: gate %d → tag %s (no spool ID in Spoolman)",
-                        gate, uid_hex)
+                    if self._spoolman_enabled:
+                        logger.info(
+                            "nfc_gates: gate %d → tag %s "
+                            "(no spool ID in Spoolman)",
+                            gate, uid_hex)
+                    else:
+                        logger.info(
+                            "nfc_gates: gate %d → tag %s "
+                            "(Spoolman disabled; no metadata spool)",
+                            gate, uid_hex)
             elif event_type == EVENT_REMOVED:
                 script = "_NFC_SPOOL_REMOVED GATE={} READER={}".format(gate, self._name)
                 if self._debug >= 3:

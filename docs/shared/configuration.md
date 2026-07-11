@@ -24,7 +24,8 @@ This includes hardware keys. `i2c_address` and `i2c_bus` set in the base `[nfc_g
 
 `reader_type` is inherited the same way as other hardware keys. The shipped
 default is `pn532`; set `reader_type: pn7160` in a lane or shared-reader section
-only when that physical reader is PN7160.
+only when that physical reader is PN7160. Set `reader_type: rc522` only for
+RC522 SPI hardware.
 
 Example:
 
@@ -64,11 +65,15 @@ i2c_speed:   100000
 
 | Setting | Default | Description |
 |---|---|---|
-| `reader_type` | `pn532` | Reader driver to use. Supported values are `pn532` and `pn7160`. |
-| `i2c_address` | `36` for PN532 | I2C address. PN532 uses fixed decimal `36` (`0x24`). PN7160 must use decimal `40-43` (`0x28-0x2B`). |
-| `i2c_bus` | board-specific | I2C bus name on the selected MCU. PN532 should use hardware I2C. PN7160 supports software I2C, but hardware I2C is recommended because software I2C increases MCU load. |
+| `reader_type` | `pn532` | Reader driver to use. Supported values are `pn532`, `pn7160`, and `rc522`. |
+| `i2c_address` | `36` for PN532 | I2C address. PN532 uses fixed decimal `36` (`0x24`). PN7160 must use decimal `40-43` (`0x28-0x2B`). Not used by RC522. |
+| `i2c_bus` | board-specific | I2C bus name on the selected MCU. PN532 should use hardware I2C. PN7160 supports software I2C, but hardware I2C is recommended because software I2C increases MCU load. Not used by RC522. |
 | `i2c_speed` | `100000` | I2C speed in Hz. Keep `100000` for PN7160 and for conservative PN532 bring-up. |
 | `i2c_mcu` | per section | Klipper MCU name that hosts the reader. Required in `[nfc_gate laneN]` and `[nfc_gate shared]`. |
+| `cs_pin` | unset | Required for RC522 SPI readers. Use the Klipper pin name connected to RC522 SDA/SS/CS. |
+| `spi_bus` / software SPI pins | unset | Required for RC522 SPI readers. Use Klipper's normal SPI config keys for the selected MCU. |
+| `spi_speed` | `1000000` for RC522 | Optional RC522 SPI clock in Hz. The default is conservative. |
+| `rc522_transceive_delay` | `0.035` | Optional RC522 UID-read response wait in seconds. Leave at the default unless hardware testing shows the reader needs more time. |
 
 Reader settings inherit from the base `[nfc_gate]` section. A lane with no
 `reader_type` uses the base reader type. A lane with no `i2c_address` uses the
@@ -101,6 +106,26 @@ PN7160 optional hardware pins:
 recommended for PN7160. Without VEN, abnormal Klipper termination can leave the
 chip in a state that software cannot fully reset. `irq_pin` is also optional;
 when omitted, the PN7160 driver uses timing-based polling.
+
+RC522 lane example:
+
+```ini
+[nfc_gate lane1]
+enabled:     True
+reader_type: rc522
+mmu_gate:    1
+i2c_mcu:     mmu1
+cs_pin:      mmu1:PA4
+spi_bus:     spi1
+# spi_speed: 1000000
+# rc522_transceive_delay: 0.035
+```
+
+RC522 can resolve tags registered in Spoolman's RFID extra field and can read
+NTAG/Type-2 rich metadata through the normal NFC Reader pipeline. It also
+supports authenticated MIFARE Classic/Bambu reads when `tag_parsing: True`,
+`bambu_reads: True`, and `pycryptodome` are available. It does not support
+ISO15693 rich tag metadata.
 
 ---
 
@@ -182,12 +207,12 @@ scan_jog_mm:           150.0
 #scan_jog_max:         480.0
 scan_reads_per_position: 1
 scan_rewind_buffer_mm: 30.0
-scan_decode_retry_mm:     2.0
+scan_decode_retry_mm:     5.0
 scan_decode_retry_rounds: 5
 scan_poll_interval:    0.25
-scan_motion_mode: stopped
-scan_continuous_step_mm: 50.0
-scan_continuous_speed: 150.0
+scan_motion_mode: continuous
+scan_continuous_step_mm: 150.0
+scan_continuous_speed: 200.0
 scan_continuous_accel: 2000.0
 scan_continuous_poll_interval: 0.05
 ```
@@ -199,13 +224,13 @@ scan_continuous_poll_interval: 0.05
 | `scan_jog_max` | unset | Optional maximum scan-jog travel distance. When set, NFC uses this value and does not read Happy Hare Bowden calibration. `480.0` is roughly one full spool rotation. Leave unset/commented to keep scanning until the active lane's Bowden calibration length is reached. |
 | `scan_reads_per_position` | `1` | Number of NFC read attempts at each stopped spool position before moving the next substep. Reads are spaced by `scan_poll_interval`. Increase for marginal tag alignment at the cost of scan time. |
 | `scan_rewind_buffer_mm` | `30.0` | Distance reserved for Happy Hare's final gate-parking step (`_MMU_STEP_UNLOAD_GATE`). After a tag is found, NFC fast-rewinds to within this buffer and then hands off to HH for sensor/encoder-based final parking. If the scan moved less than this value, the fast rewind is skipped. |
-| `scan_decode_retry_mm` | `2.0` | Distance between nearby retry positions after a UID is found but the rich tag payload is marked incomplete. |
+| `scan_decode_retry_mm` | `5.0` | Distance between nearby retry positions after a UID is found but the rich tag payload is marked incomplete. |
 | `scan_decode_retry_rounds` | `5` | Nearby retry rounds before accepting the current UID/metadata result. Each round probes both sides of the first UID hit. |
 | `scan_poll_interval` | `0.25` | Seconds between stopped-position NFC read attempts during scan-jog. The shared reader also uses this value as its active polling cadence. Since Happy Hare `MMU_TEST_MOVE` blocks by default, this is not a read-while-moving interval. |
-| `scan_motion_mode` | `stopped` | `stopped` keeps the existing blocking substep scan. `continuous` queues the forward search chunk through Happy Hare's MMU toolhead and polls NFC while that chunk is estimated to be moving. |
-| `scan_continuous_step_mm` | `50.0` | Continuous-mode forward search chunk size. This is also the maximum intended overrun after a tag is detected because the current chunk is allowed to finish before rewind. |
-| `scan_continuous_speed` | `150.0` | Continuous-mode gear move speed in mm/s. |
-| `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration in mm/s^2. At `50mm`, `150mm/s`, `2000mm/s^2`, each move takes about `0.408s`. |
+| `scan_motion_mode` | `continuous` | `continuous` (default) queues the forward search chunk through Happy Hare's MMU toolhead and polls NFC while that chunk is estimated to be moving. `stopped` uses blocking MMU_TEST_MOVE substeps with reads at each stopped spool position — use this for marginal reader or tag alignment. |
+| `scan_continuous_step_mm` | `150.0` | Continuous-mode forward search chunk size. Rich tag reads use the observed UID hit-window center, so this value no longer needs to be kept small just to avoid overshooting the ideal metadata-read position. |
+| `scan_continuous_speed` | `200.0` | Continuous-mode gear move speed in mm/s. |
+| `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration in mm/s^2. At `150mm`, `200mm/s`, `2000mm/s^2`, each move takes about `0.85s` before NFC read time is included. |
 | `scan_continuous_poll_interval` | `0.05` | NFC read cadence while a continuous chunk is estimated to be in flight. When the chunk completes with no tag, NFC queues the next chunk. |
 
 There is no user setting for left-neighbor interference. During scan-jog, gate
@@ -216,6 +241,11 @@ and restores the neighbor on scan exit.
 Continuous scan mode preserves the existing tag-found path: tag actions are
 cached until after rewind, the 0.1 second read-light hold still plays before the
 rewind effect, and `_scan_mm_total` still drives the final rewind distance.
+If a continuous scan sees a UID during motion, NFC waits for the chunk to
+finish, checks whether Spoolman already knows the UID, and stops the scan if it
+does. If the UID does not resolve through Spoolman and rich tag parsing is
+enabled, NFC backs up to the observed UID hit-window center before rich parsing
+and the normal `scan_decode_retry_mm` left/right retry sweep.
 
 **Happy Hare post-preload hook (alternative to automatic polling):**
 
@@ -329,7 +359,10 @@ debug:             3
 low_level_debug: False
 ```
 
-When `True`, exposes manual PN532 I2C bus commands (`STEP`, `RAW_READ`, `RAW_WRITE`, etc.) on the `NFC` command for step-by-step bring-up debugging.
+When `True`, exposes manual low-level reader commands for step-by-step bring-up
+debugging. PN532 readers expose I2C `STEP`, `RAW_READ`, `RAW_WRITE`, and ACK
+helpers. RC522 readers expose SPI register, antenna, FIFO transceive, and REQA
+tag-wake helpers on `NFC` / `NFC_SHARED`.
 
 > [!WARNING]
 > These commands bypass the normal state machine. Set back to `False` before printing.
@@ -378,6 +411,38 @@ enabled: False
 mmu_gate: 4
 i2c_mcu:  mmu4
 ```
+
+### `[mmu_nfc_endstop laneN]`
+
+`install.sh` writes one of these alongside every enabled `[nfc_gate laneN]`
+section. It registers that lane's reader with Happy Hare as a gear-rail
+homing endstop (`ENDSTOP=nfc_lane<N>`) — no new hardware, it borrows the same
+reader the matching `[nfc_gate laneN]` section owns. This is what lets
+scan-jog's forward search stop the instant the tag is detected instead of
+jogging a fixed distance and polling afterward. See
+[Virtual Endstop](klipper-functions.md#virtual-endstop) for how scan-jog uses it.
+
+```ini
+[mmu_nfc_endstop lane0]
+nfc_gate:                lane0
+endstop_name:            nfc_lane0
+poll_interval:           0.05
+register_sensor:         True
+```
+
+| Key | Required | Description |
+|---|:---:|---|
+| `nfc_gate` | Yes | Name of the matching `[nfc_gate laneN]` section this endstop borrows a reader from. |
+| `endstop_name` | — | Endstop name Happy Hare homing moves reference as `ENDSTOP=<name>`. Defaults to the section name (`lane0`, `lane1`, ...); the installer writes `nfc_lane0`, `nfc_lane1`, etc. explicitly. |
+| `poll_interval` | — | Seconds between NFC reads while a homing move against this endstop is in progress. Default `0.05`. |
+| `register_sensor` | — | `True` by default. Also registers this endstop as a `filament_switch_sensor`-style presence sensor so Happy Hare's runout tooling can see it. |
+
+`[mmu_nfc_endstop laneN]` has no `enabled` flag of its own, and it requires
+its matching `[nfc_gate laneN]` to be enabled with a working reader — Klipper
+raises a config error at startup (`mmu_nfc_endstop <name> references disabled
+[nfc_gate <name>]`) if the lane is disabled while its endstop section is
+still present. Comment out (or remove) `[mmu_nfc_endstop laneN]` too when
+setting `enabled: False` on a lane.
 
 ---
 
@@ -428,9 +493,12 @@ MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 
 ### `_NFC_TAG_NO_SPOOL`
 
-Called when a tag is detected but no matching spool is found in Spoolman. Parameters: `GATE`, `UID`.
+Called when a tag is detected but cannot be resolved to a spool. Parameters:
+`GATE`, `UID`, and optional `SPOOLMAN_DISABLED`.
 
-Default: prints the unknown UID to the console with instructions to register it.
+Default: with Spoolman enabled, prints the unknown UID with instructions to
+register it. With Spoolman disabled, prints a warning that the tag was read but
+no rich metadata or spool assignment was available.
 
 ---
 

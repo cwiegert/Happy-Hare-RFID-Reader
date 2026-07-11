@@ -1169,8 +1169,8 @@ class PN7160Driver:
         self._alive = True
         self._needs_full_setup = False
 
-    def read_tag(self):
-        target_info = self.read_target()
+    def read_tag(self, timeout=None):
+        target_info = self.read_target(timeout=timeout)
         if target_info is None:
             return None
         uid = target_info.get('uid')

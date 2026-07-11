@@ -1296,14 +1296,17 @@ class SpoolmanClient:
             self._trace_info(
                 "auto_create_spool: no matching filament found; creating "
                 "filament from tag/SpoolmanDB metadata")
-            # Build a descriptive name.  Prefer the SpoolmanDB filament name
-            # (e.g. "PLA Basic", "PETG HF") over the generic "{brand} {material}"
-            # fallback so the Spoolman UI shows a meaningful label.
+            # Build a descriptive name. Prefer SpoolmanDB names first, then
+            # tag-provided material_detail (e.g. "PLA_Basic" -> "PLA Basic")
+            # before falling back to the generic "{brand} {material}" label.
             db_fil_name = str(bambu_match.get("name") or "").strip() if bambu_match else ""
             if db_fil_name:
                 filament_name = f"{resolved_vendor_name} {db_fil_name}" if resolved_vendor_name else db_fil_name
             else:
-                filament_name = f"{brand} {material}" if brand else material
+                material_label = str(
+                    filament_info.get("material_detail") or material).strip()
+                material_label = material_label.replace("_", " ")
+                filament_name = f"{brand} {material_label}" if brand else material_label
 
             filament_body: dict = {
                 "name": filament_name,

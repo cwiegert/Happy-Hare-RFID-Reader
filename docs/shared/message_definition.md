@@ -84,7 +84,7 @@ commands and scan-jog.
 | Poll event detected | No direct console message from Python; configured macros may respond. | `INFO     nfc_gate: [laneN] gate <n> — <event> uid=<uid> spool=<spool>` at `debug: 3` |
 | Spool dispatch to Happy Hare | Macro output, if any, comes from the configured `_NFC_SPOOL_CHANGED` macro. | `INFO     nfc_gates: gate <n> → spool <spool> detected (UID <uid>)` |
 | Metadata-only dispatch to Happy Hare | Macro output, if any, comes from the configured `_NFC_SPOOL_CHANGED` macro. | `INFO     nfc_gates: gate <n> → tag <uid> metadata-only (material=<material> color=<color> temp=<temp>)` |
-| UID has no Spoolman spool | Macro output, if any, comes from the configured `_NFC_TAG_NO_SPOOL` macro. | `INFO     nfc_gates: gate <n> → tag <uid> (no spool ID in Spoolman)` |
+| UID has no spool assignment | Macro output, if any, comes from the configured `_NFC_TAG_NO_SPOOL` macro. | `INFO     nfc_gates: gate <n> → tag <uid> (no spool ID in Spoolman)` or `(Spoolman disabled; no metadata spool)` |
 | Spool removed dispatch | Macro output, if any, comes from the configured `_NFC_SPOOL_REMOVED` macro. | `INFO     nfc_gates: gate <n> → spool removed (was spool_id=<spool>)` |
 | G-code dispatch failed | No direct console message from Python. Klipper may show the macro error. | `ERROR    nfc_gates: GCode dispatch failed for gate <n> event <event>` |
 | HH already owns NFC spool | No direct console message. | `INFO     nfc_gate: [laneN] gate <n> — spool confirmed by NFC; HH owns same spool — suspending poll until ejected` |
@@ -105,11 +105,13 @@ JOG_SCAN=1` or by the automatic scan-jog trigger.
 | Another gate scanning | `[WARN] NFC[laneN]: gate <n> is already scanning — only one gate may scan at a time` | `WARNING  [WARN] NFC[laneN]: gate <n> is already scanning — only one gate may scan at a time` |
 | Same gate already scanning | `[WARN] NFC[laneN]: scan-jog already in progress for this gate` | `WARNING  [WARN] NFC[laneN]: scan-jog already in progress for this gate` |
 | Preflight failed | `[WARN] NFC[laneN]: scan-jog not available while <reason>` | `WARNING  [WARN] NFC[laneN]: scan-jog not available while <reason>` |
-| Scan-jog started | `[SCAN] NFC[laneN]: scan-jog started for gate <n> (max=<mm>mm  poll=<seconds>s)` | `INFO     [SCAN] NFC[laneN]: scan-jog started for gate <n> ...` plus `INFO     nfc_gate: [laneN] gate <n> scan mode started — chunk=...` at `debug: 3` |
+| Stopped scan-jog started | `[SCAN] NFC[laneN]: stopped scan-jog started for gate <n>` | Same message at `INFO`; debug logs include the stopped-mode chunk/substep/read settings |
+| Continuous scan-jog started | `[SCAN] NFC[laneN]: continuous scan-jog started for gate <n>` | Same message at `INFO`; debug logs include the continuous-mode step/speed/accel/poll settings |
 | Auto scan-jog waiting | `[SCAN] NFC[<n>]: scan-jog waiting — gate <other> is already scanning` | `INFO     nfc_gate: [laneN] [SCAN] NFC[<n>]: scan-jog waiting — gate <other> is already scanning` |
 | Auto scan-jog unavailable | `[WARN] NFC[<n>]: scan-jog not available while <reason>` | `WARNING  nfc_gate: [laneN] NFC[<n>]: scan-jog not available while <reason>` |
 | Auto scan-jog started | `[SCAN] NFC[<n>]: starting scan-jog (max=<mm>mm  poll=<seconds>s)` | `WARNING  nfc_gate: [laneN] [SCAN] NFC[<n>]: starting scan-jog (max=<mm>mm  poll=<seconds>s)` |
-| Move step queued | `[SCAN] NFC[<n>]: moving <mm>mm  scan position <mm> / <mm>mm` | `INFO     [SCAN] NFC[<n>]: moving <mm>mm  scan position <mm> / <mm>mm` and `INFO     NFC[<n>]: move queued <mm>mm  scan position <mm> / <mm>mm` |
+| Stopped move step queued | `[SCAN] NFC[<n>]: moving <mm>mm  scan position <mm> / <mm>mm` | `INFO     [SCAN] NFC[<n>]: moving <mm>mm  scan position <mm> / <mm>mm` and `INFO     NFC[<n>]: move queued <mm>mm  scan position <mm> / <mm>mm` |
+| Continuous move step queued | `[SCAN] NFC[<n>]: continuous <source> <mm>mm  scan position <mm> / <mm>mm` | Same message at `INFO`, followed by `INFO     [<n>]: continuous <source> queued <mm>mm ...`; `<source>` is `Direct Move` for the direct MMU-toolhead path or `MMU_TEST_MOVE` for the G-code fallback |
 | Scan poll failed | `[ERROR] NFC[<n>]: scan poll failed` | `ERROR    [ERROR] NFC[<n>]: scan poll failed` |
 | Decode retry queued | `[WARN] NFC[<n>]: tag decode incomplete; retry <try>/<max> after <mm>mm jog` | `INFO     [WARN] NFC[<n>]: tag decode incomplete; retry <try>/<max> after <mm>mm jog (uid=<uid> reason=<reason>)` |
 | Decode retry exhausted, continue | `[WARN] NFC[<n>]: tag decode still incomplete after <max> retries; continuing scan-jog` | `INFO     [WARN] NFC[<n>]: tag decode still incomplete after <max> retries; continuing scan-jog (uid=<uid>)` |
@@ -127,7 +129,7 @@ JOG_SCAN=1` or by the automatic scan-jog trigger.
 | Rewind complete | `[REWIND] NFC[<n>]: rewind complete; gate parking handed to Happy Hare (rewound=<mm>mm scan=<mm>mm buffer=<mm>mm)` | Same message at `INFO` |
 | Spool assigned | `[OK] NFC[<n>]: spool <spool> assigned` | Same message at `INFO` |
 | Metadata assigned | `[OK] NFC[<n>]: tag metadata assigned` | Same message at `INFO` |
-| Tag has no Spoolman match | `[WARN] NFC[<n>]: tag has no Spoolman match` | `WARNING  [WARN] NFC[<n>]: tag has no Spoolman match` |
+| Tag has no spool assignment | Spoolman enabled: `[WARN] NFC[<n>]: tag has no Spoolman match`; Spoolman disabled: `[WARN] NFC[<n>]: tag read, but no rich metadata or spool assignment was found` | Same message at `WARNING` |
 | No tag found | `[REWIND] NFC[<n>]: no tag found; rewinding <mm>mm (scan=<mm>mm buffer=<mm>mm)` | Same message at `INFO` |
 | No tag found, rewind skipped | `[REWIND] NFC[<n>]: no tag found; rewind fast move skipped (scan=<mm>mm buffer=<mm>mm)` | Same message at `INFO` |
 | Print starts during scan | No direct console message unless a rewind/no-tag message follows. | `WARNING  nfc_gate: [laneN] scan mode: print started — aborting` |

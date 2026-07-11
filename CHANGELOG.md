@@ -5,9 +5,249 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased] - Continuous Scan - WoodWorker
+## [1.1.0] - 07/07/2026 - WoodWorker
 
-### Scan-Jog Continuous Mode
+### Virtual Endstop — Scan-Jog Now Homes to the Tag Instead of Jogging Past It
+
+Scan-jog's forward search used to be a blind jog-then-poll loop, so the tag's
+real position was only ever known as "somewhere in the last chunk."
+
+- Added `mmu_nfc_endstop.py`, a Klipper extra that wraps an existing
+  `[nfc_gate laneN]` reader as a Happy Hare gear-rail endstop
+  (`mmu.gear_rail.add_extra_endstop`, standard MCU endstop interface). While
+  Happy Hare homes against it, a reactor timer polls the lane's NFC reader
+  every `poll_interval` (default `0.05s`) and reports triggered the instant a
+  tag UID is read — no new hardware or wiring, it borrows the reader the
+  matching `[nfc_gate laneN]` already owns.
+- Added `[mmu_nfc_endstop laneN]` to `nfc_reader_hw.cfg` (generated
+  automatically by `install.sh` for every enabled lane) and symlinked
+  `mmu_nfc_endstop.py` into Klipper's extras directory.
+- Both scan-jog motion modes now search with a genuine Klipper homing move
+  (`_MMU_STEP_HOMING_MOVE ENDSTOP=nfc_lane<N> STOP_ON_ENDSTOP=1 MOTOR=gear`,
+  or the direct `mmu.move_filament(homing_move=1, endstop_name=...)`
+  equivalent) for the full remaining scan distance, instead of jogging a fixed
+  chunk and polling afterward. The move physically stops the instant the
+  endstop trips. `continuous` additionally polls the reader while the move is
+  in flight to build a UID hit-window, used to recenter before rich tag
+  parsing; `stopped` waits for the homing move to finish, then reads once.
+- Continuous scan now starts by moving on the first step instead of a
+  stationary 0.0 mm poll. The previously-cached UID/spool is still stashed at
+  scan start, and a UID matching that stashed UID resolves directly from the
+  stashed spool instead of re-running Spoolman/rich-tag resolution.
+- Fixed `uninstall.sh` to also remove the `mmu_nfc_endstop.py` symlink from
+  Klipper extras; it previously only cleaned up `nfc_gate.py`/`nfc_gates/`,
+  leaving the endstop extra behind after uninstall.
+- Documented across `Readme.md`, `docs/shared/how-it-works.md`,
+  `docs/shared/klipper-functions.md`, `docs/shared/configuration.md`,
+  `docs/shared/install-uninstall.md`, and `docs/shared/architecture-decisions.md`.
+
+### Happy Hare Filament-Position Counter Drift
+
+Repeated `JOG_SCAN=1` runs on the same lane left Happy Hare's gear position
+readout (`UNLOADED N.Nmm` in the visual status banner) drifting further from
+zero every cycle, because that counter is a running total that scan-jog never
+re-zeroes.
+
+- Root cause: Happy Hare's real `MMU_LOAD`/`MMU_EJECT` sequences call
+  `mmu._initialize_filament_position()` (v3's monolithic `mmu.py`; v4 renamed
+  it to the public `initialize_filament_position()`) once at the start,
+  before any gear moves, resetting the raw driving-stepper position
+  (`mmu_toolhead.get_position()[1]`) to `0.0`. Scan-jog never calls either
+  sequence — it drives the gear through Happy Hare's low-level composable
+  primitives (`_MMU_STEP_HOMING_MOVE`, `_MMU_STEP_MOVE`,
+  `_MMU_STEP_UNLOAD_GATE`) instead, so the reset never happens on either
+  Happy Hare version.
+- Fixed by calling Happy Hare's position-reset method once, at the start of
+  every scan-jog session (`scan_jog.start()`). `_hh_reset_filament_position()`
+  tries `_initialize_filament_position` (v3) then `initialize_filament_position`
+  (v4), so the fix works on either version without needing to know which is
+  installed.
+- Diagnosed against the wrong Happy Hare reference tree at first — an initial
+  attempt targeted v4's `mmu.drive().get_filament_position()`, which doesn't
+  exist on v3 (confirmed via a console diagnostic showing `has_reset_fn=False`
+  against a live `mmu_found=True` install). Re-verified against the actually
+  installed v3 API before landing the real fix.
+
+### Scan-Jog Class-Level Lock Released Too Early
+
+- Fixed `_active_scan_gate` — the "only one gate scans at a time" guard
+  checked by `manual_jog_scan()` — being cleared in `finish()` and
+  `rewind_and_exit()` before those functions had finished their own cleanup
+  (Happy Hare dispatch, left-neighbor restore, poll resume, LED release). A
+  second `JOG_SCAN=1` issued during that window could start a new scan session
+  — including its own filament-position reset and gear moves — while the
+  first session's Happy Hare interaction was still in flight, corrupting
+  both. `_active_scan_gate = None` now runs as the last line of both
+  functions, after all other cleanup.
+
+### Happy Hare `MMU_SELECT` Visual Banner During Scan-Jog
+
+Every scan-jog gate selection ran `MMU_SELECT GATE=<n> QUIET=1`, which printed
+Happy Hare's full gate-table + visual banner on every jog regardless of
+`QUIET=1` or `wrap_suppress_visual_log()`.
+
+- Root cause: Happy Hare v3's `cmd_MMU_SELECT` selects the gate via
+  `mmu.select_gate()`, then unconditionally logs the banner through
+  `self.log_info(...)` — that print reads no `QUIET` parameter and is gated
+  only by `mmu.log_level`, a separate switch from the `log_visual` flag that
+  `wrap_suppress_visual_log()` controls.
+  - A first pass temporarily zeroed `mmu.log_level` around every Happy Hare
+    call scan-jog makes. It worked but was reverted as unnecessarily broad —
+    it silenced all of Happy Hare's info-level logging, not just this one
+    print, for the duration of every `MMU_SELECT`/`_MMU_STEP_*` call.
+  - Replaced with `select_gate_quiet()`: calls `mmu.select_gate(gate_num)`
+    directly through Python (the same call `cmd_MMU_SELECT` itself makes),
+    falling back to the gcode form only if that method isn't available. Every
+    `MMU_SELECT` gcode call in `scan_jog.py` now goes through this helper,
+    mirroring the direct-Python pattern `run_direct_continuous_jog` already
+    used for gate selection.
+- `wrap_suppress_visual_log()` is still used for `_MMU_STEP_*` calls, where it
+  correctly suppresses `_display_visual_state()` on filament-pos-state
+  transitions.
+
+---
+
+## [1.0.0] - 07/06/2026 - WoodWorker
+
+### Happy Hare V4 Compatibility
+
+Two independent fixes, for two different scan-jog trigger paths, both landed on
+the same underlying symptom: scan-jog could fail to start on Happy Hare v4 while
+Happy Hare reports `action=checking`.
+
+- **Automatic gate-status polling trigger** (`scan_enabled: True`, no hook):
+  added Happy Hare version detection
+  (`_happy_hare_version`/`_refresh_happy_hare_version`/
+  `_happy_hare_major_version`, with a lazy refresh fallback if the MMU object
+  was not available yet at init) and `_happy_hare_allows_scan_action()`. The
+  poll timer now treats `action=checking` as scan-safe when Happy Hare reports
+  major version `>= 4`; older or unknown versions still require strict
+  `action=idle`.
+- **Hook-triggered / manual `JOG_SCAN=1`** (`_NFC_SCAN_JOG_PRELOAD`, Happy
+  Hare's `user_post_preload_extension` hook): Happy Hare v4 invokes this hook
+  while still running its own load sequence, before it unwinds back to `idle`,
+  so requiring strict idle there could never succeed. The macro now sends
+  `NFC GATE=<n> JOG_SCAN=1 SOURCE=AUTO`; NFC only relaxes the busy check for
+  calls carrying `SOURCE=AUTO` when the detected Happy Hare major version is
+  `>= 4` and the action is `checking`.
+  Manual/console `JOG_SCAN=1` with no `SOURCE=AUTO` is unaffected and still
+  requires strict `action == idle` on any Happy Hare version.
+- Fixed Happy Hare version detection to read
+  `mmu.mmu_machine.happy_hare_version`, matching the current Happy Hare object
+  model, while keeping the older `mmu.version` fallback.
+- Added Happy Hare version reporting to `NFC_DOCTOR`, including whether v4
+  `checking` scan-jog compatibility is enabled: v4 accepts `action=idle` or
+  `action=checking`; v3/pre-v4 and unknown versions accept only `action=idle`.
+- Documented both mechanisms in README, `docs/shared/klipper-functions.md`, and
+  `docs/shared/install-uninstall.md`.
+
+### Spoolman-Disabled Support
+
+- Added `spoolman_url: disabled` as a valid configuration option. When set, all
+  Spoolman lookup paths short-circuit cleanly (`gate._spoolman is None` guards
+  are already present throughout the Python code). Tag metadata or UID-only
+  resolution continues to work; the gate map and Happy Hare filament data are
+  still updated via `_NFC_SPOOL_CHANGED` when `tag_parsing: True` and the tag
+  carries material/color fields.
+- Added `BRAND`, `MIN_TEMP`, `DIAMETER`, and `WEIGHT` parameters to the
+  `_NFC_SPOOL_CHANGED` macro dispatch for the no-Spoolman (metadata-only) path.
+  All four are always sent; empty string is used when the tag does not provide a
+  value. `klipper_interface.py` now reads `brand`/`vendor`, `min_temp`,
+  `diameter_mm`, and `weight_g`/`spool_weight_g` from the tag metadata dict.
+  The macro console message displays all fields; `MMU_GATE_MAP` continues to
+  receive only the fields Happy Hare supports (NAME, MATERIAL, COLOR, TEMP).
+- Added `disabled` as a third Spoolman option in the installer (lane and shared
+  paths). When selected the installer sets `spoolman_url: disabled`, defaults the
+  tag read mode prompt to `rich` (instead of `spoolman`), prints a note
+  explaining that rich mode is required to pass filament data to Happy Hare
+  without Spoolman, and skips the auto-create Spoolman spool question since there
+  is no Spoolman instance to create records in.
+- Fixed no-Spoolman continuous scan-jog resolution. When continuous mode finds a
+  UID during motion and `tag_parsing: True`, it now runs the normal rich-tag poll
+  immediately after the current move completes, before scheduling the
+  overshoot-backup retry. This lets metadata-only tags resolve cleanly with
+  `spoolman_url: disabled` instead of backing up first because the Spoolman UID
+  lookup was unavailable.
+
+### Reader Hardware
+
+- Added RC522 as a supported SPI reader via `reader_type: rc522`.
+  `reader_factory.py` now creates an `RC522Driver` through Klipper's SPI bus
+  helper before the I2C reader path. The RC522 driver exposes the current
+  reader API (`read_tag(timeout=...)`, `read_target(timeout=...)`, and target
+  cleanup), and honors short continuous scan probe timeouts. RC522 uses its own
+  optional `rc522_transceive_delay` setting (default `0.035`) instead of
+  inheriting the slower PN532 passive-target delay.
+- Added RC522 ISO14443A SELECT/cascade support and NTAG/Type-2 page reads.
+  `read_target()` now returns selected target info with SAK/ATQA when SELECT
+  succeeds, including 4-byte, 7-byte, and 10-byte UID cascade handling. The
+  driver exposes `ntag_read_page()`, `ntag_read_user_memory()`, and
+  `ntag_read_ndef_user_memory()` so `tag_handler.py` can run the existing
+  rich-tag metadata resolution path for RC522 Type-2 tags. If SELECT fails
+  after a valid anticollision UID, the reader falls back to the existing
+  UID-only target shape so Spoolman UID lookup still works. ISO15693 remains
+  unsupported on RC522.
+- Added MIFARE Classic authentication and block reads to the RC522 driver.
+  `mifare_authenticate()` uses the RC522 hardware `MFAuthent` (0x0E) command
+  which handles the three-pass challenge/response exchange internally — no
+  over-the-air auth frame is sent by the host like on PN532. After auth,
+  `mifare_read_block()` uses the same `_transceive_crc` path as NTAG page
+  reads; `RxCRCEn` in `ModeReg` strips the two CRC trailer bytes so the FIFO
+  holds only the 16 data bytes. `mifare_read_authenticated_blocks()` matches
+  the PN532 return shape (`{"uid_bytes": …, "blocks": {abs_block: bytes}}`)
+  so `tag_handler.py` and the Bambu parser stay reader-agnostic. The RC522
+  stops on the first auth or read failure (same policy as PN7160) because the
+  hardware crypto state (`MFCrypto1On`) becomes unreliable after a rejected
+  handshake; `_stop_crypto1()` clears `Status2Reg` bit 3 in the `finally`
+  block so subsequent scans are never left in encrypted mode. Bambu refill
+  RFID tags (MIFARE Classic 1K with HKDF-derived sector keys) are now fully
+  supported on RC522.
+- Added RC522 diagnostic logging for the SPI path. Init failures now log a
+  warning with SPI wiring/config hints before re-raising, health checks warn
+  when the reader does not respond or antenna TX bits are off, and post-REQA
+  anticollision/checksum failures produce warning-level summaries with raw
+  detail retained behind `debug >= 4`. Manual `SCAN=1` output now handles
+  UID-only targets with no SAK value.
+- Added RC522-specific low-level debug commands guarded by `low_level_debug`.
+  `INIT=1` and `SCAN=1` exercise the normal RC522 init and UID scan paths;
+  `RC522_DUMP_REGS=1`, `RC522_REG_READ=<reg>`,
+  `RC522_REG_WRITE=<reg> VALUE=<byte>`, `RC522_ANTENNA=0|1`,
+  `RC522_REQA=1`/`RC522_WAKE=1`, and
+  `RC522_TRANSCEIVE='<bytes>' BIT_FRAMING=<0-7>` provide register, antenna,
+  FIFO transceive, and tag-wake diagnostics without reusing PN532 ACK/ready
+  semantics.
+- Added orchestration-facing RC522 SPI aliases for the same diagnostics:
+  `RC522_REGISTER=<reg> [VALUE=<byte>]`, `RC522_ANTENNA_ENABLE=0|1`,
+  `RC522_TAG_WAKE=1`, and
+  `RC522_FIFO_TRANSCEIVE='<bytes>' BIT_FRAMING=<0-7>`. These run through the
+  `NFC` / `NFC_SHARED` handlers, so shared-reader and per-lane RC522 debugging
+  uses the same NFC Reader command surface as init and scan.
+
+### Console Output and Logging
+
+- Replaced all abbreviated `HH` references with `Happy Hare` across log strings, console messages, docstrings, and user-visible status text in `nfc_manager.py`, `scan_jog.py`, `shared_preload.py`, and `hh_status.py`. `HH_SYNC` macro/command names and the `HH:MM:SS` datetime format in `log.py` are unchanged.
+- Changed `[SCAN]`, `[REWIND]`, and `[OK]` tagged scan-jog messages to appear at `console_log_level: 2`, matching the warning threshold. Previously all scan-jog messages required level 3. Verbose detail lines with no tag (move-queued timing, LED state changes) still require level 3.
+- Gated retry-jog position detail lines (`decode retry move queued Xmm  scan position X.X / X.Xmm`) and overshoot backup position detail lines (`continuous overshoot backup queued Xmm  scan position X.X / X.Xmm`) behind `gate._debug >= 3`. The `[WARN]` tagged console messages for these same events are unaffected and remain visible at the default warning threshold.
+- Changed continuous jog move logging so it reports the actual execution path:
+  `Direct Move` for direct Happy Hare MMU-toolhead moves or `MMU_TEST_MOVE` for
+  the G-code fallback. The user-visible `[SCAN]` move line now fires after the
+  call so it accurately reflects what was executed.
+
+### Macro Naming Consistency
+
+- The configured lane name (e.g. `lane0` from `[nfc_gate lane0]` in `nfc_reader_hw.cfg`) is now forwarded to all three NFC event macros as a `READER=` parameter. `_NFC_SPOOL_CHANGED`, `_NFC_SPOOL_REMOVED`, and `_NFC_TAG_NO_SPOOL` use `params.READER | default('Lane' ~ gate)` so console output reads `NFC[lane0]:` matching the section name in hardware config rather than a hardcoded `NFC gate N:` format.
+- Capitalized `Gate` (capital G) in the remaining user-visible macro output lines — `NFC_HH_SYNC_CACHE` sync progress and `_NFC_SCAN_UNRESOLVED` — to match the capitalization used by `NFC_STATUS`.
+
+### Command Fixes
+
+- Added `NFC GATE=<#> JOG_SCAN=1` to the `NFC_HELP` output. The command existed but was only documented in the per-gate `NFC GATE=<#> HELP=1` listing.
+- Fixed `NFC GATE=<#> HELP=1` incorrectly triggering the low-level PN532 debug path. `low_level_debug_requested()` checks for a `HELP` parameter, so `HELP=1` was intercepted before the per-gate help handler ran, producing spurious `polling paused for low-level PN532 debug` and `low_level_debug is disabled in config` console messages. The HELP check now runs first in `cmd_NFC`.
+- Corrected the help text entry from `NFC GATE=<#> HELP` to `NFC GATE=<#> HELP=1` to match the required Klipper parameter style.
+
+### Scan-Jog Continuous Mode — Now Default
+
+- Promoted continuous scan-jog to the default motion mode. `scan_motion_mode: continuous` is now the out-of-the-box setting in `nfc_reader.cfg` and the Python fallback default. `scan_motion_mode: stopped` remains fully supported for marginal reader or tag alignment where continuous polling misses the tag.
+- Updated `docs/shared/configuration.md`, `docs/shared/klipper-functions.md`, and `docs/shared/how-it-works.md` to reflect continuous as the default and document stopped as the alternative.
 
 - Added opt-in continuous scan-jog mode via `scan_motion_mode: continuous`.
   Continuous mode queues forward search chunks through Happy Hare's MMU toolhead
@@ -17,8 +257,56 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added continuous scan settings:
   `scan_continuous_step_mm`, `scan_continuous_speed`,
   `scan_continuous_accel`, and `scan_continuous_poll_interval`.
+- Changed the default rich-tag decode retry spacing from 2 mm to 5 mm and added
+  continuous-mode UID hit-window recentering before rich parsing/retries when a
+  UID hit does not resolve through Spoolman.
+- Changed continuous-mode rich tag retry jogs from a ±sweep to a two-phase
+  backward/forward walk. After the initial overshoot backup, retries now:
+  (1) step backward from the backup point in `scan_decode_retry_mm` increments
+  (half of `scan_decode_retry_rounds` attempts, floor at 0); then
+  (2) return to the backup point and step forward in the same increment toward
+  the original UID detection position (ceiling = scan total before backup),
+  using the remaining attempts. The backup point and UID detection position are
+  recorded as `_scan_continuous_overshoot_start_mm` and
+  `_scan_continuous_overshoot_origin_mm` at backup time. Both the
+  `queue_continuous_overshoot_backup` and `retry_incomplete_decode` backup paths
+  record these values. The `retry_incomplete_decode` function now redirects
+  continuous+overshoot retries to `queue_decode_retry_move` (same path as
+  no-tag-found retries) instead of falling through to the stopped-mode ±sweep.
+- Fixed a race in the first continuous chunk where `mmu.select_gate()` blocks
+  for the full gate-positioning time (~0.5 s) inside `run_direct_continuous_jog`.
+  Because this blocking consumed more time than the expected move duration,
+  `remaining_duration` was computed as zero and the code declared the first chunk
+  complete before it entered the motion queue. The second chunk was then submitted
+  immediately, creating a growing motion queue backlog that shifted all subsequent
+  position estimates by one full chunk (75 mm). Tags were detected one chunk
+  (75 mm × number of queued moves) later than their physical location. Fixed by
+  detecting when gate selection ran during the call and using `expected_duration`
+  rather than `max(0, expected_duration - command_elapsed)` for that call only.
+- Changed in-flight continuous probe rate. `scan_continuous_poll_interval` now
+  serves as the hardware probe timeout passed to `read_tag()` in addition to its
+  existing role as the timer reschedule interval. The reactor now reschedules
+  immediately after each in-flight probe (returning `now` rather than
+  `now + poll_interval`) so the hardware timeout is the only pacing. This raises
+  the probe count per chunk from ~3 to ~10–15 (depending on speed and step size),
+  reducing the effective per-probe coverage from ~28 mm to ~5 mm and making
+  near-edge misses much less likely.
+- Added missing commands to the global `NFC_HELP` output. The following commands
+  existed and worked but did not appear in the help listing:
+    `NFC GATE=<#> INIT=1` — re-run reader hardware initialisation
+    `NFC GATE=<#> APPLY=1` — send cached spool to Happy Hare immediately
+    `NFC GATE=<#> CLEAR_CACHE=1` — clear cached spool/UID without dispatching
+    `NFC GATE=<#> HH_SYNC=1 SPOOL_ID=<n>` — seed lane cache from Happy Hare gate map
+- Changed continuous in-flight scanning to perform a UID-only probe while the
+  chunk is moving, then defer Spoolman lookup and rich tag parsing until the
+  current chunk has finished.
+- Switched continuous scan behavior to try resolving a detected UID first;
+  only if tag resolution fails is the reverse/overshoot backup jog queued.
 - Documented the tested continuous profile: 50 mm chunks at 150 mm/s with
   2000 mm/s^2 acceleration and a 0.05 s in-flight tag-check cadence.
+- Optimized the baseline continuous scan configuration for optimal speed while
+  minimizing overshoot, balancing chunk pacing and probe cadence to reduce
+  missed tags without introducing extra backtracking.
 - Added direct Happy Hare MMU-toolhead forward jog support for continuous scan,
   with `MMU_TEST_MOVE WAIT=0` retained as a compatibility fallback.
 - Reduced repeated continuous-mode search LED calls by removing the top-of-loop

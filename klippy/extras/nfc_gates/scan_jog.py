@@ -31,6 +31,9 @@ LEFT_NEIGHBOR_CLEARANCE_RETRIES = 3
 TAG_READ_HOLD_DELAY = 0.1
 CONTINUOUS_QUEUE_COMPLETE_POLL_FRACTION = 0.25
 CONTINUOUS_QUEUE_COMPLETE_MIN_EPSILON = 0.01
+# Treat sub-step floating-point residue as the end of a scan move.  Formatting
+# such a residue as MOVE=0.00 would start an unnecessary extra NFC homing cycle.
+CONTINUOUS_END_DISTANCE_EPSILON = 0.1
 
 LED_SEARCHING  = 'mmu_clockwise_slow'
 LED_TAG_READ   = 'mmu_RFID_read'
@@ -982,6 +985,7 @@ def start(gate, max_mm=None):
     gate._scan_continuous_move_inflight = False
     gate._scan_continuous_move_source = None
     gate._scan_continuous_move_complete_time = 0.0
+    gate._scan_continuous_full_travel = False
     gate._scan_continuous_last_move_mm = 0.0
     gate._scan_continuous_probe_due = False
     gate._scan_continuous_tag_pending = False
@@ -1231,6 +1235,20 @@ def continuous_step_event(gate, eventtime):
 
     handled_pending_tag = False
     pending_tag = getattr(gate, '_scan_continuous_tag_pending', False)
+    full_travel = getattr(gate, '_scan_continuous_full_travel', False)
+    pending_uid = getattr(gate, '_scan_continuous_pending_uid', None)
+    if full_travel and not pending_tag and not pending_uid:
+        # The virtual endstop owns PN532 discovery during homing. Its final
+        # no-tag request may still be busy, so do not start another discovery.
+        gate._scan_continuous_move_inflight = False
+        gate._scan_continuous_probe_due = False
+        gate._scan_continuous_full_travel = False
+        logger.warning(
+            "[%s]: continuous scan reached max distance with no UID — rewinding",
+            gate._name)
+        gate._rewind_and_exit_scan()
+        return gate.reactor.NEVER
+
     if pending_tag and move_complete:
         handled_pending_tag = True
         gate._scan_continuous_tag_pending = False
@@ -1368,7 +1386,7 @@ def continuous_step_event(gate, eventtime):
 
     remaining = gate._scan_max_mm - gate._scan_mm_total
     move = remaining
-    if move <= 0.0:
+    if move <= CONTINUOUS_END_DISTANCE_EPSILON:
         gate._rewind_and_exit_scan()
         return gate.reactor.NEVER
 
@@ -1429,6 +1447,9 @@ def continuous_step_event(gate, eventtime):
     _led_effect(gate, effect_name)
     _schedule_led_reassert(gate, effect_name)
     gate._scan_mm_total += actual_move
+    gate._scan_continuous_full_travel = (
+        move_source == "NFC Homing Move"
+        and actual_move >= move - CONTINUOUS_END_DISTANCE_EPSILON)
     gate._scan_continuous_uid_hits = []
     if gate._debug >= 4:
         logger.debug(

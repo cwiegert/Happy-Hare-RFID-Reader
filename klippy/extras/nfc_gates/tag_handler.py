@@ -519,14 +519,47 @@ def resolve_default_mifare_keys():
      return [b'\xff\xff\xff\xff\xff\xff'] * 16
 
 
-def capture_mifare_metadata(gate, tag, sector_keys):
+def resolve_creality_key_b(gate, tag):
+    """Derive the Creality CFS/K1/K2 sector-1 MIFARE Key B for this tag's UID.
+
+    Returns (key, None) on success, (None, reason_str) on failure. This key
+    only unlocks sector 1 (blocks 4-6); Bambu's Key A and the MIFARE factory
+    default key both fail on genuine Creality tags, so this is tried last.
+    """
+    try:
+        from .vendor.rfid_tag_parser import _creality_derive_key_b
+        uid_bytes = bytes((tag.target_info or {}).get('uid_bytes') or [])
+        if len(uid_bytes) not in (4, 7):
+            return None, ('uid_bytes wrong length for Creality key '
+                          'derivation (%d bytes)' % len(uid_bytes))
+        return _creality_derive_key_b(uid_bytes), None
+    except ImportError as e:
+        return None, 'pycryptodome not installed: %s' % e
+    except Exception as e:
+        return None, 'key derivation failed: %s' % e
+
+
+def _retarget_same_uid(gate, uid_hex):
+    """Re-select the reader target, returning True only if it's still the same tag.
+
+    Each capture_mifare_metadata() call releases the target when it finishes,
+    so successive authenticated-read attempts (different key/sector
+    combinations) on one tag presence need to re-select it in between.
+    """
+    new_target = gate._reader.read_target()
+    return new_target is not None and new_target.get('uid') == uid_hex
+
+
+def capture_mifare_metadata(gate, tag, sector_keys,
+                            sectors=(0, 1, 2, 3, 4), use_key_b=False):
     uid_hex   = tag.uid
     uid_bytes = bytes((tag.target_info or {}).get('uid_bytes') or [])
     tag.mifare_auth_failed_sectors = []
     tag.mifare_read_failed_blocks = []
     try:
         block_dict = gate._reader.mifare_read_authenticated_blocks(
-            sector_keys, sectors=[0, 1, 2, 3, 4], uid_bytes=uid_bytes)
+            sector_keys, sectors=list(sectors), uid_bytes=uid_bytes,
+            use_key_b=use_key_b)
     except Exception as e:
         tag.parse_error = 'mifare read failed: %s' % e
         tag.meta = {'uid': uid_hex}
@@ -625,13 +658,13 @@ def read_current_tag(gate):
                     gate._name, gate._gate, uid_hex)
             return uid_hex
         keys, reason = resolve_auth_keys(gate, tag)
+        bambu_read_worked = False
         if keys is None:
             tag.parse_error = 'mifare auth key derivation failed: %s' % reason
-            release_reader_target(gate, "mifare_key_failure")
             if gate._debug >= 3:
                 logger.info(
                     "[%s]: gate %d — uid=%s  MIFARE key "
-                    "derivation failed: %s; UID-only fallback",
+                    "derivation failed: %s; trying default key",
                     gate._name, gate._gate, uid_hex, reason)
         else:
             if gate._debug >= 3:
@@ -640,16 +673,75 @@ def read_current_tag(gate):
                     "Bambu keys derived; reading sectors 0-4",
                     gate._name, gate._gate, uid_hex)
             capture_mifare_metadata(gate, tag, keys)
-            # --- Creality/QIDI default-key fallback (commented out, needs hardware test) ---
-            # if len(getattr(tag, 'mifare_auth_failed_sectors', [])) == 5:
-            #     tag.read_incomplete = False
-            #     tag.read_retry_reason = None
-            #     tag.raw_tag_data = None
-            #     tag.parse_error = None
-            #     new_target = gate._reader.read_target()
-            #     if new_target is not None and new_target.get('uid') == uid_hex:
-            #         capture_mifare_metadata(gate, tag, resolve_default_mifare_keys())
-            # ---------------------------------------------------------------------------------
+            bambu_read_worked = len(
+                getattr(tag, 'mifare_auth_failed_sectors', [])) < 5
+
+        if not bambu_read_worked:
+            # Not a Bambu tag (or pycryptodome/derivation unavailable) --
+            # retry with the plain MIFARE Classic factory default key.
+            # Confirmed correct for QIDI Box (community-sourced from
+            # BoxRFID-Touch, which authenticates block 4 with an all-0xFF
+            # Key A). Creality CFS/K1/K2 uses a UID-derived Key B instead and
+            # will fail here too; that's handled by the Key B retry below.
+            tag.read_incomplete = False
+            tag.read_retry_reason = None
+            tag.raw_tag_data = None
+            tag.parse_error = None
+            default_key_worked = False
+            if _retarget_same_uid(gate, uid_hex):
+                if gate._debug >= 3:
+                    logger.info(
+                        "[%s]: gate %d — uid=%s  MIFARE Classic "
+                        "retrying with default key",
+                        gate._name, gate._gate, uid_hex)
+                capture_mifare_metadata(
+                    gate, tag, resolve_default_mifare_keys())
+                default_key_worked = not getattr(
+                    tag, 'mifare_auth_failed_sectors', None)
+            else:
+                release_reader_target(gate, "mifare_default_key_retarget_failed")
+                if gate._debug >= 3:
+                    logger.info(
+                        "[%s]: gate %d — uid=%s  MIFARE Classic "
+                        "default-key retry could not re-select the tag; "
+                        "UID-only fallback",
+                        gate._name, gate._gate, uid_hex)
+
+            if not default_key_worked:
+                # Not QIDI Box either -- try Creality CFS/K1/K2's UID-derived
+                # Key B against sector 1 only (the only sector it unlocks).
+                creality_key, creality_reason = resolve_creality_key_b(gate, tag)
+                if creality_key is None:
+                    if gate._debug >= 3:
+                        logger.info(
+                            "[%s]: gate %d — uid=%s  Creality Key B "
+                            "derivation unavailable: %s; UID-only fallback",
+                            gate._name, gate._gate, uid_hex, creality_reason)
+                else:
+                    tag.read_incomplete = False
+                    tag.read_retry_reason = None
+                    tag.raw_tag_data = None
+                    tag.parse_error = None
+                    if _retarget_same_uid(gate, uid_hex):
+                        if gate._debug >= 3:
+                            logger.info(
+                                "[%s]: gate %d — uid=%s  MIFARE Classic "
+                                "retrying sector 1 with Creality Key B",
+                                gate._name, gate._gate, uid_hex)
+                        creality_keys = [None] * 16
+                        creality_keys[1] = creality_key
+                        capture_mifare_metadata(
+                            gate, tag, creality_keys, sectors=(1,),
+                            use_key_b=True)
+                    else:
+                        release_reader_target(
+                            gate, "mifare_creality_key_retarget_failed")
+                        if gate._debug >= 3:
+                            logger.info(
+                                "[%s]: gate %d — uid=%s  MIFARE Classic "
+                                "Creality Key B retry could not re-select "
+                                "the tag; UID-only fallback",
+                                gate._name, gate._gate, uid_hex)
     else:
         tag.parse_error = 'unsupported target; uid-only fallback'
         release_reader_target(gate, "unsupported_uid_only_fallback")

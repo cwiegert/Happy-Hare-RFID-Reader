@@ -215,15 +215,32 @@ The bundled rich-tag parser currently recognizes these manufacturer spool tag fo
 
 | Manufacturer / ecosystem | Tag format |
 |---|---|
-| Bambu Lab | Factory MIFARE Classic 1K spool tags; requires `bambu_reads: True` and `pycryptodome` |
+| Bambu Lab | Factory MIFARE Classic 1K spool tags; requires `bambu_reads: True` and `pycryptodome`. Per-tag HKDF-derived keys. |
 | ELEGOO | EPC-256 binary tags on NTAG213 |
 | Anycubic | ACE binary tags on NTAG213/215 |
-| TigerTag | TigerTag / TigerTag+ binary tags on NTAG213/215/216; local core metadata only, no cloud lookup or signature verification |
-| Creality | CFS / K1 / K2 MIFARE Classic tags |
-| QIDI | QIDI Box MIFARE Classic tags |
+| TigerTag | TigerTag / TigerTag+ binary tags on NTAG213/215/216; local core metadata only, no cloud lookup or signature verification. Also extracts the Twin Tag ID (same-spool pairing key for TigerTag's two-tags-per-spool design) as `spool_identity`, used for left-neighbor interference detection the same way Bambu's `tray_uid` is. |
+| Creality | CFS / K1 / K2 MIFARE Classic tags; requires `bambu_reads: True` and `pycryptodome`. Sector 1 uses a UID-derived Key B plus an AES-128-ECB-encrypted payload (both **confirmed**, community-sourced) — not the plain default key. |
+| QIDI | QIDI Box MIFARE Classic tags; requires `bambu_reads: True` (gates the default-key fallback attempt — no `pycryptodome` needed). Authenticates with the plain MIFARE Classic factory default key, `FF FF FF FF FF FF` — **confirmed**, sourced from the community `BoxRFID-Touch` project. |
 | SimplyPrint / QIDI standard URL | NDEF URI/Text tags with supported filament query fields |
 
 It also recognizes open rich-tag formats: OpenTag3D, OpenSpool, OpenPrintTag, and generic NDEF JSON filament records.
+
+> [!NOTE]
+> **Creality key material.** Neither key is a secret held back from this
+> repo — both are published here exactly as used in `vendor/rfid_tag_parser.py`
+> (`_CREALITY_AES_KEY_GEN` / `_CREALITY_AES_KEY_CIPHER`), community-sourced
+> from a Creality RFID encryption helper script that mirrors the JavaScript
+> implementation in Creality's own tag-writer tooling.
+>
+> | Key | Hex | ASCII | Used for |
+> |---|---|---|---|
+> | `AES_KEY_GEN` | `71 33 62 75 5E 74 31 6E 71 66 5A 28 70 66 24 31` | `q3bu^t1nqfZ(pf$1` | AES-128-ECB-encrypting the tag UID (repeated to 16 bytes) to derive the sector-1 MIFARE Key B — first 6 bytes of the ciphertext are the key. |
+> | `AES_KEY_CIPHER` | `48 40 43 46 6B 52 6E 7A 40 4B 41 74 42 4A 70 32` | `H@CFkRnz@KAtBJp2` | AES-128-ECB-decrypting the 48-byte ASCII payload stored across sector 1 blocks 4-6 (batch, date, supplier, material code, color, length code, serial, reserve). |
+>
+> Both are static, UID-independent AES-128-ECB keys (no IV, no per-tag salt
+> beyond the UID feeding `AES_KEY_GEN`). Reading a Creality tag therefore
+> needs `pycryptodome` for both key derivation and payload decryption, unlike
+> QIDI's plain default-key fallback.
 
 Reader compatibility:
 
@@ -231,7 +248,7 @@ Reader compatibility:
 |---|---:|---:|---:|---|
 | UID lookup through Spoolman | Yes | Yes | Yes | Factory UID matching works on all supported readers. |
 | NTAG / Type-2 rich tags | Yes | Yes | Yes | Used by common NDEF text, JSON, OpenSpool, TigerTag, and several manufacturer tags. |
-| Bambu / MIFARE Classic rich reads | Yes | Yes | Yes | Requires `tag_parsing: True`, `bambu_reads: True`, and `pycryptodome`. |
+| MIFARE Classic rich reads (Bambu, QIDI, Creality) | Yes | Yes | Yes | Requires `tag_parsing: True` and `bambu_reads: True` on all three. Bambu and Creality additionally require `pycryptodome`; QIDI uses a default-key fallback that needs no extra dependency. |
 | ISO15693 / Type-5 rich tags | No | Yes | No | Used by SLIX2/OpenPrintTag-style Type-5 tags. |
 
 Example OpenSpool-like JSON payload (MIME `application/vnd.openspool` or generic NDEF JSON):

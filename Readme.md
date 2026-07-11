@@ -97,7 +97,7 @@ Supported tag formats:
 |---|---:|---:|---:|---|
 | Spoolman UID lookup | Yes | Yes | Yes | Default path. The tag only needs a readable factory UID registered in Spoolman's extra field. |
 | NTAG / NFC Type 2 rich tags | Yes | Yes | Yes | NDEF text/URI/MIME/JSON payloads, OpenSpool, OpenTag3D, TigerTag, OpenPrintTag text-compatible payloads, and several manufacturer binary tags. |
-| MIFARE Classic rich tags | Yes | Yes | Yes | Bambu factory tags and other MIFARE Classic formats require `tag_parsing: True`; Bambu authenticated reads also require `bambu_reads: True` and `pycryptodome`. |
+| MIFARE Classic rich tags | Yes | Yes | Yes | Bambu, QIDI Box, and Creality CFS all require `tag_parsing: True` and `bambu_reads: True`. Bambu's own keys and Creality's UID-derived Key B both additionally require `pycryptodome`; QIDI uses a factory-default-key fallback that needs no extra dependency (see [Configuration Reference](docs/shared/configuration.md#tag-data-parsing)). |
 | ISO15693 / NFC Type 5 rich tags | No | Yes | No | Used by SLIX2 / OpenPrintTag Type-5 tags. Official OpenPrintTag antenna size is best suited to a shared reader; per-lane use needs hardware testing. |
 
 The vendored parser currently recognizes Bambu Lab, ELEGOO, Anycubic ACE,

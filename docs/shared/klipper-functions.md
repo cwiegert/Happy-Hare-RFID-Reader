@@ -171,11 +171,14 @@ NFC gate status  (5 gates configured):
 ```
 
 For metadata-direct tags, `spool_identity` is the parser's optional
-spool-level identity. It is distinct from the physical NFC tag UID. Bambu
-factory spools derive it from `tray_uid` as `bambu_<tray_uid>`, so the two
-physical side tags on the same spool can have different UIDs while sharing the
-same `spool_identity`. Tags without a parser-supplied spool identity display
-`spool_identity=None`.
+spool-level identity. It is distinct from the physical NFC tag UID, and only
+set for tag formats that ship two physical tags per spool (one on each
+side): Bambu factory spools derive it from `tray_uid` as
+`bambu_<tray_uid>`, and TigerTag/TigerTag+ spools derive it from the
+tag's Twin Tag ID field as `tigertag_<twin_tag_id>`. Either way, the two
+physical side tags on the same spool can have different UIDs while sharing
+the same `spool_identity`. Every other supported format is single-tag and
+has no `spool_identity` — those display `spool_identity=None`.
 
 ---
 

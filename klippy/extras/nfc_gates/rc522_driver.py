@@ -784,13 +784,15 @@ class RC522Driver:
         return bytes(data[:16])
 
     def mifare_read_authenticated_blocks(self, sector_keys, sectors,
-                                         uid_bytes=None):
+                                         uid_bytes=None, use_key_b=False):
         """Authenticate sectors and read their data blocks.
 
         Returns {"uid_bytes": bytes, "blocks": {abs_block: bytes}} matching the
         PN532 shape so tag_handler and the Bambu parser stay reader-agnostic.
         Optional "auth_failed_sectors" and "read_failed_blocks" lists are
-        included when those failures occur.
+        included when those failures occur. use_key_b authenticates with Key
+        B instead of Key A (e.g. Creality CFS/K1/K2 sector 1, which uses a
+        UID-derived Key B).
 
         Stops on the first auth or read failure (same policy as PN7160) because
         the RC522 hardware crypto state becomes unreliable after a rejected
@@ -815,7 +817,7 @@ class RC522Driver:
                 key = sector_keys[sector] if sector < len(sector_keys) else None
                 if key is None:
                     continue
-                if not self.mifare_authenticate(trailer, key, uid):
+                if not self.mifare_authenticate(trailer, key, uid, use_key_b=use_key_b):
                     auth_failed_sectors.append(sector)
                     if self._debug >= 3:
                         logger.info(

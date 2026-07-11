@@ -123,9 +123,11 @@ spi_bus:     spi1
 
 RC522 can resolve tags registered in Spoolman's RFID extra field and can read
 NTAG/Type-2 rich metadata through the normal NFC Reader pipeline. It also
-supports authenticated MIFARE Classic/Bambu reads when `tag_parsing: True`,
-`bambu_reads: True`, and `pycryptodome` are available. It does not support
-ISO15693 rich tag metadata.
+supports authenticated MIFARE Classic reads (Bambu, QIDI Box, Creality CFS)
+when `tag_parsing: True` and `bambu_reads: True` are set; Bambu's own reads
+and Creality's UID-derived Key B both require `pycryptodome`, QIDI's
+default-key fallback does not (see [Tag Data Parsing](#tag-data-parsing)).
+It does not support ISO15693 rich tag metadata.
 
 ---
 
@@ -161,12 +163,32 @@ spoolman_auto_create: False
 | Setting | Default | Description |
 |---|---|---|
 | `tag_parsing` | `False` | `False` = UID-only (default — no tag content reads). `True` = read NTAG user pages or MIFARE authenticated blocks and parse filament metadata from the tag payload. |
-| `bambu_reads` | `False` | Allow authenticated MIFARE reads for Bambu factory spools when `tag_parsing: True`. Requires `pycryptodome` in the Klipper Python venv. Leave `False` unless pycryptodome is installed. |
+| `bambu_reads` | `False` | Allow authenticated MIFARE Classic reads when `tag_parsing: True`. Gates three attempts, tried in order, each only firing when the previous one didn't authenticate any sector: Bambu's own per-tag HKDF-derived Key A (sectors 0-4, requires `pycryptodome`), the plain MIFARE Classic factory default Key A (sectors 0-4, QIDI Box), then Creality's UID-derived Key B (sector 1 only, requires `pycryptodome`). Despite the name, this flag also covers the QIDI/Creality fallbacks. |
 | `spoolman_auto_create` | `False` | When `tag_parsing: True` and no existing Spoolman spool matches the tag, automatically create a new vendor/filament/spool record from tag metadata. Only activates when the tag carries at least a material type. |
 | `tag_max_pages` | `16` | Fallback NTAG user-page window for non-NDEF/binary tags. NDEF text/JSON tags read the NDEF TLV length dynamically, so large OpenSpool/OpenPrintTag payloads do not need this increased. |
 
 > [!NOTE]
 > `bambu_reads: True` with `tag_parsing: False`, or `spoolman_auto_create: True` without tag parsing and a usable Spoolman URL, logs a startup warning and has no effect. Run `NFC_DOCTOR` after restart to see these warnings again.
+
+> [!NOTE]
+> The default-key fallback authenticates with the plain MIFARE Classic
+> factory default Key A, `FF FF FF FF FF FF` — not a secret, not derived,
+> the same key every unprotected MIFARE Classic card ships with. It is
+> **confirmed** correct for QIDI Box tags (sourced from the community
+> `BoxRFID-Touch` project, which authenticates block 4 with this exact key
+> before reading/writing material/color/manufacturer codes).
+>
+> Creality CFS/K1/K2 does not use the default key at all: its sector 1 is
+> protected by a Key B derived per-tag from the UID
+> (`AES-128-ECB(AES_KEY_GEN, uid×4)[:6]`), and the stored payload is itself
+> AES-128-ECB-encrypted with a second static key. Both keys' hex/ASCII
+> values are published in the [Creality key material
+> table](spoolman-integration.md#supported-rich-manufacturer-tags);
+> community-sourced from a Creality RFID encryption helper script mirroring
+> the JavaScript implementation used by Creality's own tag-writer tooling.
+> When the default-key attempt authenticates nothing, `bambu_reads: True`
+> also tries this Creality Key B against sector 1 only — if that also fails
+> (or `pycryptodome` isn't installed), the read falls through to UID-only.
 
 ---
 

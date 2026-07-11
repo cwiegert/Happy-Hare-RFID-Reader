@@ -70,10 +70,20 @@ The `(uid, spool_id)` combination check means that if the same physical tag is r
 When a spool is loaded, the NFC tag is on the hub face — it may be pointing any direction. The scan-jog loop rotates the spool until the tag comes within read range of the NFC reader antenna.
 
 During this scan, the current gate also checks for a narrow physical edge case:
-if gate `N` reads a UID already cached on gate `N - 1`, the read is treated as
-left-neighbor interference. NFC briefly shifts the left neighbor out of the
-reader field, clears the false read, continues scanning gate `N`, and restores
-the neighbor when the scan exits.
+antenna crosstalk from the adjacent gate's reader. This only applies to tag
+formats that ship two physical tags per spool (one on each side) — currently
+Bambu (`tray_uid`) and TigerTag/TigerTag+ (Twin Tag ID) — since those are the
+only formats where the same spool can present a different UID depending on
+which side tag was read, so a plain UID comparison against the left
+neighbor's cache can't tell "same spool, other tag" apart from "genuinely
+different spool." If the current gate's read and gate `N - 1`'s cached read
+carry the same parser-derived `spool_identity` (`bambu_<tray_uid>` or
+`tigertag_<twin_tag_id>`), the read is treated as left-neighbor interference.
+NFC briefly shifts the left neighbor out of the reader field, clears the
+false read, continues scanning gate `N`, and restores the neighbor when the
+scan exits. Every other supported tag format is single-tag-per-spool and gets
+no interference check — the raw UID and product metadata (material, color,
+brand) aren't reliable proof of same-vs-different spool on their own.
 
 ### Trigger
 

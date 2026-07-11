@@ -568,11 +568,14 @@ class PN7160Handler:
         return block // 4
 
     def mifare_read_authenticated_blocks(self, sector_keys, sectors,
-                                         uid_bytes=None, timeout=0.500):
+                                         uid_bytes=None, timeout=0.500,
+                                         use_key_b=False):
         """Authenticate sectors and read their data blocks.
 
         Returns the same shape as PN532Driver so tag_handler and the Bambu
-        parser stay reader-agnostic.
+        parser stay reader-agnostic. use_key_b authenticates with Key B
+        instead of Key A (e.g. Creality CFS/K1/K2 sector 1, which uses a
+        UID-derived Key B).
 
         PN7160/NCI can leave the active RF/I2C session unhealthy after a failed
         MIFARE Classic auth/read exchange.  Unlike PN532, do not keep probing
@@ -593,7 +596,8 @@ class PN7160Handler:
             if key is None:
                 continue
             if not self.mifare_authenticate(
-                    auth_block, key, uid_bytes, timeout=timeout):
+                    auth_block, key, uid_bytes, use_key_b=use_key_b,
+                    timeout=timeout):
                 auth_failed_sectors.append(sector)
                 stop_after_failure = True
                 break
@@ -1266,7 +1270,8 @@ class PN7160Driver:
             self._release_current_target(reason="iso15693_user_memory_complete")
 
     def mifare_read_authenticated_blocks(self, sector_keys, sectors,
-                                         uid_bytes=None, timeout=0.500):
+                                         uid_bytes=None, timeout=0.500,
+                                         use_key_b=False):
         """Authenticate and read MIFARE Classic blocks like PN532Driver.
 
         The target must remain active for the whole auth/read sequence because
@@ -1277,7 +1282,8 @@ class PN7160Driver:
             if uid_bytes is None:
                 uid_bytes = target_info.get('uid_bytes') or self.current_uid
             return self._handler.mifare_read_authenticated_blocks(
-                sector_keys, sectors, uid_bytes=uid_bytes, timeout=timeout)
+                sector_keys, sectors, uid_bytes=uid_bytes, timeout=timeout,
+                use_key_b=use_key_b)
         finally:
             self._release_current_target(reason="mifare_read_complete")
 

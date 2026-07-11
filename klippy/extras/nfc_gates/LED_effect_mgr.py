@@ -57,11 +57,25 @@ def led_unit_index(led_unit):
         return None
 
 
-def hh_led_script(effect_name, duration=None, gate=None, unit=None):
-    """Build Happy Hare's public LED wrapper command for an exit effect."""
+def is_happy_hare_v4(printer):
+    """Return whether the installed Happy Hare exposes the V4 drive API."""
+    if printer is None:
+        return False
+    mmu = printer.lookup_object('mmu', None)
+    return callable(getattr(mmu, 'drive', None))
+
+
+def hh_led_script(effect_name, duration=None, gate=None, unit=None,
+                  direct_effect=False):
+    """Build the appropriate Happy Hare command for an NFC LED effect."""
     effect = (effect_name or '').strip()
     if not effect:
         return ''
+    if direct_effect:
+        # V4's MMU_SET_LED validates only configured operation effects. NFC's
+        # generated [mmu_led_effect] instances must therefore be addressed
+        # directly by their full generated name.
+        return "_MMU_SET_LED_EFFECT EFFECT=%s REPLACE=1" % effect
     parts = ["MMU_SET_LED"]
     if unit is not None:
         try:
@@ -106,6 +120,45 @@ class LEDEffectManager:
         self.runner = runner
         self.name = name
         self.console = console
+
+    def _v4_effect_registry(self):
+        """Return NFC's printer-scoped registry of directly started V4 effects."""
+        registry = getattr(self.printer, '_nfc_v4_led_effects', None)
+        if registry is None:
+            registry = {'next_token': 0, 'targets': {}}
+            setattr(self.printer, '_nfc_v4_led_effects', registry)
+        return registry
+
+    def _remember_v4_effect(self, target, effect):
+        registry = self._v4_effect_registry()
+        registry['next_token'] += 1
+        token = registry['next_token']
+        registry['targets'][target] = (effect, token)
+        return token
+
+    def _release_v4_effect_after(self, target, effect, token, duration):
+        if self.reactor is None or duration is None:
+            return
+        try:
+            duration = float(duration)
+        except Exception:
+            duration = 0.0
+        if duration <= 0.0:
+            return
+
+        def _release(eventtime, _target=target, _effect=effect, _token=token):
+            registry = self._v4_effect_registry()
+            if registry['targets'].get(_target) != (_effect, _token):
+                return self.reactor.NEVER
+            registry['targets'].pop(_target, None)
+            script = (
+                "_MMU_SET_LED_EFFECT EFFECT=%s STOP=1\n"
+                "MMU_GATE_MAP QUIET=1" % _effect)
+            self._run_effect_script(script, event=EVENT_RELEASE,
+                                    log_failure=False)
+            return self.reactor.NEVER
+
+        self._register_timer(_release, duration)
 
     def _gcode(self):
         if self.printer is None:
@@ -152,25 +205,39 @@ class LEDEffectManager:
 
     def play_named(self, effect_name, replace=True,
                    async_dispatch=False, log_failure=True, event='',
-                   duration=None, gate=None, unit=None, display_effect=None):
+                   duration=None, gate=None, unit=None, display_effect=None,
+                   target=None):
         effect = (effect_name or '').strip()
         display_effect = (display_effect or effect).strip()
-        script = hh_led_script(effect, duration=duration, gate=gate, unit=unit)
+        v4_direct = is_happy_hare_v4(self.printer)
+        script = hh_led_script(
+            display_effect if v4_direct else effect,
+            duration=duration, gate=gate, unit=unit,
+            direct_effect=v4_direct)
         if not script:
             return LEDResult(False, effect=display_effect, script='',
                              error=ValueError("missing LED effect"),
                              event=event)
         try:
+            target = target or display_effect
+
+            def _started():
+                if v4_direct:
+                    token = self._remember_v4_effect(target, display_effect)
+                    self._release_v4_effect_after(
+                        target, display_effect, token, duration)
+
             if async_dispatch and self._run_async(
                     lambda et, _s=script:
                     self._run_effect_script(
-                        _s, event=event, log_failure=log_failure)):
+                        _s, event=event, log_failure=log_failure) and _started()):
                 logger.info("[%s]: LED %s effect %s scheduled",
                             self.name, event or 'named', display_effect)
             else:
                 if not self._run_effect_script(
                         script, event=event, log_failure=log_failure):
                     raise RuntimeError("LED transport failed")
+                _started()
                 logger.info("[%s]: LED %s effect %s",
                             self.name, event or 'named', display_effect)
             return LEDResult(True, effect=display_effect, script=script,
@@ -190,7 +257,8 @@ class LEDEffectManager:
             base,
             replace=replace, async_dispatch=async_dispatch,
             log_failure=log_failure, event=event, duration=duration,
-            gate=gate, display_effect=lane_effect_name(base, gate))
+            gate=gate, display_effect=lane_effect_name(base, gate),
+            target='lane:%d' % int(gate))
 
     def play_shared(self, base_effect, led_unit='unit0', segment='exit',
                     mcu_index=None, replace=True,
@@ -200,13 +268,15 @@ class LEDEffectManager:
         segment = (segment or 'exit').strip().lower()
         gate = mcu_index if segment == 'gate' else None
         unit = None if segment == 'gate' else led_unit_index(led_unit)
+        target = 'shared:%s:%s:%s' % (led_unit, segment, mcu_index)
         return self.play_named(
             base,
             replace=replace, async_dispatch=async_dispatch,
             log_failure=log_failure, event=event, duration=duration,
             gate=gate, unit=unit,
             display_effect=shared_effect_name(
-                base, led_unit, segment, mcu_index))
+                base, led_unit, segment, mcu_index),
+            target=target)
 
     def play_scan_start(self, base_effect, gate, **kwargs):
         return self.play_lane_event(EVENT_SCAN_START, base_effect, gate, **kwargs)
@@ -309,7 +379,18 @@ class LEDEffectManager:
         self._register_timer(_run, delay)
 
     def release(self, async_dispatch=False):
-        script = "MMU_GATE_MAP QUIET=1"
+        if is_happy_hare_v4(self.printer):
+            registry = self._v4_effect_registry()
+            effects = sorted(set(
+                effect for effect, _token in registry['targets'].values()))
+            registry['targets'].clear()
+            stop_scripts = [
+                "_MMU_SET_LED_EFFECT EFFECT=%s STOP=1" % effect
+                for effect in effects]
+            stop_scripts.append("MMU_GATE_MAP QUIET=1")
+            script = "\n".join(stop_scripts)
+        else:
+            script = "MMU_GATE_MAP QUIET=1"
         try:
             if async_dispatch and self._run_async(
                     lambda et, _s=script: self._run_script(_s)):

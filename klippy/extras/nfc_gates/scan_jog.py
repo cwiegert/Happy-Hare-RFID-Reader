@@ -1628,10 +1628,63 @@ def clear_false_scan_result(gate):
     gate._state.current_spool = None
     gate._state.current_tag = None
     gate._state.miss_count = 0
+    gate._scan_continuous_move_inflight = False
+    gate._scan_continuous_move_source = None
+    gate._scan_continuous_move_complete_time = 0.0
+    gate._scan_continuous_last_move_mm = 0.0
+    gate._scan_continuous_probe_due = False
+    gate._scan_continuous_tag_pending = False
+    gate._scan_continuous_pending_uid = None
+    gate._scan_continuous_pending_target_info = None
+    gate._scan_continuous_uid_hits = []
+    gate._scan_continuous_full_travel = False
+    gate._scan_continuous_overshoot_backed_up = False
+    gate._scan_continuous_overshoot_uid = None
+    gate._scan_continuous_overshoot_position_attempts = 0
+    gate._scan_continuous_chunk_start_mm = None
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
     gate._scan_decode_retry_offset = 0.0
     gate._scan_decode_retry_mode = None
+
+
+def reset_current_lane_for_full_scan_after_left_clearance(gate):
+    """Reset scan-local state as if a new scan-jog started on this lane."""
+    gate._scan_mm_total = 0.0
+    gate._scan_next_chunk_time = gate.reactor.monotonic()
+    gate._scan_continuous_move_inflight = False
+    gate._scan_continuous_move_source = None
+    gate._scan_continuous_move_complete_time = 0.0
+    gate._scan_continuous_full_travel = False
+    gate._scan_continuous_last_move_mm = 0.0
+    gate._scan_continuous_probe_due = False
+    gate._scan_continuous_tag_pending = False
+    gate._scan_continuous_pending_uid = None
+    gate._scan_continuous_pending_target_info = None
+    gate._scan_continuous_uid_hits = []
+    gate._scan_continuous_queue_baseline = 0.0
+    gate._scan_continuous_queue_active_remaining = 0.0
+    gate._scan_continuous_direct_available = True
+    gate._scan_continuous_overshoot_backed_up = False
+    gate._scan_continuous_overshoot_uid = None
+    gate._scan_continuous_overshoot_position_attempts = 0
+    gate._scan_continuous_chunk_start_mm = None
+    gate._scan_position_reads_done = 0
+    gate._scan_decode_retry_attempts = 0
+    gate._scan_decode_retry_uid = None
+    gate._scan_decode_retry_offset = 0.0
+    gate._scan_decode_retry_mode = None
+    gate._scan_found_event = None
+    gate._state.current_uid = None
+    gate._state.current_spool = None
+    gate._state.current_tag = None
+    gate._state.miss_count = 0
+    gate._scan_gate_selected = False
+    if gate._debug >= 3:
+        logger.info(
+            "[%s]: gate %d scan mode — restarting full lane scan after "
+            "left-neighbor clearance",
+            gate._name, gate._gate)
 
 
 def shift_left_neighbor(gate, left_gate, identity):
@@ -1762,11 +1815,10 @@ def handle_left_neighbor_interference(gate):
         clear_false_scan_result(gate)
         gate._rewind_and_exit_scan()
         return True
-    clear_false_scan_result(gate)
-    gate._scan_next_chunk_time = (
-        gate.reactor.monotonic() + DECODE_RETRY_SETTLE_DELAY)
-    msg = ("[SCAN] NFC[%s]: re-polling at position %.1fmm after left lane clearance"
-           % (gate._name.capitalize(), gate._scan_mm_total))
+    reset_current_lane_for_full_scan_after_left_clearance(gate)
+    msg = (
+        "[SCAN] NFC[%s]: restarting full lane scan after left lane clearance"
+        % gate._name.capitalize())
     logger.info(msg)
     gate._console(msg)
     return True

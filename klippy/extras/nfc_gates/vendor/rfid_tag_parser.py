@@ -1248,7 +1248,8 @@ def _creality_spool_identity(seed: str) -> str:
     return str(int.from_bytes(digest[:8], "big"))
 
 
-def _try_creality_tag(blocks: dict, trace=None) -> Optional[dict]:
+def _try_creality_tag(blocks: dict, uid_hex: Optional[str] = None,
+                      trace=None) -> Optional[dict]:
     """Parse a Creality CFS/K1/K2 tag from authenticated sector-1 blocks.
 
     ``blocks`` must contain absolute blocks 4, 5 and 6 (sector 1), read after
@@ -1343,11 +1344,18 @@ def _try_creality_tag(blocks: dict, trace=None) -> Optional[dict]:
     else:
         trace("debug", "Creality AES: vendor_id=%s unknown; using Creality brand fallback",
               vendor_id)
-    identity_seed = ":".join((
+    payload_identity_seed = ":".join((
         vendor_id, date_code, batch, filament_id, color, length, serial))
+    payload_identity_numeric = _creality_spool_identity(payload_identity_seed)
+    clean_uid = re.sub(r"[^0-9A-Fa-f]", "", str(uid_hex or "")).upper()
+    identity_seed = (
+        "%s:%s" % (clean_uid, payload_identity_seed)
+        if clean_uid else payload_identity_seed)
     identity_numeric = _creality_spool_identity(identity_seed)
     trace("debug",
-          "Creality AES: identity_seed=%r identity_numeric=%s",
+          "Creality AES: payload_identity_seed=%r payload_identity_numeric=%s "
+          "spool_identity_seed=%r spool_identity_numeric=%s",
+          payload_identity_seed, payload_identity_numeric,
           identity_seed, identity_numeric)
 
     info: dict = {
@@ -1362,6 +1370,8 @@ def _try_creality_tag(blocks: dict, trace=None) -> Optional[dict]:
         "creality_serial": serial,
         "creality_identity_seed": identity_seed,
         "creality_identity_numeric": identity_numeric,
+        "creality_payload_identity_seed": payload_identity_seed,
+        "creality_payload_identity_numeric": payload_identity_numeric,
         "spool_identity": "creality_%s" % identity_numeric,
     }
     if vendor_name:
@@ -2273,7 +2283,12 @@ def parse_tag(raw, uid_hex: Optional[str] = None, trace=None) -> Optional[dict]:
             # blocks produced by tag_handler's Creality Key B fallback.
             try:
                 trace("debug", "parse_tag: trying Creality AES block layout")
-                result = _try_creality_tag(blocks, trace=trace)
+                result = _try_creality_tag(
+                    blocks,
+                    uid_hex=uid_hex or (
+                        bytes(uid_bytes).hex().upper()
+                        if uid_bytes is not None else None),
+                    trace=trace)
                 if result is not None:
                     _log.debug(
                         "rfid: parsed Creality AES tag blocks uid=%s",

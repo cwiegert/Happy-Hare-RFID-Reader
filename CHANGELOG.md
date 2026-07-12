@@ -61,10 +61,15 @@ confirmation.
   `manufacturer_code` for debugging real tags.
 - ✨ **Creality spool identity added for left-neighbor checks** — `_try_creality_tag()`
   now hashes the parsed structured payload fields
-  `vendor_id:date_code:batch:filament_id:color:length:serial` into a compact
-  decimal value and exposes it as `spool_identity = "creality_<digits>"`.
-  The readable seed and numeric value are also kept in metadata/debug output
-  as `creality_identity_seed` and `creality_identity_numeric`.
+  `uid:vendor_id:date_code:batch:filament_id:color:length:serial` into a
+  compact decimal value and exposes it as
+  `spool_identity = "creality_<digits>"`. The UID is included because real
+  Creality tags have been observed with placeholder serial `000001`, making
+  the decoded payload alone collide across different physical spools. The
+  readable seed and numeric value are kept in metadata/debug output as
+  `creality_identity_seed` and `creality_identity_numeric`; the payload-only
+  fingerprint is also logged as `creality_payload_identity_seed` /
+  `creality_payload_identity_numeric` for field comparison.
 - 🐛 **Scan-jog now preserves stashed spool identity** — the continuous-scan
   fast path that reuses a previously resolved UID now carries the previous
   `spool_identity` along with the spool id, and level-3 logs show both the
@@ -77,6 +82,11 @@ confirmation.
   metadata is parsed and Spoolman UID lookup misses, scan mode compares the
   current tag's `spool_identity` against the left gate before allowing
   metadata-direct or auto-created spool resolution to continue.
+- 🐛 **Left-neighbor clearance resumes with a fresh lane scan** — after a
+  left-neighbor interference hit, scan-jog now clears stale UID/continuous
+  hit-window state and resets the current lane's scan-local state as if a new
+  `JOG_SCAN=1` had been issued after shifting the left lane, instead of
+  reprocessing the same false read.
 - 🐛 **Default-key retry enabled and restructured** in `read_current_tag()`.
   Previously it only fired if Bambu key *derivation* succeeded and then
   every sector's *authentication* failed — meaning it silently never ran at

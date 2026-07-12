@@ -585,15 +585,17 @@ def resolve_continuous_pending_uid(gate, now):
                     gate._name.capitalize(), uid)
                 spool_id = None
             if spool_id is not None:
+                left_spool = _left_neighbor_spool_for_interference(gate)
                 if (getattr(gate, '_tag_parsing', False)
-                        and not previous_identity):
+                        and not previous_identity
+                        and _same_spool_id(left_spool, spool_id)):
                     if gate._debug >= 3:
                         logger.info(
                             "[%s]: continuous scan uid=%s matched stashed UID; "
-                            "Spoolman lookup resolved spool_id=%s but "
-                            "spool_identity=None; forcing rich tag parse to "
-                            "populate identity",
-                            gate._name.capitalize(), uid, spool_id)
+                            "Spoolman lookup resolved spool_id=%s matching "
+                            "left_spool=%s but spool_identity=None; forcing "
+                            "rich tag parse before interference handling",
+                            gate._name.capitalize(), uid, spool_id, left_spool)
                     return False
                 _cache_continuous_resolved_uid(
                     gate, uid, spool_id, 'scan_previous_uid_spoolman_lookup',
@@ -602,9 +604,10 @@ def resolve_continuous_pending_uid(gate, now):
                     logger.info(
                         "[%s]: continuous scan uid=%s matched stashed UID; "
                         "Spoolman lookup resolved spool_id=%s "
-                        "spool_identity=%s",
+                        "spool_identity=%s left_spool=%s",
                         gate._name.capitalize(), uid, spool_id,
-                        previous_identity if previous_identity else "None")
+                        previous_identity if previous_identity else "None",
+                        left_spool if left_spool is not None else "None")
                 return True
             if gate._debug >= 3:
                 logger.info(

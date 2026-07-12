@@ -83,6 +83,17 @@ confirmation.
   during scan-jog, an early Spoolman UID match still supplies the spool id,
   but structured tag reading continues so Bambu/Creality/TigerTag
   `spool_identity` is cached on the gate for left-neighbor comparisons.
+- 🐛 **Spoolman-resolved NTAGs no longer burn decode retries** — after the
+  initial scan-mode identity parsing change, any `tag_parsing: True` read
+  that resolved through Spoolman could still be forced down the rich-read
+  path when `spool_identity` was missing. That caused ordinary NTAG /
+  UID-registered spools to run the 5-position decode retry loop even though
+  the UID had already resolved to a valid Spoolman spool. Scan-jog and the
+  early UID lookup now force rich parsing only when the resolved Spoolman
+  spool matches the left neighbor's cached spool, which is the case where a
+  manufacturer `spool_identity` is needed to confirm left-neighbor
+  interference. Clean Spoolman UID hits for other spools now resolve
+  immediately.
 - 🐛 **Manufacturer identity is checked before auto-create** — after rich tag
   metadata is parsed and Spoolman UID lookup misses, scan mode compares the
   current tag's `spool_identity` against the left gate before allowing

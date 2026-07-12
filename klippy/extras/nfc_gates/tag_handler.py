@@ -285,6 +285,24 @@ def _left_neighbor_identity_match(gate, identity):
     return match
 
 
+def _left_neighbor_spool_id(gate):
+    if getattr(gate, '_gate', 0) <= 0:
+        return None
+    left_nfc = gate._nfc_gate_for_gate_number(gate._gate - 1)
+    if left_nfc is None:
+        return None
+    return getattr(left_nfc._state, 'current_spool', None)
+
+
+def _same_spool_id(left_spool, spool_id):
+    if left_spool is None or spool_id is None:
+        return False
+    try:
+        return int(left_spool) == int(spool_id)
+    except (TypeError, ValueError):
+        return str(left_spool) == str(spool_id)
+
+
 # ── Tag classification ────────────────────────────────────────────────────────
 
 def classify_tag_target(gate, target_info):
@@ -366,23 +384,26 @@ def resolve_spool_by_uid_before_metadata(gate, tag):
         return None
     tag.spool_id = spool_id
     tag.resolution = {'path': 'early_uid_lookup', 'spool_id': spool_id}
+    left_spool = _left_neighbor_spool_id(gate)
     force_identity = (
         getattr(gate, '_scan_mode', False)
-        and getattr(gate, '_tag_parsing', False))
+        and getattr(gate, '_tag_parsing', False)
+        and _same_spool_id(left_spool, spool_id))
     if force_identity:
         if gate._debug >= 3:
             logger.info(
                 "[%s]: gate %d — uid=%s  early UID lookup resolved "
-                "Spoolman spool_id=%s; continuing structured tag read "
-                "to populate spool_identity",
-                gate._name, gate._gate, uid_hex, spool_id)
+                "Spoolman spool_id=%s matching left_spool=%s; continuing "
+                "structured tag read before interference handling",
+                gate._name, gate._gate, uid_hex, spool_id, left_spool)
         return spool_id
     release_reader_target(gate, "early_uid_lookup")
     if gate._debug >= 3:
         logger.info(
             "[%s]: gate %d — uid=%s  early UID lookup resolved "
-            "Spoolman spool_id=%s; skipping structured tag read",
-            gate._name, gate._gate, uid_hex, spool_id)
+            "Spoolman spool_id=%s left_spool=%s; skipping structured tag read",
+            gate._name, gate._gate, uid_hex, spool_id,
+            left_spool if left_spool is not None else "None")
     return spool_id
 
 

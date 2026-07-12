@@ -59,6 +59,12 @@ confirmation.
   and wiki-reserved/blank codes remain reported as `Unknown(n)`. Parsed QIDI
   metadata now also keeps the raw `material_code`, `color_code`, and
   `manufacturer_code` for debugging real tags.
+- ✨ **Creality spool identity added for left-neighbor checks** — `_try_creality_tag()`
+  now hashes the parsed structured payload fields
+  `vendor_id:date_code:batch:filament_id:color:length:serial` into a compact
+  decimal value and exposes it as `spool_identity = "creality_<digits>"`.
+  The readable seed and numeric value are also kept in metadata/debug output
+  as `creality_identity_seed` and `creality_identity_numeric`.
 - 🐛 **Default-key retry enabled and restructured** in `read_current_tag()`.
   Previously it only fired if Bambu key *derivation* succeeded and then
   every sector's *authentication* failed — meaning it silently never ran at

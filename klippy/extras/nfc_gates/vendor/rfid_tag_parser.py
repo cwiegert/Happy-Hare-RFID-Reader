@@ -117,6 +117,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import hashlib
 import struct
 from typing import Optional
 
@@ -1239,6 +1240,14 @@ def _creality_ascii_preview(data: bytes, limit: int = 64) -> str:
     return preview
 
 
+def _creality_spool_identity(seed: str) -> str:
+    """Return a stable decimal Creality spool identity from parsed tag fields."""
+    digest = hashlib.sha1(seed.encode("ascii")).digest()
+    # 64 bits is compact for logs/config while keeping collision risk tiny for
+    # this local same-spool interference check.
+    return str(int.from_bytes(digest[:8], "big"))
+
+
 def _try_creality_tag(blocks: dict, trace=None) -> Optional[dict]:
     """Parse a Creality CFS/K1/K2 tag from authenticated sector-1 blocks.
 
@@ -1334,6 +1343,13 @@ def _try_creality_tag(blocks: dict, trace=None) -> Optional[dict]:
     else:
         trace("debug", "Creality AES: vendor_id=%s unknown; using Creality brand fallback",
               vendor_id)
+    identity_seed = ":".join((
+        vendor_id, date_code, batch, filament_id, color, length, serial))
+    identity_numeric = _creality_spool_identity(identity_seed)
+    trace("debug",
+          "Creality AES: identity_seed=%r identity_numeric=%s",
+          identity_seed, identity_numeric)
+
     info: dict = {
         "brand": vendor_name or "Creality",
         "tag_format": "creality",
@@ -1344,6 +1360,9 @@ def _try_creality_tag(blocks: dict, trace=None) -> Optional[dict]:
         "creality_filament_id": filament_id,
         "material_code": material_code,
         "creality_serial": serial,
+        "creality_identity_seed": identity_seed,
+        "creality_identity_numeric": identity_numeric,
+        "spool_identity": "creality_%s" % identity_numeric,
     }
     if vendor_name:
         info["creality_vendor"] = vendor_name

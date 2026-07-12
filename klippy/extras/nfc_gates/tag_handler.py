@@ -153,6 +153,7 @@ _META_SUMMARY_KEYS = (
     'spoolman_id', 'material_code', 'color_code', 'manufacturer_code',
     'creality_vendor_id', 'creality_filament_id', 'creality_batch',
     'creality_date_code', 'creality_production_date', 'creality_serial',
+    'creality_identity_seed', 'creality_identity_numeric',
     'parse_warning', 'parse_error', 'error',
 )
 

@@ -547,6 +547,24 @@ def _cache_continuous_uid_only(gate, uid):
     gate._scan_continuous_pending_target_info = None
 
 
+def _left_neighbor_spool_for_interference(gate):
+    if gate._gate <= 0:
+        return None
+    left_nfc = gate._nfc_gate_for_gate_number(gate._gate - 1)
+    if left_nfc is None:
+        return None
+    return getattr(left_nfc._state, 'current_spool', None)
+
+
+def _same_spool_id(left_spool, spool_id):
+    if left_spool is None or spool_id is None:
+        return False
+    try:
+        return int(left_spool) == int(spool_id)
+    except (TypeError, ValueError):
+        return str(left_spool) == str(spool_id)
+
+
 def resolve_continuous_pending_uid(gate, now):
     """Resolve a UID captured during motion without reading rich tag data."""
     uid = getattr(gate, '_scan_continuous_pending_uid', None)
@@ -628,12 +646,24 @@ def resolve_continuous_pending_uid(gate, now):
                 gate._name.capitalize(), uid)
         return False
     if getattr(gate, '_tag_parsing', False):
+        left_spool = _left_neighbor_spool_for_interference(gate)
+        if not _same_spool_id(left_spool, spool_id):
+            _cache_continuous_resolved_uid(
+                gate, uid, spool_id, 'continuous_uid_lookup')
+            if gate._debug >= 3:
+                logger.info(
+                    "[%s]: continuous scan uid=%s resolved through Spoolman "
+                    "after move complete: spool_id=%s left_spool=%s; "
+                    "accepting UID result without rich identity parse",
+                    gate._name.capitalize(), uid, spool_id,
+                    left_spool if left_spool is not None else "None")
+            return True
         if gate._debug >= 3:
             logger.info(
                 "[%s]: continuous scan uid=%s resolved through Spoolman "
-                "after move complete: spool_id=%s but spool_identity=None; "
-                "forcing rich tag parse to populate identity",
-                gate._name.capitalize(), uid, spool_id)
+                "after move complete: spool_id=%s matches left_spool=%s; "
+                "forcing rich tag parse before interference handling",
+                gate._name.capitalize(), uid, spool_id, left_spool)
         return False
     _cache_continuous_resolved_uid(gate, uid, spool_id, 'continuous_uid_lookup')
     if gate._debug >= 3:

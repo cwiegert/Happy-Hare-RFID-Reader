@@ -14,6 +14,7 @@
 
 import inspect
 
+from . import hh_status
 from .LED_effect_mgr import (
     EVENT_AUTO_CREATE, EVENT_UNRESOLVED, LEDEffectManager)
 from .gate_state import CurrentTag, DIRECT_METADATA_SPOOL
@@ -150,7 +151,11 @@ _META_SUMMARY_KEYS = (
     'material_id', 'material_variant_id', 'sku', 'color_hex',
     'diameter_mm', 'weight_g', 'spool_weight_g', 'min_temp', 'max_temp',
     'bed_temp', 'drying_temp', 'drying_time_h', 'tray_uid', 'spool_identity',
-    'spoolman_id', 'parse_warning', 'parse_error', 'error',
+    'spoolman_id', 'material_code', 'color_code', 'manufacturer_code',
+    'creality_vendor_id', 'creality_filament_id', 'creality_batch',
+    'creality_date_code', 'creality_production_date', 'creality_serial',
+    'creality_identity_seed', 'creality_identity_numeric',
+    'parse_warning', 'parse_error', 'error',
 )
 
 
@@ -236,6 +241,50 @@ def _spool_identity_from_meta(meta):
     return value or None
 
 
+def _left_neighbor_identity_match(gate, identity):
+    identity = str(identity or '').strip()
+    if not identity or getattr(gate, '_gate', 0) <= 0:
+        return False
+    left_gate = gate._gate - 1
+    left_nfc = gate._nfc_gate_for_gate_number(left_gate)
+    if left_nfc is None:
+        if gate._debug >= 3:
+            logger.info(
+                "[%s]: gate %d — spool_identity=%s left-neighbor "
+                "pre-create check: gate %d has no NFC instance",
+                gate._name, gate._gate, identity, left_gate)
+        return False
+    left_tag = getattr(left_nfc._state, 'current_tag', None)
+    left_identity = (
+        getattr(left_tag, 'spool_identity', None)
+        if left_tag is not None else None)
+    if not left_identity:
+        if gate._debug >= 3:
+            logger.info(
+                "[%s]: gate %d — spool_identity=%s left-neighbor "
+                "pre-create check: gate %d has no spool_identity",
+                gate._name, gate._gate, identity, left_gate)
+        return False
+    left_hh = hh_status.read(gate.printer, left_gate)
+    if left_hh.present and not left_hh.available:
+        if gate._debug >= 3:
+            logger.info(
+                "[%s]: gate %d — spool_identity=%s left-neighbor "
+                "pre-create check: gate %d identity=%s suppressed "
+                "because Happy Hare reports gate empty (status=%d)",
+                gate._name, gate._gate, identity, left_gate, left_identity,
+                left_hh.status)
+        return False
+    match = str(left_identity) == identity
+    if gate._debug >= 3:
+        logger.info(
+            "[%s]: gate %d — spool_identity=%s left-neighbor "
+            "pre-create check: gate %d identity=%s -> %s",
+            gate._name, gate._gate, identity, left_gate, left_identity,
+            "match" if match else "no match")
+    return match
+
+
 # ── Tag classification ────────────────────────────────────────────────────────
 
 def classify_tag_target(gate, target_info):
@@ -317,6 +366,17 @@ def resolve_spool_by_uid_before_metadata(gate, tag):
         return None
     tag.spool_id = spool_id
     tag.resolution = {'path': 'early_uid_lookup', 'spool_id': spool_id}
+    force_identity = (
+        getattr(gate, '_scan_mode', False)
+        and getattr(gate, '_tag_parsing', False))
+    if force_identity:
+        if gate._debug >= 3:
+            logger.info(
+                "[%s]: gate %d — uid=%s  early UID lookup resolved "
+                "Spoolman spool_id=%s; continuing structured tag read "
+                "to populate spool_identity",
+                gate._name, gate._gate, uid_hex, spool_id)
+        return spool_id
     release_reader_target(gate, "early_uid_lookup")
     if gate._debug >= 3:
         logger.info(
@@ -377,6 +437,11 @@ def parse_current_tag(gate, tag):
             tag.spool_identity = _spool_identity_from_meta(info)
             tag.parse_error = info.get('parse_error') or info.get('error')
         if gate._debug >= 3:
+            logger.info(
+                "[%s]: gate %d — uid=%s  spool_identity resolved from "
+                "parsed meta: %s",
+                gate._name, gate._gate, uid_hex,
+                tag.spool_identity if tag.spool_identity else "None")
             logger.info("[%s]: gate %d — uid=%s  parsed tag meta: %s",
                         gate._name, gate._gate, uid_hex, _summarize_meta(tag.meta))
         if gate._debug >= 4:
@@ -519,14 +584,47 @@ def resolve_default_mifare_keys():
      return [b'\xff\xff\xff\xff\xff\xff'] * 16
 
 
-def capture_mifare_metadata(gate, tag, sector_keys):
+def resolve_creality_key_b(gate, tag):
+    """Derive the Creality CFS/K1/K2 sector-1 MIFARE Key B for this tag's UID.
+
+    Returns (key, None) on success, (None, reason_str) on failure. This key
+    only unlocks sector 1 (blocks 4-6); Bambu's Key A and the MIFARE factory
+    default key both fail on genuine Creality tags, so this is tried last.
+    """
+    try:
+        from .vendor.rfid_tag_parser import _creality_derive_key_b
+        uid_bytes = bytes((tag.target_info or {}).get('uid_bytes') or [])
+        if len(uid_bytes) not in (4, 7):
+            return None, ('uid_bytes wrong length for Creality key '
+                          'derivation (%d bytes)' % len(uid_bytes))
+        return _creality_derive_key_b(uid_bytes), None
+    except ImportError as e:
+        return None, 'pycryptodome not installed: %s' % e
+    except Exception as e:
+        return None, 'key derivation failed: %s' % e
+
+
+def _retarget_same_uid(gate, uid_hex):
+    """Re-select the reader target, returning True only if it's still the same tag.
+
+    Each capture_mifare_metadata() call releases the target when it finishes,
+    so successive authenticated-read attempts (different key/sector
+    combinations) on one tag presence need to re-select it in between.
+    """
+    new_target = gate._reader.read_target()
+    return new_target is not None and new_target.get('uid') == uid_hex
+
+
+def capture_mifare_metadata(gate, tag, sector_keys,
+                            sectors=(0, 1, 2, 3, 4), use_key_b=False):
     uid_hex   = tag.uid
     uid_bytes = bytes((tag.target_info or {}).get('uid_bytes') or [])
     tag.mifare_auth_failed_sectors = []
     tag.mifare_read_failed_blocks = []
     try:
         block_dict = gate._reader.mifare_read_authenticated_blocks(
-            sector_keys, sectors=[0, 1, 2, 3, 4], uid_bytes=uid_bytes)
+            sector_keys, sectors=list(sectors), uid_bytes=uid_bytes,
+            use_key_b=use_key_b)
     except Exception as e:
         tag.parse_error = 'mifare read failed: %s' % e
         tag.meta = {'uid': uid_hex}
@@ -557,10 +655,11 @@ def capture_mifare_metadata(gate, tag, sector_keys):
         tag.read_incomplete = True
         if not tag.read_retry_reason:
             tag.read_retry_reason = tag.parse_error
-        logger.warning(
-            "[%s]: gate %d — uid=%s  MIFARE read returned no "
-            "blocks (auth failed on all sectors?)",
-            gate._name, gate._gate, uid_hex)
+        if gate._debug >= 3:
+            logger.info(
+                "[%s]: gate %d — uid=%s  MIFARE read returned no "
+                "blocks (auth failed on all sectors?)",
+                gate._name, gate._gate, uid_hex)
         return
     tag.raw_tag_data = block_dict
     if gate._debug >= 3:
@@ -598,7 +697,10 @@ def read_current_tag(gate):
     tag.meta = {'uid': uid_hex}
     gate._state.current_tag = tag
 
-    if resolve_spool_by_uid_before_metadata(gate, tag) is not None:
+    early_spool_id = resolve_spool_by_uid_before_metadata(gate, tag)
+    if (early_spool_id is not None
+            and not (getattr(gate, '_scan_mode', False)
+                     and getattr(gate, '_tag_parsing', False))):
         return uid_hex
 
     strategy = classify_tag_target(gate, target_info)
@@ -625,13 +727,13 @@ def read_current_tag(gate):
                     gate._name, gate._gate, uid_hex)
             return uid_hex
         keys, reason = resolve_auth_keys(gate, tag)
+        bambu_read_worked = False
         if keys is None:
             tag.parse_error = 'mifare auth key derivation failed: %s' % reason
-            release_reader_target(gate, "mifare_key_failure")
             if gate._debug >= 3:
                 logger.info(
                     "[%s]: gate %d — uid=%s  MIFARE key "
-                    "derivation failed: %s; UID-only fallback",
+                    "derivation failed: %s; trying default key",
                     gate._name, gate._gate, uid_hex, reason)
         else:
             if gate._debug >= 3:
@@ -640,16 +742,75 @@ def read_current_tag(gate):
                     "Bambu keys derived; reading sectors 0-4",
                     gate._name, gate._gate, uid_hex)
             capture_mifare_metadata(gate, tag, keys)
-            # --- Creality/QIDI default-key fallback (commented out, needs hardware test) ---
-            # if len(getattr(tag, 'mifare_auth_failed_sectors', [])) == 5:
-            #     tag.read_incomplete = False
-            #     tag.read_retry_reason = None
-            #     tag.raw_tag_data = None
-            #     tag.parse_error = None
-            #     new_target = gate._reader.read_target()
-            #     if new_target is not None and new_target.get('uid') == uid_hex:
-            #         capture_mifare_metadata(gate, tag, resolve_default_mifare_keys())
-            # ---------------------------------------------------------------------------------
+            bambu_read_worked = len(
+                getattr(tag, 'mifare_auth_failed_sectors', [])) < 5
+
+        if not bambu_read_worked:
+            # Not a Bambu tag (or pycryptodome/derivation unavailable) --
+            # retry with the plain MIFARE Classic factory default key.
+            # Confirmed correct for QIDI Box (community-sourced from
+            # BoxRFID-Touch, which authenticates block 4 with an all-0xFF
+            # Key A). Creality CFS/K1/K2 uses a UID-derived Key B instead and
+            # will fail here too; that's handled by the Key B retry below.
+            tag.read_incomplete = False
+            tag.read_retry_reason = None
+            tag.raw_tag_data = None
+            tag.parse_error = None
+            default_key_worked = False
+            if _retarget_same_uid(gate, uid_hex):
+                if gate._debug >= 3:
+                    logger.info(
+                        "[%s]: gate %d — uid=%s  MIFARE Classic "
+                        "retrying with default key",
+                        gate._name, gate._gate, uid_hex)
+                capture_mifare_metadata(
+                    gate, tag, resolve_default_mifare_keys())
+                default_key_worked = not getattr(
+                    tag, 'mifare_auth_failed_sectors', None)
+            else:
+                release_reader_target(gate, "mifare_default_key_retarget_failed")
+                if gate._debug >= 3:
+                    logger.info(
+                        "[%s]: gate %d — uid=%s  MIFARE Classic "
+                        "default-key retry could not re-select the tag; "
+                        "UID-only fallback",
+                        gate._name, gate._gate, uid_hex)
+
+            if not default_key_worked:
+                # Not QIDI Box either -- try Creality CFS/K1/K2's UID-derived
+                # Key B against sector 1 only (the only sector it unlocks).
+                creality_key, creality_reason = resolve_creality_key_b(gate, tag)
+                if creality_key is None:
+                    if gate._debug >= 3:
+                        logger.info(
+                            "[%s]: gate %d — uid=%s  Creality Key B "
+                            "derivation unavailable: %s; UID-only fallback",
+                            gate._name, gate._gate, uid_hex, creality_reason)
+                else:
+                    tag.read_incomplete = False
+                    tag.read_retry_reason = None
+                    tag.raw_tag_data = None
+                    tag.parse_error = None
+                    if _retarget_same_uid(gate, uid_hex):
+                        if gate._debug >= 3:
+                            logger.info(
+                                "[%s]: gate %d — uid=%s  MIFARE Classic "
+                                "retrying sector 1 with Creality Key B",
+                                gate._name, gate._gate, uid_hex)
+                        creality_keys = [None] * 16
+                        creality_keys[1] = creality_key
+                        capture_mifare_metadata(
+                            gate, tag, creality_keys, sectors=(1,),
+                            use_key_b=True)
+                    else:
+                        release_reader_target(
+                            gate, "mifare_creality_key_retarget_failed")
+                        if gate._debug >= 3:
+                            logger.info(
+                                "[%s]: gate %d — uid=%s  MIFARE Classic "
+                                "Creality Key B retry could not re-select "
+                                "the tag; UID-only fallback",
+                                gate._name, gate._gate, uid_hex)
     else:
         tag.parse_error = 'unsupported target; uid-only fallback'
         release_reader_target(gate, "unsupported_uid_only_fallback")
@@ -698,6 +859,22 @@ def resolve_spool(gate, uid_hex):
         return None
 
     if gate._spoolman is None:
+        identity = (
+            getattr(tag, 'spool_identity', None) if tag is not None else None)
+        if (getattr(gate, '_scan_mode', False)
+                and _left_neighbor_identity_match(gate, identity)):
+            if tag is not None:
+                tag.resolution = {
+                    'path': 'left_neighbor_spool_identity',
+                    'spool_identity': identity,
+                }
+            if gate._debug >= 3:
+                logger.info(
+                    "[%s]: gate %d — uid=%s  spool_identity=%s matches "
+                    "left neighbor; deferring metadata-direct assignment "
+                    "to scan-jog interference handling",
+                    gate._name, gate._gate, uid_hex, identity)
+            return None
         if material or color:
             if tag is not None:
                 tag.resolution = {'path': 'metadata_direct'}
@@ -780,6 +957,22 @@ def resolve_spool(gate, uid_hex):
             "checking whether metadata can create or directly represent a spool "
             "(material=%r color=%r)",
             gate._name, gate._gate, uid_hex, material, color)
+
+    identity = getattr(tag, 'spool_identity', None) if tag is not None else None
+    if (getattr(gate, '_scan_mode', False)
+            and _left_neighbor_identity_match(gate, identity)):
+        if tag is not None:
+            tag.resolution = {
+                'path': 'left_neighbor_spool_identity',
+                'spool_identity': identity,
+            }
+        if gate._debug >= 3:
+            logger.info(
+                "[%s]: gate %d — uid=%s  spool_identity=%s matches left "
+                "neighbor; deferring spool creation/resolution to "
+                "scan-jog interference handling",
+                gate._name, gate._gate, uid_hex, identity)
+        return None
 
     if tag is not None and getattr(tag, 'read_incomplete', False):
         if tag.resolution is None or not isinstance(tag.resolution, dict):

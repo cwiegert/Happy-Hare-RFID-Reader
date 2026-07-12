@@ -636,13 +636,17 @@ class _PN532Base:
             return None
         return bytes(payload[1:17])
 
-    def mifare_read_authenticated_blocks(self, sector_keys, sectors, uid_bytes=None):
+    def mifare_read_authenticated_blocks(self, sector_keys, sectors,
+                                         uid_bytes=None, use_key_b=False):
         """Authenticate and read data blocks from the given sectors.
 
-        sector_keys : list of 16 × 6-byte Key-A values (index = sector number).
+        sector_keys : list of 16 × 6-byte key values (index = sector number),
+                      Key A by default or Key B when use_key_b is True.
         sectors     : list of sector numbers to read (e.g. [0, 1, 2, 3, 4]).
         uid_bytes   : tag UID bytes (4 bytes for MIFARE Classic 1K); stored in
                       the returned dict for parse_tag().
+        use_key_b   : authenticate with Key B instead of Key A (e.g. Creality
+                      CFS/K1/K2 sector 1, which uses a UID-derived Key B).
 
         Returns {"uid_bytes": bytes, "blocks": {abs_block_index: bytes}} where
         abs_block_index is the absolute block number (0-63 for MIFARE Classic 1K).
@@ -661,7 +665,7 @@ class _PN532Base:
                 key = sector_keys[sector] if sector < len(sector_keys) else None
                 if key is None:
                     continue
-                if not self.mifare_authenticate(trailer, key):
+                if not self.mifare_authenticate(trailer, key, use_key_b=use_key_b):
                     auth_failed_sectors.append(sector)
                     if self._debug >= 3:
                         logger.info(

@@ -70,10 +70,28 @@ The `(uid, spool_id)` combination check means that if the same physical tag is r
 When a spool is loaded, the NFC tag is on the hub face — it may be pointing any direction. The scan-jog loop rotates the spool until the tag comes within read range of the NFC reader antenna.
 
 During this scan, the current gate also checks for a narrow physical edge case:
-if gate `N` reads a UID already cached on gate `N - 1`, the read is treated as
-left-neighbor interference. NFC briefly shifts the left neighbor out of the
-reader field, clears the false read, continues scanning gate `N`, and restores
-the neighbor when the scan exits.
+antenna crosstalk from the adjacent gate's reader. This applies to rich tag
+formats that can identify the same spool independently of the chip's factory
+UID. Bambu (`tray_uid`), TigerTag/TigerTag+ (Twin Tag ID), and Creality
+(decoded payload hash) all expose a parser-derived `spool_identity` for this.
+
+The scan-jog resolution ladder is:
+
+1. Capture the hardware UID.
+2. Ask Spoolman whether that UID already belongs to a spool.
+3. If the UID resolves to a different spool than the left neighbor's cached
+   spool, accept the Spoolman result immediately.
+4. If rich parsing is needed, read the manufacturer payload and compute
+   `spool_identity`.
+5. Before auto-creating or accepting a metadata-only result, compare the
+   current `spool_identity` with gate `N - 1`'s cached `spool_identity`.
+
+If both identities match, the read is treated as left-neighbor interference.
+NFC briefly shifts the left neighbor out of the reader field, clears the false
+read, restarts a full scan on gate `N`, and restores the neighbor when the scan
+exits. Tag formats without a parser-derived `spool_identity` do not use this
+same-spool interference check; raw material/color/brand metadata is not reliable
+proof of same-vs-different spool on its own.
 
 ### Trigger
 

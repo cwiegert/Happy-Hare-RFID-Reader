@@ -515,12 +515,14 @@ def log_continuous_queue_remaining(gate, label):
     return queue_remaining
 
 
-def _cache_continuous_resolved_uid(gate, uid, spool_id, path):
+def _cache_continuous_resolved_uid(
+        gate, uid, spool_id, path, spool_identity=None):
     tag = CurrentTag(uid=uid)
     target_info = getattr(gate, '_scan_continuous_pending_target_info', None)
     if target_info is not None:
         tag.target_info = dict(target_info)
     tag.resolution = {'path': path, 'spool_id': spool_id}
+    tag.spool_identity = spool_identity or None
     gate._state.current_tag = tag
     gate._state.current_uid = uid
     gate._state.current_spool = spool_id
@@ -545,6 +547,24 @@ def _cache_continuous_uid_only(gate, uid):
     gate._scan_continuous_pending_target_info = None
 
 
+def _left_neighbor_spool_for_interference(gate):
+    if gate._gate <= 0:
+        return None
+    left_nfc = gate._nfc_gate_for_gate_number(gate._gate - 1)
+    if left_nfc is None:
+        return None
+    return getattr(left_nfc._state, 'current_spool', None)
+
+
+def _same_spool_id(left_spool, spool_id):
+    if left_spool is None or spool_id is None:
+        return False
+    try:
+        return int(left_spool) == int(spool_id)
+    except (TypeError, ValueError):
+        return str(left_spool) == str(spool_id)
+
+
 def resolve_continuous_pending_uid(gate, now):
     """Resolve a UID captured during motion without reading rich tag data."""
     uid = getattr(gate, '_scan_continuous_pending_uid', None)
@@ -552,15 +572,62 @@ def resolve_continuous_pending_uid(gate, now):
         return False
     previous_uid = getattr(gate, '_scan_previous_uid', None)
     previous_spool = getattr(gate, '_scan_previous_spool', None)
+    previous_identity = getattr(gate, '_scan_previous_spool_identity', None)
     if (uid == previous_uid and previous_spool is not None
             and previous_spool is not DIRECT_METADATA_SPOOL):
+        if gate._spoolman is not None:
+            try:
+                spool_id = gate._spoolman.lookup_spool_by_uid(uid)
+            except Exception:
+                logger.exception(
+                    "[%s]: continuous scan Spoolman UID lookup failed for "
+                    "matched stashed uid=%s",
+                    gate._name.capitalize(), uid)
+                spool_id = None
+            if spool_id is not None:
+                if (getattr(gate, '_tag_parsing', False)
+                        and not previous_identity):
+                    if gate._debug >= 3:
+                        logger.info(
+                            "[%s]: continuous scan uid=%s matched stashed UID; "
+                            "Spoolman lookup resolved spool_id=%s but "
+                            "spool_identity=None; forcing rich tag parse to "
+                            "populate identity",
+                            gate._name.capitalize(), uid, spool_id)
+                    return False
+                _cache_continuous_resolved_uid(
+                    gate, uid, spool_id, 'scan_previous_uid_spoolman_lookup',
+                    spool_identity=previous_identity)
+                if gate._debug >= 3:
+                    logger.info(
+                        "[%s]: continuous scan uid=%s matched stashed UID; "
+                        "Spoolman lookup resolved spool_id=%s "
+                        "spool_identity=%s",
+                        gate._name.capitalize(), uid, spool_id,
+                        previous_identity if previous_identity else "None")
+                return True
+            if gate._debug >= 3:
+                logger.info(
+                    "[%s]: continuous scan uid=%s matched stashed UID but "
+                    "Spoolman UID lookup missed",
+                    gate._name.capitalize(), uid)
+        if getattr(gate, '_tag_parsing', False):
+            if gate._debug >= 3:
+                logger.info(
+                    "[%s]: continuous scan uid=%s matched stashed UID/spool_id=%s "
+                    "but no Spoolman UID match; forcing rich tag parse "
+                    "before spool_identity/auto-create checks",
+                    gate._name.capitalize(), uid, previous_spool)
+            return False
         _cache_continuous_resolved_uid(
-            gate, uid, previous_spool, 'scan_previous_uid')
+            gate, uid, previous_spool, 'scan_previous_uid',
+            spool_identity=previous_identity)
         if gate._debug >= 3:
             logger.info(
                 "[%s]: continuous scan uid=%s matched stashed UID; "
-                "using stashed spool_id=%s",
-                gate._name.capitalize(), uid, previous_spool)
+                "using stashed spool_id=%s spool_identity=%s",
+                gate._name.capitalize(), uid, previous_spool,
+                previous_identity if previous_identity else "None")
         return True
     if gate._spoolman is None:
         return False
@@ -578,11 +645,32 @@ def resolve_continuous_pending_uid(gate, now):
                 "rich tag parse will run after hit-window recenter if enabled",
                 gate._name.capitalize(), uid)
         return False
+    if getattr(gate, '_tag_parsing', False):
+        left_spool = _left_neighbor_spool_for_interference(gate)
+        if not _same_spool_id(left_spool, spool_id):
+            _cache_continuous_resolved_uid(
+                gate, uid, spool_id, 'continuous_uid_lookup')
+            if gate._debug >= 3:
+                logger.info(
+                    "[%s]: continuous scan uid=%s resolved through Spoolman "
+                    "after move complete: spool_id=%s left_spool=%s; "
+                    "accepting UID result without rich identity parse",
+                    gate._name.capitalize(), uid, spool_id,
+                    left_spool if left_spool is not None else "None")
+            return True
+        if gate._debug >= 3:
+            logger.info(
+                "[%s]: continuous scan uid=%s resolved through Spoolman "
+                "after move complete: spool_id=%s matches left_spool=%s; "
+                "forcing rich tag parse before interference handling",
+                gate._name.capitalize(), uid, spool_id, left_spool)
+        return False
     _cache_continuous_resolved_uid(gate, uid, spool_id, 'continuous_uid_lookup')
     if gate._debug >= 3:
         logger.info(
             "[%s]: continuous scan uid=%s resolved through Spoolman "
-            "after move complete: spool_id=%s",
+            "after move complete: spool_id=%s spool_identity=None "
+            "(UID lookup does not include parsed tag metadata)",
             gate._name.capitalize(), uid, spool_id)
     return True
 
@@ -1014,6 +1102,14 @@ def start(gate, max_mm=None):
     gate._scan_found_event = None
     gate._scan_previous_uid = gate._state.current_uid
     gate._scan_previous_spool = gate._state.current_spool
+    gate._scan_previous_spool_identity = current_spool_identity(gate)
+    if gate._debug >= 3 and gate._scan_previous_uid:
+        logger.info(
+            "[%s]: gate %d scan mode — stashed previous uid=%s "
+            "spool=%s spool_identity=%s",
+            gate._name, gate._gate, gate._scan_previous_uid,
+            gate._scan_previous_spool,
+            gate._scan_previous_spool_identity or "None")
     gate._state.current_uid   = None  # force changed event on first read
     gate._state.current_spool = None
     gate._hh_load_paused = False
@@ -1511,18 +1607,24 @@ def current_spool_identity(gate):
 def spool_identity_for_gate(gate, target_gate):
     left_nfc = gate._nfc_gate_for_gate_number(target_gate)
     if left_nfc is None:
-        if gate._debug >= 4:
-            logger.debug("[%s]: left gate %d has no NFC instance",
-                         gate._name.capitalize(), target_gate)
+        if gate._debug >= 3:
+            logger.info("[%s]: left gate %d has no NFC instance for "
+                        "spool_identity lookup",
+                        gate._name.capitalize(), target_gate)
         return None
     left_tag = getattr(left_nfc._state, 'current_tag', None)
+    left_uid = getattr(left_nfc._state, 'current_uid', None)
+    left_spool = getattr(left_nfc._state, 'current_spool', None)
     left_identity = (
         getattr(left_tag, 'spool_identity', None)
         if left_tag is not None else None)
     if not left_identity:
-        if gate._debug >= 4:
-            logger.debug("[%s]: left gate %d NFC cache has no spool_identity",
-                         gate._name.capitalize(), target_gate)
+        if gate._debug >= 3:
+            logger.info(
+                "[%s]: left gate %d spool_identity lookup — "
+                "uid=%s spool=%s current_tag=%s spool_identity=None",
+                gate._name.capitalize(), target_gate, left_uid, left_spool,
+                "yes" if left_tag is not None else "no")
         return None
 
     left_hh = hh_status.read(gate.printer, target_gate)
@@ -1534,11 +1636,12 @@ def spool_identity_for_gate(gate, target_gate):
                 gate._name, gate._gate, target_gate, left_identity,
                 left_hh.status)
         return None
-    if gate._debug >= 4:
-        logger.debug(
-            "[%s]: left gate %d spool_identity=%s hh_available=%s",
-            gate._name.capitalize(), target_gate, left_identity,
-            left_hh.available if left_hh.present else "hh-absent")
+    if gate._debug >= 3:
+        logger.info(
+            "[%s]: left gate %d spool_identity lookup — "
+            "uid=%s spool=%s spool_identity=%s hh_available=%s",
+            gate._name.capitalize(), target_gate, left_uid, left_spool,
+            left_identity, left_hh.available if left_hh.present else "hh-absent")
     return left_identity
 
 
@@ -1547,17 +1650,22 @@ def is_left_neighbor_spool_identity_match(gate):
         return False
     identity = current_spool_identity(gate)
     if not identity:
-        if gate._debug >= 4:
-            logger.debug(
-                "[%s]: interference check skipped; current spool_identity unavailable",
-                gate._name.capitalize())
+        if gate._debug >= 3:
+            logger.info(
+                "[%s]: interference check skipped — gate %d uid=%s "
+                "spool=%s current spool_identity=None",
+                gate._name.capitalize(), gate._gate,
+                read_uid_from_scan_event(gate), read_spool_from_scan_event(gate))
         return False
     left_identity = spool_identity_for_gate(gate, gate._gate - 1)
     result = left_identity is not None and left_identity == identity
-    if gate._debug >= 4:
-        logger.debug(
-            "[%s]: interference check spool_identity=%s left_spool_identity=%s -> %s",
-            gate._name.capitalize(), identity, left_identity,
+    if gate._debug >= 3:
+        logger.info(
+            "[%s]: interference check — gate %d uid=%s spool=%s "
+            "spool_identity=%s left_gate=%d left_spool_identity=%s -> %s",
+            gate._name.capitalize(), gate._gate, read_uid_from_scan_event(gate),
+            read_spool_from_scan_event(gate), identity, gate._gate - 1,
+            left_identity,
             "match" if result else "no match")
     return result
 
@@ -1568,10 +1676,63 @@ def clear_false_scan_result(gate):
     gate._state.current_spool = None
     gate._state.current_tag = None
     gate._state.miss_count = 0
+    gate._scan_continuous_move_inflight = False
+    gate._scan_continuous_move_source = None
+    gate._scan_continuous_move_complete_time = 0.0
+    gate._scan_continuous_last_move_mm = 0.0
+    gate._scan_continuous_probe_due = False
+    gate._scan_continuous_tag_pending = False
+    gate._scan_continuous_pending_uid = None
+    gate._scan_continuous_pending_target_info = None
+    gate._scan_continuous_uid_hits = []
+    gate._scan_continuous_full_travel = False
+    gate._scan_continuous_overshoot_backed_up = False
+    gate._scan_continuous_overshoot_uid = None
+    gate._scan_continuous_overshoot_position_attempts = 0
+    gate._scan_continuous_chunk_start_mm = None
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
     gate._scan_decode_retry_offset = 0.0
     gate._scan_decode_retry_mode = None
+
+
+def reset_current_lane_for_full_scan_after_left_clearance(gate):
+    """Reset scan-local state as if a new scan-jog started on this lane."""
+    gate._scan_mm_total = 0.0
+    gate._scan_next_chunk_time = gate.reactor.monotonic()
+    gate._scan_continuous_move_inflight = False
+    gate._scan_continuous_move_source = None
+    gate._scan_continuous_move_complete_time = 0.0
+    gate._scan_continuous_full_travel = False
+    gate._scan_continuous_last_move_mm = 0.0
+    gate._scan_continuous_probe_due = False
+    gate._scan_continuous_tag_pending = False
+    gate._scan_continuous_pending_uid = None
+    gate._scan_continuous_pending_target_info = None
+    gate._scan_continuous_uid_hits = []
+    gate._scan_continuous_queue_baseline = 0.0
+    gate._scan_continuous_queue_active_remaining = 0.0
+    gate._scan_continuous_direct_available = True
+    gate._scan_continuous_overshoot_backed_up = False
+    gate._scan_continuous_overshoot_uid = None
+    gate._scan_continuous_overshoot_position_attempts = 0
+    gate._scan_continuous_chunk_start_mm = None
+    gate._scan_position_reads_done = 0
+    gate._scan_decode_retry_attempts = 0
+    gate._scan_decode_retry_uid = None
+    gate._scan_decode_retry_offset = 0.0
+    gate._scan_decode_retry_mode = None
+    gate._scan_found_event = None
+    gate._state.current_uid = None
+    gate._state.current_spool = None
+    gate._state.current_tag = None
+    gate._state.miss_count = 0
+    gate._scan_gate_selected = False
+    if gate._debug >= 3:
+        logger.info(
+            "[%s]: gate %d scan mode — restarting full lane scan after "
+            "left-neighbor clearance",
+            gate._name, gate._gate)
 
 
 def shift_left_neighbor(gate, left_gate, identity):
@@ -1702,11 +1863,10 @@ def handle_left_neighbor_interference(gate):
         clear_false_scan_result(gate)
         gate._rewind_and_exit_scan()
         return True
-    clear_false_scan_result(gate)
-    gate._scan_next_chunk_time = (
-        gate.reactor.monotonic() + DECODE_RETRY_SETTLE_DELAY)
-    msg = ("[SCAN] NFC[%s]: re-polling at position %.1fmm after left lane clearance"
-           % (gate._name.capitalize(), gate._scan_mm_total))
+    reset_current_lane_for_full_scan_after_left_clearance(gate)
+    msg = (
+        "[SCAN] NFC[%s]: restarting full lane scan after left lane clearance"
+        % gate._name.capitalize())
     logger.info(msg)
     gate._console(msg)
     return True
@@ -1957,8 +2117,8 @@ def queue_decode_retry_move(gate, now, uid, reason, max_attempts, retry_mm):
     attempt = gate._scan_decode_retry_attempts
     msg = ("[WARN] NFC[%s]: tag decode incomplete; retry %d/%d after %.1fmm jog"
            % (gate._name.capitalize(), attempt, max_attempts, move))
-    logger.info("%s (uid=%s reason=%s)", msg, uid, reason)
-    gate._console(msg)
+    if gate._debug >= 3:
+        logger.info("%s (uid=%s reason=%s)", msg, uid, reason)
     reset_uid_only_read(gate, uid)
     gate._run_jog(move)
     effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
@@ -2021,8 +2181,8 @@ def retry_incomplete_decode(gate, now):
             msg = ("[WARN] NFC[%s]: tag decode incomplete; backing up %.1fmm "
                    "to continuous hit-window center before retry"
                    % (gate._name.capitalize(), backup_mm))
-            logger.info("%s (uid=%s reason=%s)", msg, uid, reason)
-            gate._console(msg)
+            if gate._debug >= 3:
+                logger.info("%s (uid=%s reason=%s)", msg, uid, reason)
             reset_uid_only_read(gate, uid)
             gate._run_jog(move)
             effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
@@ -2075,8 +2235,8 @@ def retry_incomplete_decode(gate, now):
     attempt = gate._scan_decode_retry_attempts
     msg = ("[WARN] NFC[%s]: tag decode incomplete; retry %d/%d after %.1fmm jog"
            % (gate._name.capitalize(), attempt, max_attempts, move))
-    logger.info("%s (uid=%s reason=%s)", msg, uid, reason)
-    gate._console(msg)
+    if gate._debug >= 3:
+        logger.info("%s (uid=%s reason=%s)", msg, uid, reason)
     reset_uid_only_read(gate, uid)
     gate._run_jog(move)
     effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
@@ -2164,6 +2324,7 @@ def finish(gate):
             gate._console(msg)
     gate._scan_previous_uid = None
     gate._scan_previous_spool = None
+    gate._scan_previous_spool_identity = None
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
     gate._scan_decode_retry_offset = 0.0
@@ -2209,6 +2370,7 @@ def rewind_and_exit(gate):
         gate._hh_load_paused = False
     gate._scan_previous_uid = None
     gate._scan_previous_spool = None
+    gate._scan_previous_spool_identity = None
     if gate._debug >= 3:
         logger.info(
             "[%s]: gate %d scan mode — no tag found, "

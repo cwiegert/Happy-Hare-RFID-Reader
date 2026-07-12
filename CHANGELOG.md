@@ -3,6 +3,208 @@
 All notable changes to the EMU NFC Gate Reader are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+**Legend:** ✨ Added · 🐛 Fixed · ♻️ Changed · 📝 Docs · ✅ Verified · 💡 Note
+
+---
+
+## [1.2.0] - 07/11/2026 - WoodWorker
+
+### TigerTag Left-Neighbor Interference Detection
+
+Left-neighbor interference detection (shifting an adjacent gate's spool out
+of the reader field when its tag is misread as the current gate's) only
+worked for Bambu tags, since Bambu is the only supported format that ships
+two physical tags per spool — the only case where a plain UID comparison
+against the neighbor's cache can't tell "same spool, other side's tag" apart
+from "genuinely different spool."
+
+- ✨ **Twin Tag ID extraction** — `_try_tigertag()` (`vendor/rfid_tag_parser.py`)
+  now reads a 4-byte big-endian field at offset `+32` (page `0x0C`), written
+  identically to both physical tags when a spool's left/right sides are
+  programmed together. Stored as `info["tigertag_twin_tag_id"]`.
+- ✨ **Wired into `spool_identity`** as `"tigertag_%d" % twin_tag_id`, the same
+  field Bambu populates from `tray_uid` as `"bambu_%s" % tray_uid`. No
+  changes needed in `scan_jog.py`: the existing `current_spool_identity()` /
+  `spool_identity_for_gate()` / `is_left_neighbor_spool_identity_match()`
+  chain compares `spool_identity` generically, with no awareness of which
+  parser produced it — so TigerTag spools with matching Twin Tag IDs on
+  adjacent gates now get the same automatic clearance jog Bambu spools
+  already had.
+- 💡 **No new tag reads required** — the twin tag ID falls within the 64 bytes
+  (`tag_max_pages: 16` default) already fetched per read. `_try_tigertag()`
+  previously stopped parsing at offset 31 even though the bytes past it were
+  already present in its `raw` buffer.
+- ✅ **Confirmed, not inferred** — TigerTag's own published RFID guide documents
+  a genuine two-tags-per-spool design with this field as the same-spool
+  pairing key.
+
+### QIDI Box / Creality CFS Default-Key MIFARE Fallback Enabled
+
+Rich reads for any non-Bambu MIFARE Classic tag (QIDI Box, Creality CFS)
+never actually worked: `read_current_tag()` (`tag_handler.py`) only ever
+tried Bambu's own HKDF-derived keys, and the intended default-key retry for
+everyone else existed in the file but was commented out pending hardware
+confirmation.
+
+- ✅ **QIDI Box key confirmed** — the plain MIFARE Classic factory default Key
+  A, `FF FF FF FF FF FF`. Not a secret; sourced from the community
+  `TinkerBarn/BoxRFID-Touch` project (same PN532 chip family this project
+  already uses), which authenticates block 4 with this exact key before
+  reading/writing material/color/manufacturer codes. Creality CFS's real key
+  turned out to be neither the default key nor a simple custom key — see
+  "Creality CFS/K1/K2 AES Tag Support" below.
+- 🐛 **QIDI material lookup aligned to QIDI's RFID guide** — corrected the
+  QIDI material code table used by `_try_qidi_box()` so codes 42-50 match
+  the official wiki values (`PETG-CF`, `PETG-GF`, `PPS-CF`, `TPU`, etc.)
+  and wiki-reserved/blank codes remain reported as `Unknown(n)`. Parsed QIDI
+  metadata now also keeps the raw `material_code`, `color_code`, and
+  `manufacturer_code` for debugging real tags.
+- ✨ **Creality spool identity added for left-neighbor checks** — `_try_creality_tag()`
+  now hashes the parsed structured payload fields
+  `vendor_id:date_code:batch:filament_id:color:length:serial` into a compact
+  decimal value and exposes it as `spool_identity = "creality_<digits>"`.
+  The UID is deliberately not part of this value because `spool_identity`
+  represents same-spool identity, not same-chip identity. The readable seed
+  and numeric value are kept in metadata/debug output as
+  `creality_identity_seed` and `creality_identity_numeric`.
+- 📝 **Documented same-spool identity support** — README and shared docs now
+  describe the Bambu-style `spool_identity` model for Bambu, TigerTag, and
+  Creality rich tags, including the Creality payload fields used and the
+  fact that Creality support has been tested against real spool tags.
+- 🐛 **Scan-jog now preserves stashed spool identity** — the continuous-scan
+  fast path that reuses a previously resolved UID now carries the previous
+  `spool_identity` along with the spool id, and level-3 logs show both the
+  current lane identity and the left lane identity used for interference
+  decisions. When the pending UID matches the stashed UID, scan-jog now tries
+  Spoolman UID lookup before accepting the stashed spool id; if the lookup
+  has no cached `spool_identity`, it forces the rich tag parse so manufacturer
+  `spool_identity` is populated before any auto-create path.
+- 🐛 **Spoolman UID matches no longer suppress scan-mode identity parsing** —
+  during scan-jog, an early Spoolman UID match still supplies the spool id,
+  but structured tag reading continues so Bambu/Creality/TigerTag
+  `spool_identity` is cached on the gate for left-neighbor comparisons.
+- 🐛 **Manufacturer identity is checked before auto-create** — after rich tag
+  metadata is parsed and Spoolman UID lookup misses, scan mode compares the
+  current tag's `spool_identity` against the left gate before allowing
+  metadata-direct or auto-created spool resolution to continue.
+- 🐛 **Left-neighbor clearance resumes with a fresh lane scan** — after a
+  left-neighbor interference hit, scan-jog now clears stale UID/continuous
+  hit-window state and resets the current lane's scan-local state as if a new
+  `JOG_SCAN=1` had been issued after shifting the left lane, instead of
+  reprocessing the same false read.
+- 🐛 **Default-key retry enabled and restructured** in `read_current_tag()`.
+  Previously it only fired if Bambu key *derivation* succeeded and then
+  every sector's *authentication* failed — meaning it silently never ran at
+  all for anyone without `pycryptodome` installed, since derivation itself
+  would fail first and return before the retry was ever reached. The trigger
+  is now "Bambu didn't produce a usable read, for any reason" (derivation
+  failure or all-sectors-auth-failure), so QIDI/Creality reads work
+  correctly even with `pycryptodome` absent — appropriate, since the
+  default-key path needs no cryptography library at all.
+- 💡 **No changes needed in `parse_tag()`** — the MIFARE block-dict →
+  flat-buffer conversion that feeds `_try_qidi_box()`/`_try_creality_cfs()`
+  already existed and was already correct; the only missing piece was ever
+  reaching it with a second, correct key.
+- 💡 **`bambu_reads: True` stays the single gate** for all authenticated MIFARE
+  Classic attempts (Bambu's own keys and the default-key fallback alike) —
+  left unrenamed despite now covering more than Bambu, since renaming a
+  public config key is a breaking change out of scope here. `pycryptodome`
+  remains required only for Bambu's own reads.
+- 📝 **Documented** the confirmed QIDI key value and the (at the time)
+  unconfirmed Creality status in `docs/shared/configuration.md`,
+  `docs/shared/spoolman-integration.md`, and `Readme.md`.
+
+### Creality CFS/K1/K2 AES Tag Support
+
+The default-key retry above never worked for genuine Creality tags: unlike
+QIDI Box, Creality's tag encoder derives a per-UID MIFARE Key B and encrypts
+the payload itself, so both Bambu's Key A and the plain default key fail on
+sector 1. This closes out the "unconfirmed" status from the previous entry.
+
+**MIFARE Classic key attempts, in order** (`read_current_tag()` in
+`tag_handler.py`), each only firing when the previous one authenticated
+nothing:
+
+| Order | Scheme | Sectors | Key type | Extra dependency |
+|---|---|---|---|---|
+| 1 | Bambu HKDF-derived | 0-4 | Key A | `pycryptodome` |
+| 2 | MIFARE factory default (QIDI Box) | 0-4 | Key A (`FF FF FF FF FF FF`) | none |
+| 3 | Creality UID-derived | 1 only | Key B | `pycryptodome` |
+
+Each retry re-selects the same UID via the new `_retarget_same_uid()` helper
+before authenticating, since a completed `mifare_read_authenticated_blocks()`
+call always releases the target.
+
+- ✨ **Key derivation and decryption** — added `_creality_derive_key_b()`
+  (`vendor/rfid_tag_parser.py`): the sector-1 MIFARE Key B is
+  `AES-128-ECB(AES_KEY_GEN, uid repeated to 16 bytes)[:6]`.
+  `_creality_decrypt_tag_data()` then decrypts the 48-byte ASCII payload
+  stored across blocks 4-6 with a second static key, `AES_KEY_CIPHER`. Both
+  keys and the derivation procedure are community-sourced from a Creality
+  RFID encryption helper script that mirrors the JavaScript implementation
+  used by Creality's own tag-writer tooling; no code was copied, only the
+  two key constants and the encrypt/decrypt procedure they document.
+  ✅ Verified against the reference script's own key-generation and
+  encrypt/decrypt output before wiring in. Hex/ASCII values for both keys
+  are published in `docs/shared/spoolman-integration.md` (Creality key
+  material table) — neither is a secret withheld from the docs.
+- ✨ **New parser** — added `_try_creality_tag()` (structured like
+  `_try_tigertag()`) that decrypts and field-splits the payload: batch,
+  production date code, vendor ID, filament ID / material code (mapped via
+  `_CREALITY_MATERIAL_MAP`), color, spool weight (via
+  `_CREALITY_LENGTH_TO_WEIGHT_G`), and serial. Registered in `parse_tag()`
+  under the authenticated block-dict branch, tried right after Bambu's block
+  layout, returning `tag_format: "creality"`. The old `_try_creality_cfs()`
+  hex-ASCII heuristic (unauthenticated, unconfirmed, `tag_format:
+  "creality_cfs"`) is kept as a fallback for raw dumps but is no longer the
+  primary Creality path.
+- 🐛 **Creality payload slicing aligned to `DnG-Crafts/K2-RFID`** — the AES
+  parser now treats the decrypted payload as
+  `date + vendor_id + batch + filament_id + color + length + serial + reserve`.
+  The on-tag `filament_id` is preserved, while its trailing 5-character
+  material code is still used for `_CREALITY_MATERIAL_MAP` lookup. The common
+  vendor ID `0276` resolves to `Creality`; the raw ID is also stored as
+  `creality_vendor_id` and the legacy `creality_supplier` alias.
+- 📝 **Creality level-4 decode instrumentation** — when `debug: 4` is enabled,
+  `_try_creality_tag()` now traces encrypted blocks 4-6, the decrypted payload
+  as hex and printable ASCII, each parsed field, lookup results, and the exact
+  reject reason when a real tag does not match the expected layout.
+- 🐛 **Creality parser now ignores trailing non-ASCII bytes after the 40-byte
+  structured payload** — real tag reads can decrypt to valid
+  `date/vendor/batch/filament/color/length/serial/reserve` data followed by
+  non-ASCII trailing bytes in the remaining encrypted block space. The parser
+  now decodes only the structured first 40 bytes and logs trailing bytes at
+  level 4 instead of rejecting the whole tag.
+- ✨ **Key B support added to all three reader drivers** —
+  `mifare_read_authenticated_blocks()` gained a `use_key_b` parameter in
+  `pn532_driver.py`, `pn7160_driver.py`, and `rc522_driver.py`, threaded down
+  to the existing per-driver `mifare_authenticate(..., use_key_b=...)`. None
+  of them exposed Key B auth through the block-read path before this, only
+  Key A.
+- ♻️ **`capture_mifare_metadata()` generalized** (`tag_handler.py`) — gained
+  `sectors` and `use_key_b` parameters (defaulting to the previous
+  sectors-0-4/Key-A behavior) so the new Creality attempt can authenticate
+  sector 1 only, with Key B, without touching the Bambu/QIDI code paths.
+
+### 📋 PR Summary
+
+*(Copy/paste the section below into the pull request description.)*
+
+> ## TigerTag twin-tag pairing + Creality CFS/K1/K2 AES tag support
+>
+> ### Summary
+> - ✨ TigerTag: extract the Twin Tag ID field and feed it into `spool_identity`, extending left-neighbor interference detection (previously Bambu-only) to TigerTag's two-tags-per-spool design — no `scan_jog.py` changes needed.
+> - 🐛 Re-enabled the QIDI Box / Creality default-key MIFARE fallback that existed commented-out in `read_current_tag()`, and fixed its trigger condition so it also runs when `pycryptodome` isn't installed. ✅ Confirmed correct for QIDI Box against the community `BoxRFID-Touch` reference.
+> - ✨ Added full Creality CFS/K1/K2 support: UID-derived MIFARE Key B + AES-128-ECB payload decryption (`_creality_derive_key_b()`, `_creality_decrypt_tag_data()`, `_try_creality_tag()`), with `use_key_b` support added to all three reader drivers (PN532, PN7160, RC522) to make sector-1 Key B auth possible. Key material verified against the community reference script and published in the docs.
+>
+> ### Test plan
+> - [x] `python3 -m py_compile` on all touched files
+> - [x] Standalone script cross-checks `_creality_derive_key_b()` / `_creality_decrypt_tag_data()` output against the reference script's key-generation and encrypt/decrypt logic byte-for-byte
+> - [x] `parse_tag()` end-to-end dispatch test confirms a synthetic Creality block dict resolves to `tag_format: "creality"` with correct material/color/weight
+> - [ ] Hardware test: real TigerTag left/right pair on adjacent gates triggers automatic clearance jog
+> - [ ] Hardware test: real QIDI Box tag reads material/color via the default-key fallback
+> - [ ] Hardware test: real Creality CFS/K1/K2 tag reads material/color/weight via the new Key B + AES path
+
 ---
 
 ## [1.1.0] - 07/07/2026 - WoodWorker

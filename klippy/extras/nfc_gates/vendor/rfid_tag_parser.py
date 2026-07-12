@@ -34,7 +34,10 @@ elegoo          ELEGOO EPC-256 (NTAG213, binary)
 bambu           Bambu Lab (MIFARE Classic 1K, HKDF-derived keys, pycryptodome)
 anycubic_ace    Anycubic ACE (NTAG213/215, binary)
 tigertag        TigerTag / TigerTag+ (NTAG213/215/216, binary)
-creality_cfs    Creality CFS / K1 / K2 (MIFARE Classic, hex-encoded ASCII)
+creality        Creality CFS / K1 / K2 (MIFARE Classic, UID-derived Key B,
+                AES-128-ECB-encrypted ASCII payload, pycryptodome)
+creality_cfs    Creality CFS / K1 / K2 legacy hex-ASCII heuristic (unconfirmed,
+                unauthenticated raw-dump fallback; superseded by "creality")
 qidi            QIDI Box (MIFARE Classic 1K, binary codes)
 opentag3d       OpenTag3D (NDEF MIME application/vnd.opentag3d, binary)
 openspool       OpenSpool (NDEF JSON with protocol=openspool)
@@ -92,10 +95,17 @@ Hardware requirements for Bambu tags:
 
 Known limitations
 -----------------
-- Creality CFS and QIDI Box tags are MIFARE Classic 1K and require
-  sector-key authentication.  Detection is attempted from the raw dump when
-  available; if the raw bytes look like these formats they are parsed, but in
-  practice the data past page 15 (sector 1) may not be available without auth.
+- QIDI Box tags are MIFARE Classic 1K and use the plain factory default Key
+  A; Creality CFS/K1/K2 tags require a UID-derived Key B (see
+  ``_creality_derive_key_b()``) and an AES-128-ECB-decrypted payload (see
+  ``_try_creality_tag()``) — tag_handler.read_current_tag() tries Bambu Key
+  A, then the default key, then the Creality Key B, in that order.  The
+  legacy ``_try_creality_cfs()`` hex-ASCII heuristic only runs against
+  unauthenticated raw dumps and is unconfirmed against real hardware.
+- QIDI's official RFID guide documents FM11RF08S tags with the payload in
+  sector 1/block 0 (absolute block 4): byte 0 material, byte 1 color, byte 2
+  manufacturer.  If QIDI rich reads fail, also validate the QIDI-specific
+  sector 1 Key A noted in docs/shared/qidi-rfid-reference.md.
 - Factory Bambu tags carry an RSA-2048 signature; the Bambu printer firmware
   validates this signature so official firmware will reject reprogrammed tags.
   Writing Tray UID / spool metadata to custom (blank) MIFARE Classic tags
@@ -107,6 +117,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import hashlib
 import struct
 from typing import Optional
 
@@ -132,17 +143,19 @@ def _make_trace(trace):
 try:
     from Cryptodome.Protocol.KDF import HKDF as _HKDF
     from Cryptodome.Hash import SHA256 as _SHA256
+    from Cryptodome.Cipher import AES as _AES
     _PYCRYPTODOME_OK = True
 except ImportError:
     try:
         from Crypto.Protocol.KDF import HKDF as _HKDF  # type: ignore[no-redef]
         from Crypto.Hash import SHA256 as _SHA256  # type: ignore[no-redef]
+        from Crypto.Cipher import AES as _AES  # type: ignore[no-redef]
         _PYCRYPTODOME_OK = True
     except ImportError:
         _PYCRYPTODOME_OK = False
         _log.info(
             "rfid_tag_parser: pycryptodome not available — "
-            "Bambu tag decryption disabled. "
+            "Bambu/Creality tag decryption disabled. "
             "Install with: pip3 install pycryptodome"
         )
 
@@ -1107,6 +1120,21 @@ def _try_tigertag(raw: bytes) -> Optional[dict]:
     if bed_max:
         info["bed_temp_max"] = bed_max
 
+    # Twin Tag ID & Timestamp (page 0x0C, offset +32, u32 BE): seconds since
+    # 2000-01-01 GMT. Written identically to both chips when a spool's left
+    # and right tags are programmed together, so it doubles as a same-spool
+    # pairing key independent of each chip's own (different) hardware UID.
+    if len(raw) >= 36:
+        twin_tag_id = struct.unpack_from(">I", raw, 32)[0]
+        if twin_tag_id:  # 0 = unwritten
+            info["tigertag_twin_tag_id"] = twin_tag_id
+            # Same role as Bambu's "bambu_%s" % tray_uid: a same-spool
+            # identity that survives the two physical tags having different
+            # chip UIDs, feeding the existing spool_identity-based
+            # left-neighbor interference check (scan_jog.py) with no
+            # TigerTag-specific code needed there.
+            info["spool_identity"] = "tigertag_%d" % twin_tag_id
+
     if product_id == 0xFFFFFFFF:
         info["tigertag_product_mode"] = "maker"
     else:
@@ -1115,7 +1143,275 @@ def _try_tigertag(raw: bytes) -> Optional[dict]:
     return info
 
 
-# ---- Creality CFS ----------------------------------------------------------
+# ---- Creality CFS / K1 / K2 AES tag (authenticated) ------------------------
+#
+# Confirmed encryption scheme (supersedes the unconfirmed hex-ASCII guess in
+# _try_creality_cfs() below): Creality's own tag encoder derives a per-UID
+# MIFARE Classic Key B and stores an AES-128-ECB-encrypted 48-byte ASCII
+# payload in sector 1 (blocks 4-6). Two static keys are involved:
+#
+#   AES_KEY_GEN    -- AES-128-ECB-encrypt(uid repeated to 16 bytes)[:6] gives
+#                     the sector 1 Key B, matching Creality's published Key-B
+#                     write commands ("hf mf wrbl --blk 4 -b -k <key>").
+#   AES_KEY_CIPHER -- AES-128-ECB over the concatenated plaintext blocks 4-6
+#                     (48 bytes of the raw ASCII payload, not hex-encoded)
+#                     produces the ciphertext stored on the tag; decrypting
+#                     with the same key/mode recovers the ASCII payload.
+#
+# Both keys were community-sourced from a Creality RFID encryption helper
+# script mirroring the JavaScript implementation used by Creality's tag
+# writer tooling. No code was copied; reimplemented in Python from the two
+# key constants and the encrypt/decrypt procedure it documents.
+_CREALITY_AES_KEY_GEN = bytes([
+    0x71, 0x33, 0x62, 0x75, 0x5E, 0x74, 0x31, 0x6E,
+    0x71, 0x66, 0x5A, 0x28, 0x70, 0x66, 0x24, 0x31,
+])  # "q3bu^t1nqfZ(pf$1"
+
+_CREALITY_AES_KEY_CIPHER = bytes([
+    0x48, 0x40, 0x43, 0x46, 0x6B, 0x52, 0x6E, 0x7A,
+    0x40, 0x4B, 0x41, 0x74, 0x42, 0x4A, 0x70, 0x32,
+])  # "H@CFkRnz@KAtBJp2"
+
+
+def _creality_derive_key_b(uid_bytes: bytes) -> bytes:
+    """Derive the MIFARE Classic sector-1 Key B for a Creality CFS/K1/K2 tag.
+
+    Key = AES-128-ECB(_CREALITY_AES_KEY_GEN, uid repeated to 16 bytes)[:6].
+    Matches Creality's own tag-writer tooling, which concatenates the UID
+    hex string with itself until at least 16 bytes are available and
+    truncates to exactly 16 bytes before encrypting.
+    """
+    if not _PYCRYPTODOME_OK:
+        raise ImportError(
+            "pycryptodome required for Creality tag key derivation. "
+            "Install with: pip3 install pycryptodome"
+        )
+    if len(uid_bytes) not in (4, 7):
+        raise ValueError(
+            "Creality key derivation expects a 4 or 7 byte UID, got %d"
+            % len(uid_bytes))
+    uid_data = (bytes(uid_bytes) * 4)[:16]
+    cipher = _AES.new(_CREALITY_AES_KEY_GEN, _AES.MODE_ECB)
+    return cipher.encrypt(uid_data)[:6]
+
+
+def _creality_decrypt_tag_data(block4: bytes, block5: bytes,
+                                block6: bytes) -> bytes:
+    """Decrypt sector-1 blocks 4-6 into the 48-byte ASCII tag-data payload."""
+    cipher = _AES.new(_CREALITY_AES_KEY_CIPHER, _AES.MODE_ECB)
+    return cipher.decrypt(bytes(block4)[:16] + bytes(block5)[:16] + bytes(block6)[:16])
+
+
+# Material code -> name, from Creality's tag-writer material table.
+_CREALITY_MATERIAL_MAP: dict[str, str] = {
+    "10001": "HP-TPU", "11001": "CR-Nylon", "13001": "CR-PLACarbon",
+    "14001": "CR-PLAMatte", "15001": "CR-PLAFluo", "16001": "CR-TPU",
+    "17001": "CR-Wood", "18001": "HPUltraPLA", "19001": "HP-ASA",
+    "07001": "CR-ABS", "06001": "CR-PETG", "04001": "CR-PLA",
+    "05001": "CR-Silk", "09001": "EN-PLA+", "09002": "ENDERFASTPLA",
+    "08001": "Ender-PLA", "00004": "GenericABS", "00007": "GenericASA",
+    "00010": "GenericBVOH", "00012": "GenericHIPS", "00008": "GenericPA",
+    "00009": "GenericPA-CF", "00015": "GenericPA6-CF",
+    "00016": "GenericPAHT-CF", "00021": "GenericPC", "00020": "GenericPET",
+    "00013": "GenericPET-CF", "00003": "GenericPETG",
+    "00014": "GenericPETG-CF", "00001": "GenericPLA",
+    "00006": "GenericPLA-CF", "00002": "GenericPLA-Silk", "00019": "GenericPP",
+    "00017": "GenericPPS", "00018": "GenericPPS-CF", "00011": "GenericPVA",
+    "00005": "GenericTPU", "03001": "HyperABS", "06002": "HyperPETG",
+    "01001": "HyperPLA", "02001": "HyperPLA-CF",
+}
+
+# Length code -> spool weight in grams, from Creality's tag-writer table.
+_CREALITY_LENGTH_TO_WEIGHT_G: dict[str, int] = {"0330": 1000, "0165": 500}
+
+# Vendor ID -> name, from DnG-Crafts/K2-RFID's Creality tag examples/writers.
+_CREALITY_VENDOR_MAP: dict[str, str] = {
+    "0276": "Creality",
+}
+
+
+def _creality_ascii_preview(data: bytes, limit: int = 64) -> str:
+    """Return a single-line printable preview for Creality debug traces."""
+    preview = ''.join(
+        chr(b) if 32 <= b <= 126 else '.'
+        for b in bytes(data)[:limit])
+    if len(data) > limit:
+        preview += "..."
+    return preview
+
+
+def _creality_spool_identity(seed: str) -> str:
+    """Return a stable decimal Creality spool identity from parsed tag fields."""
+    digest = hashlib.sha1(seed.encode("ascii")).digest()
+    # 64 bits is compact for logs/config while keeping collision risk tiny for
+    # this local same-spool interference check.
+    return str(int.from_bytes(digest[:8], "big"))
+
+
+def _try_creality_tag(blocks: dict, uid_hex: Optional[str] = None,
+                      trace=None) -> Optional[dict]:
+    """Parse a Creality CFS/K1/K2 tag from authenticated sector-1 blocks.
+
+    ``blocks`` must contain absolute blocks 4, 5 and 6 (sector 1), read after
+    authenticating with the Key B from ``_creality_derive_key_b()`` — Bambu's
+    HKDF Key A and the MIFARE factory default key both fail on genuine
+    Creality tags, which is why this only runs as a third fallback in
+    tag_handler.read_current_tag().
+
+    Decrypted payload layout, aligned to DnG-Crafts/K2-RFID:
+      date(5, MDDYY) + vendor_id(4) + batch(2) + filament_id(6) +
+      color(7, "0RRGGBB") + length(4) + serial(6) + reserve/trailing data.
+
+    DnG's writers build filament_id as a 1-character printer/type prefix plus
+    the 5-character material code used by Creality's material database.
+    """
+    trace = _make_trace(trace)
+    if not _PYCRYPTODOME_OK:
+        trace("debug", "Creality AES: pycryptodome unavailable")
+        return None
+    b4, b5, b6 = blocks.get(4), blocks.get(5), blocks.get(6)
+    if not b4 or not b5 or not b6:
+        trace("debug",
+              "Creality AES: missing sector-1 blocks have4=%s have5=%s have6=%s",
+              bool(b4), bool(b5), bool(b6))
+        return None
+    raw_payload = bytes(b4)[:16] + bytes(b5)[:16] + bytes(b6)[:16]
+    trace("debug", "Creality AES: encrypted blocks 4-6 hex=%s",
+          raw_payload.hex().upper())
+    try:
+        decrypted = _creality_decrypt_tag_data(b4, b5, b6)
+    except Exception as exc:
+        trace("debug", "Creality AES: decrypt failed: %s", exc)
+        return None
+    trace("debug", "Creality AES: decrypted payload hex=%s",
+          decrypted.hex().upper())
+    trace("debug", "Creality AES: decrypted payload ascii=%r",
+          _creality_ascii_preview(decrypted))
+    structured_payload = decrypted[:40]
+    trailing_payload = decrypted[40:]
+    if trailing_payload:
+        trace("debug", "Creality AES: trailing payload hex=%s",
+              trailing_payload.hex().upper())
+    try:
+        ascii_data = structured_payload.decode("ascii")
+    except Exception as exc:
+        trace("debug", "Creality AES: structured payload is not ASCII: %s",
+              exc)
+        return None
+    if len(ascii_data) < 40:
+        trace("debug", "Creality AES: payload too short len=%d", len(ascii_data))
+        return None
+    if not ascii_data.isprintable():
+        trace("debug", "Creality AES: payload contains non-printable chars")
+        return None
+
+    date_code     = ascii_data[0:5]
+    vendor_id     = ascii_data[5:9]
+    batch         = ascii_data[9:11]
+    filament_id   = ascii_data[11:17]
+    material_code = filament_id[1:]
+    color         = ascii_data[17:24]
+    length        = ascii_data[24:28]
+    serial        = ascii_data[28:34]
+    reserve       = ascii_data[34:40]
+    trace(
+        "debug",
+        "Creality AES: parsed fields date_code=%r vendor_id=%r batch=%r "
+        "filament_id=%r material_code=%r color=%r length=%r serial=%r "
+        "reserve=%r",
+        date_code, vendor_id, batch, filament_id, material_code, color,
+        length, serial, reserve)
+
+    # Sanity check: material/color fields must look like the encoder's own
+    # format, otherwise this is the wrong key/tag rather than valid data.
+    if not filament_id.isdigit():
+        trace("debug", "Creality AES: reject filament_id not numeric: %r",
+              filament_id)
+        return None
+    if not material_code.isdigit():
+        trace("debug", "Creality AES: reject material_code not numeric: %r",
+              material_code)
+        return None
+    if not re.fullmatch(r"[0-9A-Fa-f]{7}", color):
+        trace("debug", "Creality AES: reject color not 7 hex chars: %r",
+              color)
+        return None
+
+    vendor_name = _CREALITY_VENDOR_MAP.get(vendor_id)
+    if vendor_name:
+        trace("debug", "Creality AES: vendor_id=%s resolved to %s",
+              vendor_id, vendor_name)
+    else:
+        trace("debug", "Creality AES: vendor_id=%s unknown; using Creality brand fallback",
+              vendor_id)
+    identity_seed = ":".join((
+        vendor_id, date_code, batch, filament_id, color, length, serial))
+    identity_numeric = _creality_spool_identity(identity_seed)
+    trace("debug",
+          "Creality AES: identity_seed=%r identity_numeric=%s uid=%s",
+          identity_seed, identity_numeric, uid_hex or "unknown")
+
+    info: dict = {
+        "brand": vendor_name or "Creality",
+        "tag_format": "creality",
+        "creality_batch": batch,
+        "creality_date_code": date_code,
+        "creality_vendor_id": vendor_id,
+        "creality_supplier": vendor_id,
+        "creality_filament_id": filament_id,
+        "material_code": material_code,
+        "creality_serial": serial,
+        "creality_identity_seed": identity_seed,
+        "creality_identity_numeric": identity_numeric,
+        "spool_identity": "creality_%s" % identity_numeric,
+    }
+    if vendor_name:
+        info["creality_vendor"] = vendor_name
+    material = _CREALITY_MATERIAL_MAP.get(
+        material_code, "Unknown (%s)" % material_code)
+    info["material"] = material
+    trace("debug", "Creality AES: material_code=%s resolved to %s",
+          material_code, material)
+
+    color_hex = color[1:]  # leading nibble unused; remaining 6 = RRGGBB
+    if re.fullmatch(r"[0-9A-Fa-f]{6}", color_hex):
+        info["color_hex"] = color_hex.upper()
+        trace("debug", "Creality AES: color=%r resolved to #%s",
+              color, info["color_hex"])
+    else:
+        trace("debug", "Creality AES: color suffix not valid RGB: %r",
+              color_hex)
+
+    weight_g = _CREALITY_LENGTH_TO_WEIGHT_G.get(length)
+    if weight_g:
+        info["weight_g"] = weight_g
+        trace("debug", "Creality AES: length=%s resolved to weight_g=%d",
+              length, weight_g)
+    else:
+        trace("debug", "Creality AES: length=%s has no known weight mapping",
+              length)
+
+    if len(date_code) == 5 and date_code.isdigit():
+        month = int(date_code[0])
+        day = int(date_code[1:3])
+        year = int(date_code[3:5])
+        if 1 <= month <= 9 and 1 <= day <= 31:
+            info["creality_production_date"] = "20%02d-%02d-%02d" % (
+                year, month, day)
+            trace("debug", "Creality AES: date_code=%s resolved to %s",
+                  date_code, info["creality_production_date"])
+        else:
+            trace("debug", "Creality AES: date_code=%s outside expected MDDYY range",
+                  date_code)
+    else:
+        trace("debug", "Creality AES: date_code=%r not numeric MDDYY",
+              date_code)
+
+    trace("debug", "Creality AES: parse success")
+    return info
+
+
+# ---- Creality CFS (legacy hex-ASCII heuristic, unconfirmed) ----------------
 
 # Known Creality filament ID → material name (partial list from DnG-Crafts/K2-RFID)
 _CREALITY_FILAMENT_IDS: dict[str, str] = {
@@ -1172,15 +1468,15 @@ def _try_creality_cfs(raw: bytes) -> Optional[dict]:
 
 _QIDI_MATERIALS: dict[int, str] = {
     1: "PLA", 2: "PLA Matte", 3: "PLA Metal", 4: "PLA Silk", 5: "PLA-CF",
-    6: "PLA-Wood", 7: "PLA Basic", 8: "PLA Matte Basic", 10: "Support For PLA",
+    6: "PLA-Wood", 7: "PLA Basic", 8: "PLA Matte Basic",
     11: "ABS", 12: "ABS-GF", 13: "ABS-Metal", 14: "ABS-Odorless",
-    18: "ASA", 19: "ASA-AERO", 20: "ASA-CF", 23: "PC", 24: "UltraPA",
+    18: "ASA", 19: "ASA-AERO", 24: "UltraPA",
     25: "PA-CF", 26: "UltraPA-CF25", 27: "PA12-CF", 30: "PAHT-CF",
     31: "PAHT-GF", 32: "Support For PAHT", 33: "Support For PET/PA",
-    34: "PC/ABS-FR", 35: "TPEE", 36: "PEBA", 37: "PET-CF", 38: "PET-GF",
-    39: "PETG Basic", 40: "PETG Tough", 41: "PETG Rapido", 44: "PETG-CF",
-    45: "PETG Translucent", 46: "PPS-GF", 47: "PVA", 48: "TPU-AERO 64D",
-    49: "TPU-Aero", 50: "TPU 95A-HF",
+    34: "PC/ABS-FR", 37: "PET-CF", 38: "PET-GF", 39: "PETG Basic",
+    40: "PETG Tough", 41: "PETG Rapido", 42: "PETG-CF",
+    43: "PETG-GF", 44: "PPS-CF", 45: "PETG Translucent", 47: "PVA",
+    49: "TPU-Aero", 50: "TPU",
 }
 
 _QIDI_COLORS: dict[int, str] = {
@@ -1198,7 +1494,7 @@ def _try_qidi_box(raw: bytes) -> Optional[dict]:
     Sector 1 Block 0 (byte offset 64):
         Byte 0: Material code (1-50)
         Byte 1: Color code (1-24)
-        Byte 2: Manufacturer code (0=Generic, 1=QIDI)
+        Byte 2: Manufacturer code (default 1=QIDI)
 
     Note: MIFARE Classic 1K requires sector-key auth; parser runs only if data is available.
     """
@@ -1223,12 +1519,20 @@ def _try_qidi_box(raw: bytes) -> Optional[dict]:
 
     material = _QIDI_MATERIALS.get(mat_code, f"Unknown({mat_code})")
     color_hex = _QIDI_COLORS.get(col_code, "")
-    brand = "QIDI" if mfg_code == 1 else "Generic"
+    if mfg_code == 1:
+        brand = "QIDI"
+    elif mfg_code == 0:
+        brand = "Generic"
+    else:
+        brand = f"Unknown({mfg_code})"
 
     return {
         "material": material,
         "brand": brand,
         "color_hex": color_hex,
+        "material_code": mat_code,
+        "color_code": col_code,
+        "manufacturer_code": mfg_code,
         "diameter_mm": 1.75,
         "tag_format": "qidi",
     }
@@ -1964,6 +2268,28 @@ def parse_tag(raw, uid_hex: Optional[str] = None, trace=None) -> Optional[dict]:
             except Exception as exc:
                 _log.debug("rfid: Bambu block parse error: %s", exc)
                 trace("debug", "parse_tag: Bambu block parse error: %s", exc)
+            # Try Creality AES tag layout — needs sector 1 read with the
+            # UID-derived Key B (see _creality_derive_key_b()); a Key-A read
+            # (Bambu or default) never reaches this data, so it only matches
+            # blocks produced by tag_handler's Creality Key B fallback.
+            try:
+                trace("debug", "parse_tag: trying Creality AES block layout")
+                result = _try_creality_tag(
+                    blocks,
+                    uid_hex=uid_hex or (
+                        bytes(uid_bytes).hex().upper()
+                        if uid_bytes is not None else None),
+                    trace=trace)
+                if result is not None:
+                    _log.debug(
+                        "rfid: parsed Creality AES tag blocks uid=%s",
+                        uid_hex or "unknown",
+                    )
+                    trace("info", "parse_tag: matched Creality AES tag blocks")
+                    return result
+            except Exception as exc:
+                _log.debug("rfid: Creality AES block parse error: %s", exc)
+                trace("debug", "parse_tag: Creality AES block parse error: %s", exc)
             # Build a flat byte string for Creality/QIDI parsers.
             # Use a fixed-size buffer indexed by absolute block number so that
             # block N always starts at offset N * 16, even if some blocks were

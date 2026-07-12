@@ -1277,10 +1277,16 @@ def _try_creality_tag(blocks: dict, trace=None) -> Optional[dict]:
           decrypted.hex().upper())
     trace("debug", "Creality AES: decrypted payload ascii=%r",
           _creality_ascii_preview(decrypted))
+    structured_payload = decrypted[:40]
+    trailing_payload = decrypted[40:]
+    if trailing_payload:
+        trace("debug", "Creality AES: trailing payload hex=%s",
+              trailing_payload.hex().upper())
     try:
-        ascii_data = decrypted.decode("ascii")
+        ascii_data = structured_payload.decode("ascii")
     except Exception as exc:
-        trace("debug", "Creality AES: decrypted payload is not ASCII: %s", exc)
+        trace("debug", "Creality AES: structured payload is not ASCII: %s",
+              exc)
         return None
     if len(ascii_data) < 40:
         trace("debug", "Creality AES: payload too short len=%d", len(ascii_data))

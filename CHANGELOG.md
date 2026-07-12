@@ -136,6 +136,12 @@ call always releases the target.
   `_try_creality_tag()` now traces encrypted blocks 4-6, the decrypted payload
   as hex and printable ASCII, each parsed field, lookup results, and the exact
   reject reason when a real tag does not match the expected layout.
+- 🐛 **Creality parser now ignores trailing non-ASCII bytes after the 40-byte
+  structured payload** — real tag reads can decrypt to valid
+  `date/vendor/batch/filament/color/length/serial/reserve` data followed by
+  non-ASCII trailing bytes in the remaining encrypted block space. The parser
+  now decodes only the structured first 40 bytes and logs trailing bytes at
+  level 4 instead of rejecting the whole tag.
 - ✨ **Key B support added to all three reader drivers** —
   `mifare_read_authenticated_blocks()` gained a `use_key_b` parameter in
   `pn532_driver.py`, `pn7160_driver.py`, and `rc522_driver.py`, threaded down

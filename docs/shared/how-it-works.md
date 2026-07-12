@@ -106,6 +106,11 @@ when available), which physically stops the instant the tag is detected —
 scan-jog gets the tag's real position from the homing result, not from an
 estimate after a fixed-length jog.
 
+The registration is version-aware. On Happy Hare V3 the endstop is added to
+the legacy shared gear rail. On V4 it is added to the gear rail for the drive
+selected by the reader's global `mmu_gate`. This lets one NFC configuration
+serve V3, V4, and multi-unit V4 layouts without relying on `laneN` naming.
+
 ### Scan loop
 
 ```
@@ -151,6 +156,12 @@ _scan_step_event  (continuous mode)
             └─ dispatch cached tag/spool event
   └─ scan limit reached with no tag? → rewind and exit
 ```
+
+For a full-travel NFC homing move with no cached UID, scan-jog rewinds directly
+instead of issuing a second endpoint probe. The virtual endstop owns the final
+PN532 discovery and that request may still be busy. A `0.1mm` internal end
+tolerance also suppresses zero-distance homing commands caused by position
+rounding.
 
 The shipped continuous config probes at 200 mm/s and 2000 mm/s^2 with a
 0.05 s in-flight read cadence. During in-flight motion NFC uses a UID-only

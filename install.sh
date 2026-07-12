@@ -738,19 +738,24 @@ warn_software_i2c_sensors() {
 
 count_lane_sections() {
     local file_path="$1"
-    python3 - "${file_path}" <<'PYEOF'
+    local hh_version="$2"
+    python3 - "${file_path}" "${hh_version}" <<'PYEOF'
 import re
 import sys
 
-path = sys.argv[1]
+path, hh_version = sys.argv[1:3]
 try:
     text = open(path, 'r').read()
 except FileNotFoundError:
-    print(5)
+    print(4)
     raise SystemExit
 
-count = len(re.findall(r'^\[nfc_gate lane\d+\]\s*$', text, flags=re.M))
-print(count or 5)
+if hh_version == 'v4':
+    section_pattern = r'^\[nfc_gate unit0_lane\d+\]\s*$'
+else:
+    section_pattern = r'^\[nfc_gate lane\d+\]\s*$'
+count = len(re.findall(section_pattern, text, flags=re.M))
+print(count or 4)
 PYEOF
 }
 
@@ -758,16 +763,37 @@ write_lane_config() {
     local file_path="$1"
     local lane_count="$2"
     local lane_mcu_prefix="$3"
+    local hh_version="$4"
 
-    python3 - "${file_path}" "${lane_count}" "${lane_mcu_prefix}" <<'PYEOF'
+    python3 - "${file_path}" "${lane_count}" "${lane_mcu_prefix}" "${hh_version}" <<'PYEOF'
 import re
 import sys
 
 path = sys.argv[1]
 lane_count = int(sys.argv[2])
 lane_mcu_prefix = sys.argv[3]
+hh_version = sys.argv[4]
 existing = {}
 current_lane = None
+
+if hh_version == 'v4':
+    section_pattern = r'^\[nfc_gate unit0_lane(\d+)\]$'
+    reader_name = lambda lane: 'unit0_lane%d' % lane
+    mcu_name = lambda lane: 'unit0_gate%d' % lane
+    endstop_name = lambda lane: 'nfc_unit0_lane%d' % lane
+    layout_title = 'HAPPY HARE V4 NFC GATE READER - NFC I2C LANE HARDWARE'
+    layout_note = (
+        "#   Happy Hare V4 default single-unit layout: unit0_laneN -> "
+        "unit0_gateN.\n")
+else:
+    section_pattern = r'^\[nfc_gate lane(\d+)\]$'
+    reader_name = lambda lane: 'lane%d' % lane
+    mcu_name = lambda lane: '%s%d' % (lane_mcu_prefix, lane)
+    endstop_name = lambda lane: 'nfc_lane%d' % lane
+    layout_title = 'EMU NFC GATE READER - NFC I2C LANE HARDWARE'
+    layout_note = (
+        "#   Happy Hare V3 default layout uses laneN reader sections and the "
+        "selected MCU prefix.\n")
 
 try:
     lines = open(path, 'r').read().splitlines()
@@ -776,7 +802,7 @@ except FileNotFoundError:
 
 for line in lines:
     stripped = line.strip()
-    match = re.match(r'^\[nfc_gate lane(\d+)\]$', stripped)
+    match = re.match(section_pattern, stripped)
     if match:
         current_lane = int(match.group(1))
         continue
@@ -791,10 +817,11 @@ for line in lines:
 
 with open(path, 'w') as f:
     f.write("# =============================================================================\n")
-    f.write("# ================= EMU NFC GATE READER - NFC I2C LANE HARDWARE ================\n")
+    f.write("# ================= %s ================\n" % layout_title)
     f.write("# =============================================================================\n")
     f.write("# Supported documented path:\n")
     f.write("#   one NFC reader module per lane MCU / EBB42 board.\n")
+    f.write(layout_note)
     f.write("#   PN532 is the default reader; PN7160 may be selected per lane with\n")
     f.write("#   reader_type: pn7160. RC522 may be selected with reader_type: rc522\n")
     f.write("#   for UID-only SPI reads.\n")
@@ -804,17 +831,21 @@ with open(path, 'w') as f:
     f.write("#   [include nfc/nfc_macros.cfg]\n")
     f.write("#   [include nfc/nfc_reader_hw.cfg]\n")
     f.write("#\n")
-    f.write("# Each [nfc_gate laneN] section maps:\n")
+    f.write("# Each [nfc_gate ...] section maps:\n")
     f.write("#   Happy Hare gate number -> Klipper lane MCU -> NFC reader hardware.\n")
-    f.write("# Each [mmu_nfc_endstop laneN] section seeds Happy Hare with a homeable\n")
-    f.write("# virtual endstop that uses the matching lane reader. Use ENDSTOP=nfc_laneN\n")
+    f.write("# Each [mmu_nfc_endstop ...] section seeds Happy Hare with a homeable\n")
+    f.write("# virtual endstop that uses the matching lane reader.\n")
     f.write("# in Happy Hare homing/test moves.\n")
     f.write("# Set enabled: False on a lane to keep the template without creating hardware.\n")
     f.write("#\n")
     f.write("# i2c_mcu: is consumed by Klipper's I2C bus layer (MCU_I2C_from_config),\n")
     f.write("# not read explicitly by the plugin.  The MCU name must already exist in\n")
-    f.write("# Klipper / Happy Hare config.  The installer writes this from the selected\n")
-    f.write("# MCU prefix, for example prefix 'lane' -> [mcu lane0], [mcu lane1], etc.\n")
+    f.write("# Klipper / Happy Hare config.\n")
+    if hh_version == 'v4':
+        f.write("# The V4 default names are unit0_gate0, unit0_gate1, etc.\n")
+    else:
+        f.write("# The installer writes this from the selected MCU prefix, for example\n")
+        f.write("# prefix 'lane' -> [mcu lane0], [mcu lane1], etc.\n")
     f.write("#\n")
     f.write("# [WARN] After updating Klipper, rebuild and flash the lane MCU / EBB42 firmware.\n")
     f.write("# Updating the host alone is not enough for NFC reader I2C troubleshooting.\n")
@@ -822,22 +853,24 @@ with open(path, 'w') as f:
 
     for lane in range(lane_count):
         lane_existing = existing.get(lane, {})
-        mcu = f'{lane_mcu_prefix}{lane}'
+        reader = reader_name(lane)
+        mcu = mcu_name(lane)
+        endstop = endstop_name(lane)
         startup_delay = lane_existing.get('startup_poll_delay',
                                           f'{lane * 0.5:.1f}')
         f.write("# =============================================================================\n")
         f.write(f"# =============================== LANE {lane} =================================\n")
         f.write("# =============================================================================\n")
-        f.write(f"[nfc_gate lane{lane}]\n")
+        f.write(f"[nfc_gate {reader}]\n")
         f.write("enabled:                True\n")
         f.write("# reader_type:            pn532  # PN7160: pn7160; UID-only RC522 SPI: rc522\n")
         f.write("# i2c_address:            36     # PN7160 valid addresses are 40-43 (0x28-0x2B)\n")
         f.write(f"mmu_gate:                {lane}\n")
         f.write(f"i2c_mcu:                 {mcu}\n")
         f.write(f"startup_poll_delay:      {startup_delay}\n\n")
-        f.write(f"[mmu_nfc_endstop lane{lane}]\n")
-        f.write(f"nfc_gate:                lane{lane}\n")
-        f.write(f"endstop_name:            nfc_lane{lane}\n")
+        f.write(f"[mmu_nfc_endstop {reader}]\n")
+        f.write(f"nfc_gate:                {reader}\n")
+        f.write(f"endstop_name:            {endstop}\n")
         f.write("poll_interval:           0.05\n")
         f.write("register_sensor:         True\n\n")
 
@@ -845,17 +878,20 @@ with open(path, 'w') as f:
     f.write("# =============================================================================\n")
     f.write(f"# =========================== LANE {example_lane} EXAMPLE ============================\n")
     f.write("# =============================================================================\n")
-    f.write(f"# [nfc_gate lane{example_lane}]\n")
+    example_reader = reader_name(example_lane)
+    example_mcu = mcu_name(example_lane)
+    example_endstop = endstop_name(example_lane)
+    f.write(f"# [nfc_gate {example_reader}]\n")
     f.write("# enabled:                False\n")
     f.write("# reader_type:            pn532  # PN7160: pn7160; UID-only RC522 SPI: rc522\n")
     f.write("# i2c_address:            36     # PN7160 valid addresses are 40-43 (0x28-0x2B)\n")
     f.write(f"# mmu_gate:                {example_lane}\n")
-    f.write(f"# i2c_mcu:                 {lane_mcu_prefix}{example_lane}\n")
+    f.write(f"# i2c_mcu:                 {example_mcu}\n")
     f.write(f"# startup_poll_delay:      {example_lane * 0.5:.1f}\n")
     f.write("#\n")
-    f.write(f"# [mmu_nfc_endstop lane{example_lane}]\n")
-    f.write(f"# nfc_gate:                lane{example_lane}\n")
-    f.write(f"# endstop_name:            nfc_lane{example_lane}\n")
+    f.write(f"# [mmu_nfc_endstop {example_reader}]\n")
+    f.write(f"# nfc_gate:                {example_reader}\n")
+    f.write(f"# endstop_name:            {example_endstop}\n")
     f.write("# poll_interval:           0.05\n")
     f.write("# register_sensor:         True\n")
 PYEOF
@@ -1309,18 +1345,27 @@ echo ""
 # ── Lane path ─────────────────────────────────────────────────────────────────
 if [ "${READER_TYPE}" = "lane" ]; then
 
-    DEFAULT_LANE_COUNT="$(count_lane_sections "${NFC_READER_HW_CFG}")"
+    echo "2. Happy Hare version"
+    echo "   $(choice_style v3 v3) = conventional lane0 / mmu0 naming"
+    echo "   $(choice_style v4 v3) = unit0_lane0 / unit0_gate0 naming"
+    prompt_choice HH_VERSION \
+        "   Select Happy Hare version" \
+        "v3" \
+        "v3" "v4"
+    echo ""
+
+    DEFAULT_LANE_COUNT="$(count_lane_sections "${NFC_READER_HW_CFG}" "${HH_VERSION}")"
     prompt_with_default LANE_COUNT \
-        "2. How many NFC readers / lanes are you configuring?" \
+        "3. How many NFC readers / lanes are you configuring?" \
         "${DEFAULT_LANE_COUNT}"
     while ! printf '%s' "${LANE_COUNT}" | grep -Eq '^[1-9][0-9]*$'; do
         echo "Please enter a whole number greater than zero."
         prompt_with_default LANE_COUNT \
-            "2. How many NFC readers / lanes are you configuring?" \
+            "3. How many NFC readers / lanes are you configuring?" \
             "${DEFAULT_LANE_COUNT}"
     done
 
-    echo "3. Spoolman connection"
+    echo "4. Spoolman connection"
     echo "   $(choice_style auto auto)     = read the URL from Moonraker's [spoolman] section (recommended)"
     echo "   $(choice_style direct auto)   = enter a fixed URL such as http://127.0.0.1:7912"
     echo "   $(choice_style disabled auto) = no Spoolman — resolve by tag metadata or UID only"
@@ -1338,17 +1383,23 @@ if [ "${READER_TYPE}" = "lane" ]; then
     fi
 
     prompt_yes_no STARTUP_POLLING \
-        "4. Start NFC polling automatically on Klipper startup?" \
+        "5. Start NFC polling automatically on Klipper startup?" \
         "yes"
 
     prompt_yes_no SCAN_ENABLED \
-        "5. Enable scan-jog when a loaded tag is out of read range?" \
+        "6. Enable scan-jog when a loaded tag is out of read range?" \
         "yes"
 
-    prompt_with_default LANE_MCU_PREFIX \
-        "6. Lane reader MCU name prefix" \
-        "mmu"
-    echo "   This writes i2c_mcu values as ${LANE_MCU_PREFIX}0, ${LANE_MCU_PREFIX}1, etc."
+    if [ "${HH_VERSION}" = "v4" ]; then
+        LANE_MCU_PREFIX="unit0_gate"
+        echo "7. Happy Hare V4 default MCU naming"
+        echo "   This writes i2c_mcu values as unit0_gate0, unit0_gate1, etc."
+    else
+        prompt_with_default LANE_MCU_PREFIX \
+            "7. Lane reader MCU name prefix" \
+            "mmu"
+        echo "   This writes i2c_mcu values as ${LANE_MCU_PREFIX}0, ${LANE_MCU_PREFIX}1, etc."
+    fi
     echo ""
 
     DEFAULT_LANE_I2C_BUS="$(detect_lane_i2c_bus "${NFC_READER_CFG}")"
@@ -1358,7 +1409,7 @@ if [ "${READER_TYPE}" = "lane" ]; then
     prompt_scan_jog_max_mode SCAN_JOG_MAX_MODE SCAN_JOG_MAX
     echo ""
 
-    echo "9. Tag read mode"
+    echo "10. Tag read mode"
     echo "   $(choice_style spoolman spoolman) = UID-only lookup in Spoolman's extra field"
     echo "   $(choice_style rich spoolman)     = read tag metadata, then resolve/create Spoolman records"
     if [ "${SPOOLMAN_MODE}" = "disabled" ]; then
@@ -1380,11 +1431,11 @@ if [ "${READER_TYPE}" = "lane" ]; then
         echo "   Factory-tagged Bambu spools are MIFARE Classic and require"
         echo "   authenticated reads plus the pycryptodome HKDF dependency."
         prompt_yes_no BAMBU_READS \
-            "10. Will you read factory-tagged Bambu spools with rich metadata?" \
+            "11. Will you read factory-tagged Bambu spools with rich metadata?" \
             "no"
         if [ "${SPOOLMAN_MODE}" != "disabled" ]; then
             prompt_yes_no SPOOLMAN_AUTO_CREATE \
-                "11. Auto-create missing Spoolman spools from rich tag metadata?" \
+                "12. Auto-create missing Spoolman spools from rich tag metadata?" \
                 "yes"
         fi
     fi
@@ -1394,6 +1445,7 @@ if [ "${READER_TYPE}" = "lane" ]; then
 # ── Shared path ───────────────────────────────────────────────────────────────
 else
 
+    HH_VERSION=""
     LANE_COUNT="0"
     LANE_MCU_PREFIX=""
     LANE_I2C_BUS=""
@@ -1484,8 +1536,14 @@ if [ "${READER_TYPE}" = "shared" ]; then
     echo "    bypass read:     ${BOLD}${MMU_LED_UNIT}_mmu_RFID_bypass_read_exit${RESET}"
     echo "    bypass ready:    ${BOLD}${MMU_LED_UNIT}_mmu_RFID_bypass_ready_exit${RESET}"
 else
+    echo "  Happy Hare:        ${HH_VERSION}"
     echo "  Lane count:        ${LANE_COUNT}"
-    echo "  Lane MCU prefix:   ${LANE_MCU_PREFIX}  (${LANE_MCU_PREFIX}0, ${LANE_MCU_PREFIX}1, ...)"
+    if [ "${HH_VERSION}" = "v4" ]; then
+        echo "  Lane mapping:      unit0_laneN -> unit0_gateN"
+        echo "  Endstop mapping:   nfc_unit0_laneN"
+    else
+        echo "  Lane MCU prefix:   ${LANE_MCU_PREFIX}  (${LANE_MCU_PREFIX}0, ${LANE_MCU_PREFIX}1, ...)"
+    fi
     echo "  Lane I2C bus:      ${LANE_I2C_BUS} (${LANE_BUS_LABEL})"
     echo "  Scan-jog:          ${SCAN_ENABLED}"
     if [ "${SCAN_JOG_MAX_MODE}" = "fixed" ]; then
@@ -1703,7 +1761,7 @@ else
         "$( [ "${STARTUP_POLLING}" = "yes" ] && echo "1" || echo "-1" )"
     set_config_value "${NFC_READER_CFG}" "nfc_gate" "scan_enabled" \
         "$( [ "${SCAN_ENABLED}" = "yes" ] && echo "True" || echo "False" )"
-    write_lane_config "${NFC_READER_HW_CFG}" "${LANE_COUNT}" "${LANE_MCU_PREFIX}"
+    write_lane_config "${NFC_READER_HW_CFG}" "${LANE_COUNT}" "${LANE_MCU_PREFIX}" "${HH_VERSION}"
     warn_software_i2c_sensors "${LANE_I2C_BUS}"
 fi
 
@@ -1886,7 +1944,12 @@ else
     echo "  1. Review ~/printer_data/config/nfc/nfc_reader.cfg"
     echo "     The installer has applied your selected settings."
     echo "     The installer wrote i2c_bus: ${LANE_I2C_BUS} in the base [nfc_gate]."
-    echo "     The installer wrote lane i2c_mcu values as ${LANE_MCU_PREFIX}0, ${LANE_MCU_PREFIX}1, etc."
+    if [ "${HH_VERSION}" = "v4" ]; then
+        echo "     The installer wrote V4 lane sections as unit0_lane0, unit0_lane1, etc."
+        echo "     Their i2c_mcu values are unit0_gate0, unit0_gate1, etc."
+    else
+        echo "     The installer wrote lane i2c_mcu values as ${LANE_MCU_PREFIX}0, ${LANE_MCU_PREFIX}1, etc."
+    fi
     if [ "${SCAN_JOG_MAX_MODE}" = "fixed" ]; then
         echo "     The installer wrote scan_jog_max: ${SCAN_JOG_MAX} for scan-jog."
     else
@@ -1911,7 +1974,11 @@ else
     echo "     If moonraker.conf was not found, add [update_manager Happy-Hare-RFID-Reader] manually."
     echo ""
     echo "  PN7160 note:"
-    echo "     For each PN7160 lane, edit that [nfc_gate laneN] section in nfc_reader_hw.cfg:"
+    if [ "${HH_VERSION}" = "v4" ]; then
+        echo "     For each PN7160 lane, edit that [nfc_gate unit0_laneN] section in nfc_reader_hw.cfg:"
+    else
+        echo "     For each PN7160 lane, edit that [nfc_gate laneN] section in nfc_reader_hw.cfg:"
+    fi
     echo "       reader_type: pn7160"
     echo "       i2c_address: 40   # 40-43 depending on address switches"
     echo "     See docs/i2c-nfc/pn7160-wiring.md for VEN/IRQ and I2C bus notes."

@@ -41,6 +41,12 @@ to configure. See [How It Works](docs/shared/how-it-works.md) for the full
 scan loop and [Configuration Reference](docs/shared/configuration.md) for the
 `[mmu_nfc_endstop laneN]` keys.
 
+The same configuration supports Happy Hare V3 and V4. The plugin registers
+the software endstop on V3's shared gear rail or on the V4 drive selected by
+the reader's `mmu_gate`. Lane and endstop section names are only labels; the
+`nfc_gate` reference and `mmu_gate` value provide the actual binding, including
+multi-unit installations.
+
 ## Operating Modes
 
 | Mode | Hardware | Best For | Flow |
@@ -82,6 +88,12 @@ version-aware scan-safe check: Happy Hare v4 accepts `action=idle` or
 `action=checking`; Happy Hare v3/pre-v4 and unknown versions accept only
 `action=idle`. Manual or console `JOG_SCAN=1` commands without `SOURCE=AUTO`
 stay conservative and always require `action=idle`.
+
+Happy Hare V4 also validates `MMU_SET_LED` effect names against its configured
+operation effects. NFC therefore starts generated `[mmu_led_effect]` instances
+directly on V4, while keeping the existing public `MMU_SET_LED` path on V3.
+No LED configuration changes are required: define NFC effects with
+`define_on: gates` (or `define_on: gates, exit`) as usual.
 
 Supported readers:
 

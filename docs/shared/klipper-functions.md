@@ -309,10 +309,18 @@ once per cycle, waits about two seconds, then starts the next cycle. After the
 last cycle it asks Happy Hare to repaint the gate map so the active test effect
 stops.
 
+On Happy Hare V3, NFC uses the public LED wrapper:
+
 ```gcode
 MMU_SET_LED GATE=0 EXIT_EFFECT=mmu_RFID_read
 MMU_GATE_MAP QUIET=1
 ```
+
+On V4, generated `[mmu_led_effect]` instances are not accepted by that public
+effect-name validator. NFC automatically uses the generated per-gate name
+instead, for example `_MMU_SET_LED_EFFECT EFFECT=mmu_RFID_read_exit_0
+REPLACE=1`, then stops it before returning LED control to Happy Hare. Users
+still configure only the base effect name (`mmu_RFID_read`).
 
 ---
 

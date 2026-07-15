@@ -65,6 +65,13 @@ bash install.sh
 
 The installer prints what it creates. If it cannot find the Klipper extras directory or the printer config directory, it exits with an error before making any changes.
 
+For per-lane readers, the installer asks for the Happy Hare version. Select
+`v3` for the conventional `lane0` / `mmu0` layout. Select `v4` for Happy Hare
+V4's default single-unit layout; it creates matching `unit0_laneN`,
+`unit0_gateN`, and `nfc_unit0_laneN` sections. The V4 option deliberately
+uses only the standard `unit0` layout. Multi-unit or custom gate mappings must
+be edited in `nfc_reader_hw.cfg` after installation.
+
 ### Step 4 — Add Includes to `printer.cfg`
 
 Open `~/printer_data/config/printer.cfg` and add the matching includes in this order.

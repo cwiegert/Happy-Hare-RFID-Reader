@@ -257,7 +257,7 @@ scan_continuous_poll_interval: 0.05
 | `scan_decode_retry_mm` | `5.0` | Distance between nearby retry positions after a UID is found but the rich tag payload is marked incomplete. |
 | `scan_decode_retry_rounds` | `5` | Nearby retry rounds before accepting the current UID/metadata result. Each round probes both sides of the first UID hit. |
 | `scan_poll_interval` | `0.25` | Seconds between stopped-position NFC read attempts during scan-jog. The shared reader also uses this value as its active polling cadence. Since Happy Hare `MMU_TEST_MOVE` blocks by default, this is not a read-while-moving interval. |
-| `scan_motion_mode` | `continuous` | `continuous` (default) queues the forward search chunk through Happy Hare's MMU toolhead and polls NFC while that chunk is estimated to be moving. `stopped` uses blocking MMU_TEST_MOVE substeps with reads at each stopped spool position — use this for marginal reader or tag alignment. |
+| `scan_motion_mode` | `continuous` | `continuous` (default) uses the lane NFC virtual endstop for the full remaining forward search and records UID hits while the homing move is active. `stopped` uses blocking MMU_TEST_MOVE substeps with reads at each stopped spool position — use this for marginal reader or tag alignment. |
 | `scan_continuous_step_mm` | `150.0` | Continuous-mode forward search chunk size. Rich tag reads use the observed UID hit-window center, so this value no longer needs to be kept small just to avoid overshooting the ideal metadata-read position. |
 | `scan_continuous_speed` | `200.0` | Continuous-mode gear move speed in mm/s. |
 | `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration in mm/s^2. At `150mm`, `200mm/s`, `2000mm/s^2`, each move takes about `0.85s` before NFC read time is included. |
@@ -283,6 +283,12 @@ parsing is needed to confirm interference, NFC backs up to the observed UID
 hit-window center before rich parsing and the normal `scan_decode_retry_mm`
 retry sweep.
 
+When a virtual NFC homing move consumes the full configured scan distance
+without caching a UID, NFC rewinds directly. It does not start one extra
+endpoint PN532 probe, because the final virtual-endstop discovery may still be
+busy. A fixed internal `0.1mm` end tolerance also prevents floating-point
+residue from generating a `MOVE=0.00` homing command.
+
 **Happy Hare post-preload hook (alternative to automatic polling):**
 
 The [igiannakas IG-dev branch](https://github.com/igiannakas/Happy-Hare/tree/IG-dev) of Happy Hare adds `variable_user_post_preload_extension` in `config/base/mmu_macro_vars.cfg`. Set it to trigger NFC scan-jog after each successful `MMU_PRELOAD`:
@@ -294,7 +300,16 @@ gcode: # Leave empty
 variable_user_post_preload_extension: '_NFC_SCAN_JOG_PRELOAD'
 ```
 
-Happy Hare appends `GATE=<n>` automatically. `_NFC_SCAN_JOG_PRELOAD` calls `NFC GATE=<n> JOG_SCAN=1`; NFC starts the configured scan-jog LED effect from the Python scan timer before motion begins. NFC always clears the Happy Hare gate cache, explicitly unsets the old Spoolman gate assignment with `MMU_SPOOLMAN GATE=<n>`, and runs the pre-scan `MMU_SPOOLMAN SYNC=1`; when launched from this hook, those calls are deferred to the scan timer so the hook can return first.
+Happy Hare V3 appends `GATE=<n>` automatically. V4 invokes the hook without
+that parameter, so `_NFC_SCAN_JOG_PRELOAD` falls back to `printer.mmu.gate`.
+It then calls `NFC GATE=<n> JOG_SCAN=1 SOURCE=AUTO`; the marker permits V4's
+trusted post-preload `action=checking` state while manual scan commands remain
+restricted to `action=idle`. NFC starts the configured scan-jog LED effect from
+the Python scan timer before motion begins. NFC always clears the Happy Hare
+gate cache, explicitly unsets the old Spoolman gate assignment with
+`MMU_SPOOLMAN GATE=<n>`, and runs the pre-scan `MMU_SPOOLMAN SYNC=1`; when
+launched from this hook, those calls are deferred to the scan timer so the hook
+can return first.
 
 Recommended NFC config when using the hook:
 
@@ -457,6 +472,11 @@ reader the matching `[nfc_gate laneN]` section owns. This is what lets
 scan-jog's forward search stop the instant the tag is detected instead of
 jogging a fixed distance and polling afterward. See
 [Virtual Endstop](klipper-functions.md#virtual-endstop) for how scan-jog uses it.
+
+V3 registers the endstop on Happy Hare's shared gear rail. V4 registers it on
+the drive selected by the reader's global `mmu_gate`. The section name, reader
+name, and `endstop_name` may therefore use any naming convention, including
+multi-unit layouts; `nfc_gate` and `mmu_gate` define the actual association.
 
 ```ini
 [mmu_nfc_endstop lane0]

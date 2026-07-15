@@ -861,6 +861,154 @@ with open(path, 'w') as f:
 PYEOF
 }
 
+ensure_mmu_nfc_endstops() {
+    local file_path="$1"
+    local name
+    name="$(basename "${file_path}")"
+
+    if [ ! -f "${file_path}" ]; then
+        return
+    fi
+
+    echo "  [check]    ${name} — ensuring NFC virtual endstops below each lane reader..."
+    python3 - "${file_path}" <<'PYEOF' \
+        || echo "    WARNING: virtual endstop injection failed — ${name} left unchanged"
+import re
+import sys
+
+path = sys.argv[1]
+
+with open(path, 'r') as f:
+    text = f.read()
+
+lines = text.splitlines(keepends=True)
+section_re = re.compile(r'^\[([^\]]+)\]\s*(?:[#;].*)?$')
+lane_re = re.compile(r'^nfc_gate lane(\d+)$')
+endstop_re = re.compile(r'^mmu_nfc_endstop lane(\d+)$')
+
+sections = []
+current = None
+for idx, line in enumerate(lines):
+    match = section_re.match(line.strip())
+    if not match:
+        continue
+    if current is not None:
+        current['end'] = idx
+        sections.append(current)
+    current = {
+        'name': match.group(1).strip(),
+        'start': idx,
+        'end': len(lines),
+    }
+if current is not None:
+    sections.append(current)
+
+existing_endstops = {}
+for section in sections:
+    match = endstop_re.match(section['name'])
+    if match:
+        lane = int(match.group(1))
+        existing_endstops[lane] = section
+
+lane_sections = []
+for section in sections:
+    match = lane_re.match(section['name'])
+    if match:
+        lane_sections.append((int(match.group(1)), section))
+
+if not lane_sections:
+    print("    (no [nfc_gate laneN] sections found)")
+    raise SystemExit
+
+remove_ranges = {}
+insertions = {}
+actions = []
+
+def generated_block(lane):
+    return (
+        "[mmu_nfc_endstop lane{lane}]\n"
+        "nfc_gate:                lane{lane}\n"
+        "endstop_name:            nfc_lane{lane}\n"
+        "poll_interval:           0.05\n"
+        "register_sensor:         True\n"
+    ).format(lane=lane)
+
+def section_text(section):
+    end = section['start'] + 1
+    for idx in range(section['start'] + 1, section['end']):
+        stripped = lines[idx].strip()
+        if stripped and not stripped.startswith('#') and not stripped.startswith(';'):
+            end = idx + 1
+    return ''.join(lines[section['start']:end]).strip('\n') + '\n'
+
+def lane_insert_index(section):
+    insert_at = section['end']
+    for idx in range(section['start'] + 1, section['end']):
+        stripped = lines[idx].strip()
+        if stripped and not stripped.startswith('#') and not stripped.startswith(';'):
+            insert_at = idx + 1
+    return insert_at
+
+for lane, section in lane_sections:
+    existing = existing_endstops.get(lane)
+    insert_at = lane_insert_index(section)
+    if existing is None:
+        block = generated_block(lane)
+        actions.append(("insert", lane))
+        insertions.setdefault(insert_at, []).append((lane, block))
+    else:
+        if existing['start'] == insert_at or existing['start'] == insert_at + 1:
+            actions.append(("keep", lane))
+        else:
+            block = section_text(existing)
+            remove_ranges[existing['start']] = existing['end']
+            actions.append(("move", lane))
+            insertions.setdefault(insert_at, []).append((lane, block))
+
+if all(action == "keep" for action, _lane in actions):
+    for _action, lane in actions:
+        print("    [skip]    [mmu_nfc_endstop lane{}]".format(lane))
+    print("    (virtual endstops already present below lane readers)")
+    raise SystemExit
+
+out = []
+i = 0
+while i < len(lines):
+    for lane, block in insertions.get(i, []):
+        if out and out[-1].strip():
+            out.append('\n')
+        out.extend(block.splitlines(keepends=True))
+        if out and not out[-1].endswith('\n'):
+            out[-1] += '\n'
+        out.append('\n')
+    if i in remove_ranges:
+        i = remove_ranges[i]
+        continue
+    out.append(lines[i])
+    i += 1
+
+for lane, block in insertions.get(len(lines), []):
+    if out and out[-1].strip():
+        out.append('\n')
+    out.extend(block.splitlines(keepends=True))
+    out.append('\n')
+
+with open(path, 'w') as f:
+    f.write(''.join(out))
+
+for action, lane in actions:
+    if action == "keep":
+        print("    [skip]    [mmu_nfc_endstop lane{}] already below [nfc_gate lane{}]".format(
+            lane, lane))
+    elif action == "move":
+        print("    [move]    [mmu_nfc_endstop lane{}] below [nfc_gate lane{}]".format(
+            lane, lane))
+    else:
+        print("    [insert]  [mmu_nfc_endstop lane{}] below [nfc_gate lane{}]".format(
+            lane, lane))
+PYEOF
+}
+
 detect_reader_type() {
     python3 - "$@" <<'PYEOF'
 import os
@@ -1667,6 +1815,8 @@ merge_config "${REPO_DIR}/config/nfc_reader.cfg"        "${NFC_READER_CFG}"
 merge_config "${REPO_DIR}/config/nfc_macros.cfg"         "${NFC_CONFIG_DIR}/nfc_macros.cfg"
 if [ "${READER_TYPE}" != "shared" ]; then
     merge_config "${REPO_DIR}/config/nfc_reader_hw.cfg"  "${NFC_READER_HW_CFG}"
+    echo "  [notice]   Adding NFC virtual endstop definitions below each per-lane reader when missing."
+    ensure_mmu_nfc_endstops "${NFC_READER_HW_CFG}"
 else
     echo "  [skip]     nfc_reader_hw.cfg — shared reader install does not need lane sections"
 fi
@@ -1704,6 +1854,8 @@ else
     set_config_value "${NFC_READER_CFG}" "nfc_gate" "scan_enabled" \
         "$( [ "${SCAN_ENABLED}" = "yes" ] && echo "True" || echo "False" )"
     write_lane_config "${NFC_READER_HW_CFG}" "${LANE_COUNT}" "${LANE_MCU_PREFIX}"
+    echo "  [notice]   Verifying NFC virtual endstop definitions below each per-lane reader."
+    ensure_mmu_nfc_endstops "${NFC_READER_HW_CFG}"
     warn_software_i2c_sensors "${LANE_I2C_BUS}"
 fi
 

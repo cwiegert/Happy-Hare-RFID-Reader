@@ -366,6 +366,134 @@ def _raw_klipper_config(printer):
         return {}
 
 
+def _nfc_endstop_section(gate):
+    return "mmu_nfc_endstop lane%d" % int(gate._gate)
+
+
+def _nfc_endstop_name(gate):
+    return "nfc_lane%d" % int(gate._gate)
+
+
+def _has_nfc_endstop(printer, gate, raw_config=None):
+    section = _nfc_endstop_section(gate)
+    if raw_config is None:
+        raw_config = _raw_klipper_config(printer)
+    if section in raw_config:
+        return True
+    return printer.lookup_object(section, None) is not None
+
+
+def _nfc_endstop_block(gate):
+    lane = int(gate._gate)
+    return (
+        "[mmu_nfc_endstop lane{lane}]\n"
+        "nfc_gate:                lane{lane}\n"
+        "endstop_name:            nfc_lane{lane}\n"
+        "poll_interval:           0.05\n"
+        "register_sensor:         True\n"
+    ).format(lane=lane)
+
+
+def _default_nfc_reader_hw_path():
+    return os.path.expanduser('~/printer_data/config/nfc/nfc_reader_hw.cfg')
+
+
+def _insert_nfc_endstop_after_lane(text, gate):
+    lane = int(gate._gate)
+    lane_header_re = re.compile(r'^\[nfc_gate lane%d\]\s*$' % lane)
+    any_section_re = re.compile(r'^\[[^\]]+\]\s*(?:[#;].*)?$')
+    if re.search(r'^\[mmu_nfc_endstop lane%d\]\s*$' % lane, text, re.M):
+        return text, False, "present"
+
+    lines = text.splitlines(keepends=True)
+    lane_start = None
+    for idx, line in enumerate(lines):
+        if lane_header_re.match(line.strip()):
+            lane_start = idx
+            break
+
+    block = "\n" + _nfc_endstop_block(gate)
+    if lane_start is None:
+        if text and not text.endswith('\n'):
+            text += '\n'
+        return text + block, True, "appended"
+
+    insert_at = len(lines)
+    for idx in range(lane_start + 1, len(lines)):
+        if any_section_re.match(lines[idx].strip()):
+            insert_at = idx
+            break
+    lines[insert_at:insert_at] = [block]
+    return ''.join(lines), True, "inserted"
+
+
+def _find_gate_by_number(gate_number):
+    for gate in _lane_instances:
+        if (not getattr(gate, '_shared', False)
+                and int(getattr(gate, '_gate', -1)) == int(gate_number)):
+            return gate
+    return None
+
+
+def _cmd_doctor_endstop_add(printer, gcmd):
+    gate_number = gcmd.get_int('GATE', None, minval=0)
+    if gate_number is None:
+        raise gcmd.error("NFC_DOCTOR ENDSTOP=ADD requires GATE=<#>")
+    gate = _find_gate_by_number(gate_number)
+    if gate is None:
+        raise gcmd.error("No [nfc_gate lane%d] reader is configured" %
+                         gate_number)
+
+    raw_config = _raw_klipper_config(printer)
+    if _has_nfc_endstop(printer, gate, raw_config):
+        gcmd.respond_info(color_console_tags(
+            "[OK] NFC_DOCTOR: [%s] already exists for ENDSTOP=%s"
+            % (_nfc_endstop_section(gate), _nfc_endstop_name(gate))))
+        return
+
+    path = _default_nfc_reader_hw_path()
+    try:
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                text = f.read()
+        else:
+            text = ""
+        new_text, changed, mode = _insert_nfc_endstop_after_lane(text, gate)
+        if not changed:
+            gcmd.respond_info(color_console_tags(
+                "[OK] NFC_DOCTOR: [%s] already exists in %s. "
+                "Restart Klipper to load it."
+                % (_nfc_endstop_section(gate), path)))
+            return
+        parent = os.path.dirname(path)
+        if parent and not os.path.isdir(parent):
+            os.makedirs(parent)
+        with open(path, 'w') as f:
+            f.write(new_text)
+    except Exception as e:
+        logger.exception("NFC_DOCTOR ENDSTOP=ADD failed")
+        raise gcmd.error(
+            "Failed to add [%s] to %s: %s"
+            % (_nfc_endstop_section(gate), path, e))
+
+    gcmd.respond_info(color_console_tags(
+        "[OK] NFC_DOCTOR: %s [%s] in %s for ENDSTOP=%s. "
+        "Restart Klipper to load the new virtual endstop."
+        % ("inserted" if mode == "inserted" else "appended",
+           _nfc_endstop_section(gate), path, _nfc_endstop_name(gate))))
+
+
+def _handle_doctor_action(printer, gcmd):
+    endstop_action = str(gcmd.get('ENDSTOP', '') or '').strip().lower()
+    if endstop_action:
+        if endstop_action == 'add':
+            _cmd_doctor_endstop_add(printer, gcmd)
+            return True
+        raise gcmd.error("Unknown NFC_DOCTOR ENDSTOP action '%s'" %
+                         endstop_action)
+    return False
+
+
 def _detect_happy_hare_version(printer):
     """Return the Happy Hare software version string, or None if unavailable."""
     try:
@@ -491,6 +619,24 @@ def _doctor_lines(printer):
             lines.append("    Gate %d [%s/%s]: enabled, %s" %
                          (gate._gate, gate._name, gate._reader_type, state))
 
+    missing_endstops = []
+    for gate in sorted(enabled_lanes, key=lambda g: g._gate):
+        if not _has_nfc_endstop(printer, gate, raw_config):
+            missing_endstops.append(gate)
+    if missing_endstops:
+        lines.append("  [ERROR] NFC virtual endstops: %d missing" %
+                     len(missing_endstops))
+        for gate in missing_endstops:
+            lines.append(
+                "    [ERROR] Gate %d [%s]: missing [%s] for ENDSTOP=%s; "
+                "run NFC_DOCTOR GATE=%d ENDSTOP=ADD"
+                % (gate._gate, gate._name, _nfc_endstop_section(gate),
+                   _nfc_endstop_name(gate), gate._gate))
+    elif enabled_lanes:
+        lines.append("  [OK] NFC virtual endstops: configured for every enabled lane reader")
+    else:
+        lines.append("  [OK] NFC virtual endstops: no enabled lane readers")
+
     if enabled_shared:
         shared = enabled_shared[0]
         lines.append("  %s shared reader: enabled [%s/%s]" %
@@ -565,6 +711,7 @@ def _nfc_help(gcmd=None):
         "NFC_HELP : Display the complete set of NFC commands and functions",
         "NFC_STATUS : Show every configured NFC reader",
         "NFC_DOCTOR : Check NFC config, readers, Spoolman, and Happy Hare hooks",
+        "NFC_DOCTOR GATE=<#> ENDSTOP=ADD : Add missing NFC virtual endstop config for one lane",
         "NFC_REGISTER UID=TAG_UID SPOOL_ID=SPOOL_ID : Assign a UID to an existing Spoolman spool",
         "NFC_LED_TEST ALL=1 CYCLES=2 : Test configured lane tag-read LED effect on every enabled lane",
         "NFC GATE=<#> HELP=1 : Show commands for one per-lane reader",
@@ -786,6 +933,8 @@ class NFCGateDefaults:
         gcmd.respond_info('\n'.join(_nfc_help(gcmd)))
 
     def cmd_NFC_DOCTOR(self, gcmd):
+        if _handle_doctor_action(self._printer, gcmd):
+            return
         gcmd.respond_info(color_console_tags(
             '\n'.join(_doctor_lines(self._printer))))
 
@@ -1213,6 +1362,8 @@ class NFCGate:
         gcmd.respond_info('\n'.join(_nfc_help(gcmd)))
 
     def _cmd_NFC_DOCTOR_fallback(self, gcmd):
+        if _handle_doctor_action(self.printer, gcmd):
+            return
         gcmd.respond_info(color_console_tags(
             '\n'.join(_doctor_lines(self.printer))))
 

@@ -420,11 +420,17 @@ def _insert_nfc_endstop_after_lane(text, gate):
 
     insert_at = len(lines)
     for idx in range(lane_start + 1, len(lines)):
-        if any_section_re.match(lines[idx].strip()):
+        stripped = lines[idx].strip()
+        if stripped == '' or any_section_re.match(stripped):
             insert_at = idx
             break
     lines[insert_at:insert_at] = [block]
     return ''.join(lines), True, "inserted"
+
+
+def _nfc_endstop_status_text(printer, gate):
+    return ("Loaded" if printer.lookup_object(_nfc_endstop_section(gate), None) is not None
+            else "Unloaded")
 
 
 def _find_gate_by_number(gate_number):
@@ -616,8 +622,9 @@ def _doctor_lines(printer):
                          (gate._gate, gate._name, gate._reader_type))
         else:
             state = "failed" if gate._failed else "ready/pending init"
-            lines.append("    Gate %d [%s/%s]: enabled, %s" %
-                         (gate._gate, gate._name, gate._reader_type, state))
+            lines.append("    Gate %d [%s/%s]: enabled, %s, virtual_endstop: %s" %
+                         (gate._gate, gate._name, gate._reader_type, state,
+                          _nfc_endstop_status_text(printer, gate)))
 
     missing_endstops = []
     for gate in sorted(enabled_lanes, key=lambda g: g._gate):
@@ -646,20 +653,6 @@ def _doctor_lines(printer):
         lines.append("  [OK] shared reader: configured but disabled")
     else:
         lines.append("  [OK] shared reader: not configured")
-
-    hh_version = _detect_happy_hare_version(printer)
-    hh_major = _happy_hare_major_from_version(hh_version)
-    if hh_major is None:
-        lines.append("  [WARN] Happy Hare version: unknown "
-                     "(scan-jog accepts action=idle only until version is detected)")
-    elif hh_major >= 4:
-        lines.append("  [OK] Happy Hare version: %s "
-                     "(scan-jog accepts action=idle or action=checking)" %
-                     hh_version)
-    else:
-        lines.append("  [OK] Happy Hare version: %s "
-                     "(scan-jog accepts action=idle only)" %
-                     hh_version)
 
     defaults = printer.lookup_object('nfc_gate', None)
     spoolman = getattr(defaults, '_spoolman', None)

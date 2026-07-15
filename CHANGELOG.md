@@ -7,6 +7,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.3.0] - 07/15/2026 - WoodWorker
+
+### NFC_DOCTOR Virtual Endstop Visibility + ENDSTOP=ADD Insertion Fix
+
+- ✨ **Per-lane virtual endstop status in `NFC_DOCTOR`** — each enabled gate's
+  line now ends with `virtual_endstop: Loaded` or `Unloaded`
+  (`_nfc_endstop_status_text()` in `nfc_manager.py`), reading directly off
+  `printer.lookup_object("mmu_nfc_endstop laneN")` so a missing or
+  not-yet-restarted endstop is visible on the same line as the gate itself,
+  not just in the aggregate summary below.
+- 🐛 **Fixed `NFC_DOCTOR GATE=<#> ENDSTOP=ADD` inserting in the wrong spot** —
+  `_insert_nfc_endstop_after_lane()` searched only for the next `[section]`
+  header as a stopping point, so it skipped over the next lane's comment
+  banner (e.g. `# ===== LANE 2 =====`) and dropped the new
+  `[mmu_nfc_endstop laneN]` block after the banner instead of before it. It
+  now also stops at the first blank line, matching where the block sits in
+  the shipped `nfc_reader_hw.cfg` template.
+- ♻️ **Removed the Happy Hare version compatibility line from `NFC_DOCTOR`** —
+  that check (scan-jog `action=idle`/`action=checking` support) belongs to
+  scan-jog's own gating logic, not doctor's config/reader/Spoolman scope.
+- 📝 **`NFC_HELP` updated** to mention virtual endstop checking under the
+  `NFC_DOCTOR` entry.
+
 ## [1.2.0] - 07/11/2026 - WoodWorker
 
 ### TigerTag Left-Neighbor Interference Detection

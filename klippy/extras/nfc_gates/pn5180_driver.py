@@ -90,7 +90,7 @@ class PN5180Core:
         self._sleep_fn = sleep_fn or self._default_sleep
 
         self.command_delay = config.getfloat(
-            'pn5180_command_delay', 0.005, minval=0.0)
+            'pn5180_command_delay', 0.020, minval=0.0)
         self.rf_timeout = config.getfloat(
             'pn5180_rf_timeout', 0.050, above=0.0)
         self.rf_poll_interval = config.getfloat(

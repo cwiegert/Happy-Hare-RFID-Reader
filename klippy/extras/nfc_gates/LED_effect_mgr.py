@@ -72,9 +72,6 @@ def hh_led_script(effect_name, duration=None, gate=None, unit=None,
     if not effect:
         return ''
     if direct_effect:
-        # V4's MMU_SET_LED validates only configured operation effects. NFC's
-        # generated [mmu_led_effect] instances must therefore be addressed
-        # directly by their full generated name.
         return "_MMU_SET_LED_EFFECT EFFECT=%s REPLACE=1" % effect
     parts = ["MMU_SET_LED"]
     if unit is not None:
@@ -95,6 +92,7 @@ def hh_led_script(effect_name, duration=None, gate=None, unit=None,
             duration = 0.0
         if duration > 0.0:
             parts.append("DURATION=%.2f" % duration)
+    parts.append("FADETIME=0")
     return " ".join(parts)
 
 
@@ -209,7 +207,7 @@ class LEDEffectManager:
                    target=None):
         effect = (effect_name or '').strip()
         display_effect = (display_effect or effect).strip()
-        v4_direct = is_happy_hare_v4(self.printer)
+        v4_direct = is_happy_hare_v4(self.printer) and gate is None
         script = hh_led_script(
             display_effect if v4_direct else effect,
             duration=duration, gate=gate, unit=unit,

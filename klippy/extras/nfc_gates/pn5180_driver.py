@@ -66,6 +66,10 @@ class PN5180Error(Exception):
     pass
 
 
+class PN5180RFRecoveryRequired(PN5180Error):
+    pass
+
+
 class PN5180Core:
     """Low-level PN5180 commands and Type-2/Type-5 RF operations."""
 
@@ -197,9 +201,11 @@ class PN5180Core:
     def rf_on(self):
         self.clear_irq_status(TX_RFON_IRQ_STAT)
         self._transceive_command([CMD_RF_ON, 0x00])
-        self._wait_irq(TX_RFON_IRQ_STAT, timeout=0.500, raise_on_error=False)
+        irq_seen = self._wait_irq(
+            TX_RFON_IRQ_STAT, timeout=0.500, raise_on_error=False)
         self.clear_irq_status(TX_RFON_IRQ_STAT)
         self._sleep(self.rf_on_delay)
+        return irq_seen
 
     def rf_off(self):
         self.clear_irq_status(TX_RFOFF_IRQ_STAT)
@@ -297,7 +303,9 @@ class PN5180Core:
         self._wait_transceive_state(TRANSCEIVE_STATE_IDLE)
         self.clear_irq_status()
         self.load_rf_config(0x00, 0x80)
-        self.rf_on()
+        if not self.rf_on():
+            raise PN5180RFRecoveryRequired(
+                'RF on transition timed out during Type-A setup')
         self.write_register_or_mask(SYSTEM_CONFIG, 0x00000003)
 
     def setup_iso15693_rf(self):
@@ -309,12 +317,19 @@ class PN5180Core:
         self._wait_transceive_state(TRANSCEIVE_STATE_IDLE)
         self.clear_irq_status()
         self.load_rf_config(0x0D, 0x8D)
-        self.rf_on()
+        if not self.rf_on():
+            raise PN5180RFRecoveryRequired(
+                'RF on transition timed out during ISO15693 setup')
         self.write_register_or_mask(SYSTEM_CONFIG, 0x00000003)
 
     @staticmethod
     def _bcc_ok(data):
         return len(data) == 5 and (data[0] ^ data[1] ^ data[2] ^ data[3]) == data[4]
+
+    @staticmethod
+    def _type_a_incomplete(stage):
+        raise PN5180RFRecoveryRequired(
+            'Type-A activation incomplete at %s' % stage)
 
     def activate_type_a(self):
         self.setup_type_a_rf()
@@ -326,23 +341,23 @@ class PN5180Core:
             return None
         atqa = self.read_data(2)
         if len(atqa) != 2 or self._suspicious_bytes(atqa):
-            return None
+            self._type_a_incomplete('ATQA')
 
         self.send_data([0x93, 0x20])
         if not self._wait_irq(RX_IRQ_STAT, raise_on_error=False):
-            return None
+            self._type_a_incomplete('CL1 anticollision')
         cascade_1 = self.read_data(5)
         if not self._bcc_ok(cascade_1) or self._suspicious_bytes(cascade_1):
-            return None
+            self._type_a_incomplete('CL1 anticollision data')
 
         self.write_register_or_mask(CRC_RX_CONFIG, 0x01)
         self.write_register_or_mask(CRC_TX_CONFIG, 0x01)
         self.send_data([0x93, 0x70] + cascade_1)
         if not self._wait_irq(RX_IRQ_STAT, raise_on_error=False):
-            return None
+            self._type_a_incomplete('CL1 select')
         sak = self.read_data(1)
         if len(sak) != 1 or sak[0] in (0xFF, 0x7F, 0x80):
-            return None
+            self._type_a_incomplete('CL1 SAK')
 
         uid = cascade_1[1:4] if cascade_1[0] == 0x88 else cascade_1[:4]
         if cascade_1[0] == 0x88:
@@ -350,22 +365,22 @@ class PN5180Core:
             self.write_register_and_mask(CRC_TX_CONFIG, 0xFFFFFFFE)
             self.send_data([0x95, 0x20])
             if not self._wait_irq(RX_IRQ_STAT, raise_on_error=False):
-                return None
+                self._type_a_incomplete('CL2 anticollision')
             cascade_2 = self.read_data(5)
             if not self._bcc_ok(cascade_2) or self._suspicious_bytes(cascade_2):
-                return None
+                self._type_a_incomplete('CL2 anticollision data')
             self.write_register_or_mask(CRC_RX_CONFIG, 0x01)
             self.write_register_or_mask(CRC_TX_CONFIG, 0x01)
             self.send_data([0x95, 0x70] + cascade_2)
             if not self._wait_irq(RX_IRQ_STAT, raise_on_error=False):
-                return None
+                self._type_a_incomplete('CL2 select')
             sak_2 = self.read_data(1)
             if len(sak_2) != 1:
-                return None
+                self._type_a_incomplete('CL2 SAK')
             sak = sak_2
             uid += cascade_2[:4]
         if self._suspicious_bytes(uid):
-            return None
+            self._type_a_incomplete('UID')
         self.current_uid = list(uid)
         self.current_protocol = 'iso14443a'
         return {'uid': list(uid), 'atqa_bytes': list(atqa), 'sak': sak[0]}
@@ -536,6 +551,18 @@ class PN5180Driver:
         self.current_uid = None
         self._core._clear_target()
 
+    def _reset_after_rf_fault(self, error):
+        logger.warning(
+            'PN5180: gate %d RF fault (%s); resetting before next poll',
+            self._gate, error)
+        self._clear_current_card()
+        try:
+            self._core.initialize()
+        except Exception as reset_error:
+            logger.warning('PN5180: gate %d RF reset failed: %s',
+                           self._gate, reset_error)
+        return None
+
     def _release_current_target(self, reason='manual'):
         try:
             self._core.recover_rf_state()
@@ -606,6 +633,8 @@ class PN5180Driver:
         try:
             try:
                 return self._read_target_once()
+            except PN5180RFRecoveryRequired as error:
+                return self._reset_after_rf_fault(error)
             except Exception as error:
                 if self._debug >= 3:
                     logger.warning('PN5180: gate %d target read failed: %s',

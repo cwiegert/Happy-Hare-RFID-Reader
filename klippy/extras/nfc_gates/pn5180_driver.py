@@ -253,9 +253,14 @@ class PN5180Core:
             raise PN5180Error(
                 'invalid EEPROM response; check SPI MISO, CS, power, and reset')
         registers = [self.read_register(SYSTEM_CONFIG),
-                     self.read_register(IRQ_STATUS)]
-        if all(value in (0x00000000, 0xFFFFFFFF) for value in registers):
-            raise PN5180Error('invalid PN5180 health registers')
+                     self.read_register(IRQ_STATUS),
+                     self.read_register(RX_STATUS),
+                     self.read_register(RF_STATUS)]
+        if (all(value == 0x00000000 for value in registers)
+                or all(value == 0xFFFFFFFF for value in registers)):
+            raise PN5180Error(
+                'invalid PN5180 health registers: %s' %
+                ', '.join('0x%08X' % value for value in registers))
         self.firmware = list(firmware)
         return True
 

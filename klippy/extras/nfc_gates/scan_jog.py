@@ -1518,6 +1518,9 @@ def continuous_step_event(gate, eventtime):
             "[%s]: preparing continuous scan move %.2fmm  "
             "scan position %.1f / %.1fmm",
             gate._name.capitalize(), move, next_position, gate._scan_max_mm)
+    effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
+    _led_effect(gate, effect_name)
+    _schedule_led_reassert(gate, effect_name)
     gate_was_selected = getattr(gate, '_scan_gate_selected', False)
     command_start = gate.reactor.monotonic()
     move_path = run_continuous_jog(gate, move)
@@ -1565,7 +1568,6 @@ def continuous_step_event(gate, eventtime):
     else:
         remaining_duration = max(0.0, expected_duration - command_elapsed)
         timing_basis = "estimated"
-    effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
     _led_effect(gate, effect_name)
     _schedule_led_reassert(gate, effect_name)
     gate._scan_mm_total += actual_move

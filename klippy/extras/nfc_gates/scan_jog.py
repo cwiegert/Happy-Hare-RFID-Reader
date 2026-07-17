@@ -122,15 +122,14 @@ def _restore_hh_gate_led_quiet(gate):
             "[%s]: Happy Hare gate LED restore skipped; action=%s",
             gate._name, hh.action)
         return False
-    led = LEDEffectManager(gate.printer, reactor=gate.reactor, name=gate._name)
-    result = led.release(gate=gate._gate)
-    if result.ok:
+    try:
+        run_hh_script(gate, "MMU_GATE_MAP QUIET=1")
         logger.info("[%s]: Happy Hare gate LED restored", gate._name)
-        gate._scan_rewind_led_released = True
         return True
-    logger.warning("[%s]: Happy Hare gate LED restore failed: %s",
-                   gate._name, result.error)
-    return False
+    except Exception as e:
+        logger.warning("[%s]: Happy Hare gate LED restore failed: %s",
+                       gate._name, e)
+        return False
 
 
 def manual_jog_scan(gate, gcmd):
@@ -1142,6 +1141,7 @@ def start(gate, max_mm=None):
     gate._scan_gate_selected = False  # deferred to first jog (must run from timer, not GCode handler)
     gate._scan_hh_prep_pending = True
     gate._scan_led_reassert_effect = None
+    gate._scan_rewind_led_released = False
 
     gate._scan_timer = gate.reactor.register_timer(
         gate._scan_step_event,

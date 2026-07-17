@@ -116,6 +116,12 @@ def _led_release(gate):
 
 def _restore_hh_gate_led_quiet(gate):
     """Restore this gate's normal Happy Hare LED state after parking."""
+    hh = gate._read_hh_status()
+    if hh.present and not hh.idle:
+        logger.info(
+            "[%s]: Happy Hare gate LED restore skipped; action=%s",
+            gate._name, hh.action)
+        return False
     led = LEDEffectManager(gate.printer, reactor=gate.reactor, name=gate._name)
     result = led.release(gate=gate._gate)
     if result.ok:

@@ -703,7 +703,7 @@ def _nfc_help(gcmd=None):
         "LOW_LEVEL=1 for full command set)",
         "NFC_HELP : Display the complete set of NFC commands and functions",
         "NFC_STATUS : Show every configured NFC reader",
-        "NFC_DOCTOR : Check NFC config, readers, Spoolman, and Happy Hare hooks",
+        "NFC_DOCTOR : Check NFC config, readers, virtual endstops, Spoolman, and Happy Hare hooks",
         "NFC_DOCTOR GATE=<#> ENDSTOP=ADD : Add missing NFC virtual endstop config for one lane",
         "NFC_REGISTER UID=TAG_UID SPOOL_ID=SPOOL_ID : Assign a UID to an existing Spoolman spool",
         "NFC_LED_TEST ALL=1 CYCLES=2 : Test configured lane tag-read LED effect on every enabled lane",

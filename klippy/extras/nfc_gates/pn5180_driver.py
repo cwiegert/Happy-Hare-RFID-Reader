@@ -223,10 +223,12 @@ class PN5180Core:
     def send_data(self, data, valid_bits=0):
         if len(data) > 260:
             raise PN5180Error('PN5180 SEND_DATA payload too large')
-        self.clear_irq_status()
         self.write_register_and_mask(SYSTEM_CONFIG, 0xFFFFFFF8)
         self.write_register_or_mask(SYSTEM_CONFIG, 0x00000003)
-        self._wait_transceive_state(TRANSCEIVE_STATE_WAIT_TRANSMIT)
+        self.clear_irq_status()
+        if not self._wait_transceive_state(TRANSCEIVE_STATE_WAIT_TRANSMIT):
+            raise PN5180Error(
+                'PN5180 did not enter WaitTransmit before SEND_DATA')
         self._transceive_command([CMD_SEND_DATA, valid_bits] + list(data))
 
     def read_data(self, length):
@@ -520,9 +522,13 @@ class PN5180Core:
     def mifare_read_block(self, block_addr):
         """Read one authenticated MIFARE Classic data block."""
         self.send_data([MIFARE_CMD_READ, block_addr & 0xFF])
-        if not self._wait_irq(RX_IRQ_STAT, raise_on_error=False):
-            return None
-        length = self.rx_bytes_received()
+        deadline = self._now() + self.rf_timeout
+        length = 0
+        while self._now() < deadline:
+            length = self.rx_bytes_received()
+            if length:
+                break
+            self._sleep(self.rf_poll_interval)
         if length != 16:
             return None
         data = self.read_data(length)
@@ -746,12 +752,12 @@ class PN5180Driver:
                     'auth_failed_sectors': list(sectors),
                 }
             for sector in sectors:
-                trailer = sector * 4 + 3
+                auth_block = sector * 4
                 key = sector_keys[sector] if sector < len(sector_keys) else None
                 if key is None:
                     continue
                 if not self._core.mifare_authenticate(
-                        trailer, key, uid, use_key_b=use_key_b):
+                        auth_block, key, uid, use_key_b=use_key_b):
                     auth_failed_sectors.append(sector)
                     if self._debug >= 3:
                         logger.info(

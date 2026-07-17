@@ -116,14 +116,9 @@ def _led_release(gate):
 
 def _restore_hh_gate_led_quiet(gate):
     """Restore this gate's normal Happy Hare LED state after parking."""
-    hh = gate._read_hh_status()
-    if hh.present and not hh.idle:
-        logger.info(
-            "[%s]: Happy Hare gate LED restore skipped; action=%s",
-            gate._name, hh.action)
-        return False
+    script = "MMU_SET_LED GATE=%d EXIT_EFFECT=gate_status FADETIME=0" % gate._gate
     try:
-        run_hh_script(gate, "MMU_LED REFRESH=1 QUIET=1")
+        run_hh_script(gate, script)
         logger.info("[%s]: Happy Hare gate LED restored", gate._name)
         return True
     except Exception as e:

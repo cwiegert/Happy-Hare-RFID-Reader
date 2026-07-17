@@ -123,7 +123,7 @@ def _restore_hh_gate_led_quiet(gate):
             gate._name, hh.action)
         return False
     try:
-        run_hh_script(gate, "MMU_GATE_MAP QUIET=1")
+        run_hh_script(gate, "MMU_LED REFRESH=1 QUIET=1")
         logger.info("[%s]: Happy Hare gate LED restored", gate._name)
         return True
     except Exception as e:

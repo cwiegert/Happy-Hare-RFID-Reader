@@ -74,6 +74,10 @@ class PN5180RFRecoveryRequired(PN5180Error):
     pass
 
 
+class PN5180BusyTimeout(PN5180Error):
+    pass
+
+
 class PN5180TypeAIncomplete(PN5180Error):
     pass
 
@@ -145,7 +149,7 @@ class PN5180Core:
             self.busy_timeout if timeout is None else timeout)
         while self._busy_asserted():
             if self._now() >= deadline:
-                raise PN5180Error(
+                raise PN5180BusyTimeout(
                     'timeout waiting for PN5180 BUSY low (%s)' % phase)
             self._sleep(self.rf_poll_interval)
 
@@ -615,7 +619,7 @@ class PN5180Driver:
 
     def _reset_after_rf_fault(self, error):
         logger.warning(
-            'PN5180: gate %d RF fault (%s); resetting before next poll',
+            'PN5180: gate %d transport/RF fault (%s); forcing reset',
             self._gate, error)
         self._clear_current_card()
         try:
@@ -628,6 +632,9 @@ class PN5180Driver:
     def _release_current_target(self, reason='manual'):
         try:
             self._core.recover_rf_state()
+        except PN5180BusyTimeout as error:
+            self._reset_after_rf_fault(error)
+            return
         except Exception as error:
             if self._debug >= 4:
                 logger.debug('PN5180: gate %d release failed (%s): %s',
@@ -705,6 +712,8 @@ class PN5180Driver:
             except PN5180TypeAIncomplete:
                 self._clear_current_card()
                 return None
+            except PN5180BusyTimeout as error:
+                return self._reset_after_rf_fault(error)
             except PN5180RFRecoveryRequired as error:
                 return self._reset_after_rf_fault(error)
             except Exception as error:

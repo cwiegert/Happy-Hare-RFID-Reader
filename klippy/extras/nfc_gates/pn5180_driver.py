@@ -70,6 +70,10 @@ class PN5180RFRecoveryRequired(PN5180Error):
     pass
 
 
+class PN5180TypeAIncomplete(PN5180Error):
+    pass
+
+
 class PN5180Core:
     """Low-level PN5180 commands and Type-2/Type-5 RF operations."""
 
@@ -328,7 +332,7 @@ class PN5180Core:
 
     @staticmethod
     def _type_a_incomplete(stage):
-        raise PN5180RFRecoveryRequired(
+        raise PN5180TypeAIncomplete(
             'Type-A activation incomplete at %s' % stage)
 
     def activate_type_a(self):
@@ -633,6 +637,9 @@ class PN5180Driver:
         try:
             try:
                 return self._read_target_once()
+            except PN5180TypeAIncomplete:
+                self._clear_current_card()
+                return None
             except PN5180RFRecoveryRequired as error:
                 return self._reset_after_rf_fault(error)
             except Exception as error:

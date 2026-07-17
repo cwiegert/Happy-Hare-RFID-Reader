@@ -332,7 +332,7 @@ def _reader_wiring_hint(reader_type):
     if reader_type == 'rc522':
         return "check SPI wiring, cs_pin, spi_bus/software SPI pins, power, and ground"
     if reader_type == 'pn5180':
-        return "check SPI wiring, cs_pin, reset_pin, power, and ground"
+        return "check SPI wiring, cs_pin, reset_pin, busy_pin, power, and ground"
     return "check wiring and I2C address"
 
 

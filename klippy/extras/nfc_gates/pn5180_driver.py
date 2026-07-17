@@ -63,6 +63,7 @@ DEFAULT_ISO15693_END_BLOCK = 79
 RESET_SCHEDULE_DELAY = 0.100
 RESET_LOW_TIME = 0.100
 RESET_BOOT_DELAY = 0.200
+DEFAULT_BUSY_TIMEOUT = 0.100
 
 
 class PN5180Error(Exception):
@@ -89,12 +90,12 @@ class PN5180Core:
         self.debug = debug
         self._sleep_fn = sleep_fn or self._default_sleep
 
-        self.command_delay = config.getfloat(
-            'pn5180_command_delay', 0.020, minval=0.0)
         self.rf_timeout = config.getfloat(
             'pn5180_rf_timeout', 0.050, above=0.0)
         self.rf_poll_interval = config.getfloat(
             'pn5180_rf_poll_interval', 0.001, minval=0.0001)
+        self.busy_timeout = config.getfloat(
+            'pn5180_busy_timeout', DEFAULT_BUSY_TIMEOUT, above=0.0)
         self.rf_on_delay = config.getfloat(
             'pn5180_rf_on_delay', 0.050, minval=0.0)
         self.page_read_retries = config.getint(
@@ -110,6 +111,11 @@ class PN5180Core:
         self.reset_pin = pins.setup_pin('digital_out', reset_pin_name)
         self.reset_pin.setup_max_duration(0.0)
         self.reset_pin.setup_start_value(1, 1)
+
+        # BUSY is active high.  It replaces the fixed command delay so every
+        # SPI transaction waits only until the PN5180 has actually completed.
+        busy_pin_name = config.get('busy_pin', 'mmu:PB0')
+        self.busy_pin = pins.setup_pin('endstop', busy_pin_name)
 
         self.initialized = False
         self.current_uid = None
@@ -131,16 +137,27 @@ class PN5180Core:
     def _mcu_print_time(self, eventtime=None):
         return self.mcu.estimated_print_time(eventtime or self._now())
 
-    def _delay_command(self):
-        self._sleep(self.command_delay)
+    def _busy_asserted(self):
+        return bool(self.busy_pin.query_endstop(self._mcu_print_time()))
+
+    def _wait_busy_low(self, phase, timeout=None):
+        deadline = self._now() + (
+            self.busy_timeout if timeout is None else timeout)
+        while self._busy_asserted():
+            if self._now() >= deadline:
+                raise PN5180Error(
+                    'timeout waiting for PN5180 BUSY low (%s)' % phase)
+            self._sleep(self.rf_poll_interval)
 
     def _transceive_command(self, send_data, recv_len=0):
+        self._wait_busy_low('before command')
         self.spi.spi_send(list(send_data))
-        self._delay_command()
+        self._wait_busy_low('after command')
         if not recv_len:
             return []
+        self._wait_busy_low('before response')
         result = self.spi.spi_transfer([0xFF] * recv_len)
-        self._delay_command()
+        self._wait_busy_low('after response')
         response = result.get('response') if isinstance(result, dict) else None
         if response is None:
             raise PN5180Error('SPI transfer returned no response')

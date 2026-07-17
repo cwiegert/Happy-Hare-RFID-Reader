@@ -7,6 +7,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.3.1] - 07/17/2026 - WoodWorker
+
+### Scan-Jog Rewind LED Release Cleanup
+
+- 🐛 **Fixed lane LEDs sticking in the rewind effect after scan-jog** — NFC now
+  releases the temporary rewind LED for the active gate immediately after the
+  fast rewind-to-buffer move completes, before handing filament parking back
+  to Happy Hare via `_MMU_STEP_UNLOAD_GATE`.
+- ♻️ **Per-gate LED release is now explicit** — Happy Hare v3 release now sends
+  `MMU_SET_LED GATE=<gate> EXIT_EFFECT=gate_status FADETIME=0` before the
+  quiet gate-map refresh, so the lane returns to Happy Hare's normal
+  gate-status display instead of relying on a global `MMU_GATE_MAP QUIET=1`
+  repaint to clear the temporary effect.
+- 🐛 **Prevented the cleanup release from causing a second LED blink** — scan
+  jog tracks whether the rewind LED was already released for the current
+  cycle. The end-of-scan cleanup now retries only if the earlier release
+  failed, avoiding a sloppy-looking second repaint in the normal path.
+- ♻️ **Happy Hare v4 release remains direct-effect based** — per-gate release
+  now removes only the tracked NFC lane effect for that gate, while full
+  release still stops every tracked NFC direct effect and refreshes the gate
+  map.
+
 ## [1.3.0] - 07/15/2026 - WoodWorker
 
 ### NFC_DOCTOR Virtual Endstop Visibility + ENDSTOP=ADD Insertion Fix

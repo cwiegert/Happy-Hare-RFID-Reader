@@ -104,9 +104,14 @@ def _cancel_led_reassert(gate):
 
 def _led_release(gate):
     """Return LED control to Happy Hare."""
+    if getattr(gate, '_scan_rewind_led_released', False):
+        return True
     _cancel_led_reassert(gate)
     led = LEDEffectManager(gate.printer, reactor=gate.reactor, name=gate._name)
-    led.release()
+    result = led.release(gate=gate._gate)
+    if result.ok:
+        gate._scan_rewind_led_released = True
+    return result.ok
 
 
 
@@ -2283,9 +2288,9 @@ def finish(gate):
     logger.info(msg)
     gate._console(msg)
     # Rewind LED fires before _run_rewind() so it shows during the entire move.
+    gate._scan_rewind_led_released = False
     _led_effect(gate, getattr(gate, '_scan_rewind_effect', LED_REWINDING))
     gate._run_rewind()
-    # _led_release() is called at the end of finish() after all work is done.
     msg = _rewind_complete_message(gate)
     logger.info(msg)
     gate._console(msg)
@@ -2354,6 +2359,7 @@ def rewind_and_exit(gate):
     msg = _rewind_message(gate, "[REWIND]", prefix="no tag found; ")
     logger.info(msg)
     gate._console(msg)
+    gate._scan_rewind_led_released = False
     _led_effect(gate, getattr(gate, '_scan_rewind_effect', LED_REWINDING))
     gate._run_rewind()
     msg = _rewind_complete_message(gate)
@@ -2802,13 +2808,17 @@ def _rewind_complete_message(gate):
 
 def run_rewind(gate):
     if gate._scan_mm_total <= 0.0:
+        _led_release(gate)
         return
     gcode = gate.printer.lookup_object('gcode')
     _, _, fast_rewind = _rewind_parts(gate)
-    if fast_rewind > 0.0:
-        if not run_direct_mmu_move(gate, -fast_rewind):
-            run_hh_script(
-                gate,
-                "_MMU_STEP_MOVE MOVE=%.2f MOTOR=gear ALLOW_BYPASS=1"
-                % (-fast_rewind))
+    try:
+        if fast_rewind > 0.0:
+            if not run_direct_mmu_move(gate, -fast_rewind):
+                run_hh_script(
+                    gate,
+                    "_MMU_STEP_MOVE MOVE=%.2f MOTOR=gear ALLOW_BYPASS=1"
+                    % (-fast_rewind))
+    finally:
+        _led_release(gate)
     run_hh_script(gate, "_MMU_STEP_UNLOAD_GATE")

@@ -378,19 +378,31 @@ class LEDEffectManager:
 
         self._register_timer(_run, delay)
 
-    def release(self, async_dispatch=False):
+    def release(self, async_dispatch=False, gate=None, unit=None):
         if is_happy_hare_v4(self.printer):
             registry = self._v4_effect_registry()
-            effects = sorted(set(
-                effect for effect, _token in registry['targets'].values()))
-            registry['targets'].clear()
+            if gate is None:
+                effects = sorted(set(
+                    effect for effect, _token in registry['targets'].values()))
+                registry['targets'].clear()
+            else:
+                target = 'lane:%d' % int(gate)
+                current = registry['targets'].pop(target, None)
+                effects = [current[0]] if current is not None else []
             stop_scripts = [
                 "_MMU_SET_LED_EFFECT EFFECT=%s STOP=1" % effect
                 for effect in effects]
             stop_scripts.append("MMU_GATE_MAP QUIET=1")
             script = "\n".join(stop_scripts)
         else:
-            script = "MMU_GATE_MAP QUIET=1"
+            if gate is not None:
+                parts = ["MMU_SET_LED"]
+                parts.append("GATE=%d" % int(gate))
+                parts.append("EXIT_EFFECT=gate_status")
+                parts.append("FADETIME=0")
+                script = "%s\nMMU_GATE_MAP QUIET=1" % " ".join(parts)
+            else:
+                script = "MMU_GATE_MAP QUIET=1"
         try:
             if async_dispatch and self._run_async(
                     lambda et, _s=script: self._run_script(_s)):
@@ -402,4 +414,3 @@ class LEDEffectManager:
         except Exception as e:
             logger.warning("[%s]: LED release failed: %s", self.name, e)
             return LEDResult(False, script=script, error=e, event=EVENT_RELEASE)
-

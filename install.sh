@@ -822,9 +822,9 @@ with open(path, 'w') as f:
     f.write("# Supported documented path:\n")
     f.write("#   one NFC reader module per lane MCU / EBB42 board.\n")
     f.write(layout_note)
-    f.write("#   PN532 is the default reader; PN7160 may be selected per lane with\n")
-    f.write("#   reader_type: pn7160. RC522 may be selected with reader_type: rc522\n")
-    f.write("#   for UID-only SPI reads.\n")
+    f.write("#   PN532 is the default reader; PN7160, RC522, and PN5180 may be selected\n")
+    f.write("#   per lane with reader_type. SPI readers require per-lane spi_bus, cs_pin,\n")
+    f.write("#   and any reader-specific pins; configure those overrides manually.\n")
     f.write("#\n")
     f.write("# Include after nfc_reader.cfg and nfc_macros.cfg:\n")
     f.write("#   [include nfc/nfc_reader.cfg]\n")
@@ -863,7 +863,7 @@ with open(path, 'w') as f:
         f.write("# =============================================================================\n")
         f.write(f"[nfc_gate {reader}]\n")
         f.write("enabled:                True\n")
-        f.write("# reader_type:            pn532  # PN7160: pn7160; UID-only RC522 SPI: rc522\n")
+        f.write("# reader_type:            pn532  # PN7160: pn7160; SPI: rc522 or pn5180\n")
         f.write("# i2c_address:            36     # PN7160 valid addresses are 40-43 (0x28-0x2B)\n")
         f.write(f"mmu_gate:                {lane}\n")
         f.write(f"i2c_mcu:                 {mcu}\n")
@@ -883,7 +883,7 @@ with open(path, 'w') as f:
     example_endstop = endstop_name(example_lane)
     f.write(f"# [nfc_gate {example_reader}]\n")
     f.write("# enabled:                False\n")
-    f.write("# reader_type:            pn532  # PN7160: pn7160; UID-only RC522 SPI: rc522\n")
+    f.write("# reader_type:            pn532  # PN7160: pn7160; SPI: rc522 or pn5180\n")
     f.write("# i2c_address:            36     # PN7160 valid addresses are 40-43 (0x28-0x2B)\n")
     f.write(f"# mmu_gate:                {example_lane}\n")
     f.write(f"# i2c_mcu:                 {example_mcu}\n")
@@ -1129,6 +1129,37 @@ for line in text.splitlines():
             print(stripped.split(':', 1)[1].strip())
             raise SystemExit
 print('i2c1')
+PYEOF
+}
+
+detect_shared_config_value() {
+    local shared_cfg="$1"
+    local key_name="$2"
+    local default_value="$3"
+    python3 - "${shared_cfg}" "${key_name}" "${default_value}" <<'PYEOF'
+import sys
+
+path, key, default = sys.argv[1:4]
+try:
+    text = open(path, 'r').read()
+except FileNotFoundError:
+    print(default)
+    raise SystemExit
+
+in_shared = False
+for line in text.splitlines():
+    stripped = line.strip()
+    if stripped == '[nfc_gate shared]':
+        in_shared = True
+        continue
+    if in_shared:
+        if stripped.startswith('['):
+            break
+        if stripped.startswith('#') or not stripped.startswith(key + ':'):
+            continue
+        print(stripped.split(':', 1)[1].strip())
+        raise SystemExit
+print(default)
 PYEOF
 }
 
@@ -1402,7 +1433,7 @@ with open(path, 'w') as f:
     f.write("# =============================================================================\n\n")
     f.write("[nfc_gate shared]\n")
     f.write("enabled:                True\n")
-    f.write("# reader_type:            pn532  # PN7160: pn7160; UID-only RC522 SPI: rc522\n")
+    f.write("# reader_type:            pn532  # PN7160: pn7160; SPI: rc522 or pn5180\n")
     f.write("# i2c_address:            36     # PN7160 valid addresses are 40-43 (0x28-0x2B)\n")
     f.write(f"i2c_mcu:                {i2c_mcu}\n")
     f.write(f"i2c_bus:                {i2c_bus}\n")
@@ -1602,7 +1633,19 @@ else
     SCAN_JOG_MAX=""
     SCAN_ENABLED="no"   # always disabled for shared reader
 
-    echo "2. Spoolman connection"
+    DEFAULT_SHARED_READER_TYPE="$(detect_shared_config_value "${NFC_READER_SHARED_CFG}" "reader_type" "pn532")"
+    echo "2. Shared reader hardware"
+    echo "   $(choice_style pn532 "${DEFAULT_SHARED_READER_TYPE}")  = I2C, ISO14443A"
+    echo "   $(choice_style pn7160 "${DEFAULT_SHARED_READER_TYPE}") = I2C, ISO14443A and ISO15693"
+    echo "   $(choice_style rc522 "${DEFAULT_SHARED_READER_TYPE}")  = SPI, ISO14443A"
+    echo "   $(choice_style pn5180 "${DEFAULT_SHARED_READER_TYPE}") = SPI, ISO14443A and ISO15693"
+    prompt_choice SHARED_READER_TYPE \
+        "   Select shared reader hardware" \
+        "${DEFAULT_SHARED_READER_TYPE}" \
+        "pn532" "pn7160" "rc522" "pn5180"
+    echo ""
+
+    echo "3. Spoolman connection"
     echo "   $(choice_style auto auto)     = read the URL from Moonraker's [spoolman] section (recommended)"
     echo "   $(choice_style direct auto)   = enter a fixed URL such as http://127.0.0.1:7912"
     echo "   $(choice_style disabled auto) = no Spoolman — resolve by tag metadata or UID only"
@@ -1620,19 +1663,52 @@ else
     fi
 
     prompt_yes_no STARTUP_POLLING \
-        "3. Poll at Klipper boot so you can tap a spool at any time? (recommended)" \
+        "4. Poll at Klipper boot so you can tap a spool at any time? (recommended)" \
         "yes"
 
     MMU_LED_UNIT="$(detect_mmu_led_unit "${MMU_HW_CFG}")"
-    DEFAULT_I2C_MCU="$(detect_shared_mcu "${NFC_READER_SHARED_CFG}")"
-    prompt_with_default I2C_MCU \
-        "4. Klipper MCU the shared NFC reader is wired to (must match a [mcu ...] section)" \
-        "${DEFAULT_I2C_MCU}"
+    I2C_MCU=""
+    I2C_BUS=""
+    I2C_ADDRESS=""
+    SPI_BUS=""
+    SPI_CS_PIN=""
+    SPI_SPEED=""
+    PN5180_RESET_PIN=""
+    PN5180_BUSY_PIN=""
+    if [ "${SHARED_READER_TYPE}" = "pn532" ] || [ "${SHARED_READER_TYPE}" = "pn7160" ]; then
+        DEFAULT_I2C_MCU="$(detect_shared_mcu "${NFC_READER_SHARED_CFG}")"
+        prompt_with_default I2C_MCU \
+            "5. Klipper MCU the shared NFC reader is wired to (must match a [mcu ...] section)" \
+            "${DEFAULT_I2C_MCU}"
+        DEFAULT_I2C_BUS="$(detect_shared_i2c_bus "${NFC_READER_SHARED_CFG}")"
+        prompt_i2c_bus_select I2C_BUS "${I2C_MCU}" "${PRINTER_CONFIG}" "${DEFAULT_I2C_BUS}"
+        if [ "${SHARED_READER_TYPE}" = "pn7160" ]; then
+            I2C_ADDRESS="$(detect_shared_config_value "${NFC_READER_SHARED_CFG}" "i2c_address" "40")"
+            prompt_with_default I2C_ADDRESS \
+                "   PN7160 I2C address (40-43)" "${I2C_ADDRESS}"
+        else
+            I2C_ADDRESS="36"
+        fi
+    else
+        SPI_BUS="$(detect_shared_config_value "${NFC_READER_SHARED_CFG}" "spi_bus" "spi2_PB14_PB15_PB13")"
+        SPI_CS_PIN="$(detect_shared_config_value "${NFC_READER_SHARED_CFG}" "cs_pin" "mmu:PA8")"
+        SPI_DEFAULT_SPEED="1000000"
+        if [ "${SHARED_READER_TYPE}" = "pn5180" ]; then
+            SPI_DEFAULT_SPEED="100000"
+        fi
+        SPI_SPEED="$(detect_shared_config_value "${NFC_READER_SHARED_CFG}" "spi_speed" "${SPI_DEFAULT_SPEED}")"
+        prompt_with_default SPI_BUS "5. SPI bus name" "${SPI_BUS}"
+        prompt_with_default SPI_CS_PIN "6. SPI chip-select pin" "${SPI_CS_PIN}"
+        prompt_with_default SPI_SPEED "7. SPI speed (Hz)" "${SPI_SPEED}"
+        if [ "${SHARED_READER_TYPE}" = "pn5180" ]; then
+            PN5180_RESET_PIN="$(detect_shared_config_value "${NFC_READER_SHARED_CFG}" "reset_pin" "mmu:PC6")"
+            PN5180_BUSY_PIN="$(detect_shared_config_value "${NFC_READER_SHARED_CFG}" "busy_pin" "mmu:PB0")"
+            prompt_with_default PN5180_RESET_PIN "8. PN5180 reset pin" "${PN5180_RESET_PIN}"
+            prompt_with_default PN5180_BUSY_PIN "9. PN5180 BUSY pin" "${PN5180_BUSY_PIN}"
+        fi
+    fi
 
-    DEFAULT_I2C_BUS="$(detect_shared_i2c_bus "${NFC_READER_SHARED_CFG}")"
-    prompt_i2c_bus_select I2C_BUS "${I2C_MCU}" "${PRINTER_CONFIG}" "${DEFAULT_I2C_BUS}"
-
-    echo "6. Tag read mode"
+    echo "10. Tag read mode"
     echo "   $(choice_style spoolman spoolman) = UID-only lookup in Spoolman's extra field"
     echo "   $(choice_style rich spoolman)     = read tag metadata, then resolve/create Spoolman records"
     if [ "${SPOOLMAN_MODE}" = "disabled" ]; then
@@ -1654,11 +1730,11 @@ else
         echo "   Factory-tagged Bambu spools are MIFARE Classic and require"
         echo "   authenticated reads plus the pycryptodome HKDF dependency."
         prompt_yes_no BAMBU_READS \
-            "7. Will you read factory-tagged Bambu spools with rich metadata?" \
+            "11. Will you read factory-tagged Bambu spools with rich metadata?" \
             "no"
         if [ "${SPOOLMAN_MODE}" != "disabled" ]; then
             prompt_yes_no SPOOLMAN_AUTO_CREATE \
-                "8. Auto-create missing Spoolman spools from rich tag metadata?" \
+                "12. Auto-create missing Spoolman spools from rich tag metadata?" \
                 "yes"
         fi
     fi
@@ -1674,8 +1750,20 @@ echo "  Reader layout:     ${READER_TYPE}"
 echo "  Spoolman:          ${SPOOLMAN_URL}"
 echo "  Startup polling:   ${STARTUP_POLLING}"
 if [ "${READER_TYPE}" = "shared" ]; then
-    echo "  i2c_mcu:           ${I2C_MCU}"
-    echo "  i2c_bus:           ${I2C_BUS}"
+    echo "  Reader hardware:   ${SHARED_READER_TYPE}"
+    if [ "${SHARED_READER_TYPE}" = "pn532" ] || [ "${SHARED_READER_TYPE}" = "pn7160" ]; then
+        echo "  i2c_mcu:           ${I2C_MCU}"
+        echo "  i2c_bus:           ${I2C_BUS}"
+        echo "  i2c_address:       ${I2C_ADDRESS}"
+    else
+        echo "  spi_bus:           ${SPI_BUS}"
+        echo "  cs_pin:            ${SPI_CS_PIN}"
+        echo "  spi_speed:         ${SPI_SPEED}"
+        if [ "${SHARED_READER_TYPE}" = "pn5180" ]; then
+            echo "  reset_pin:         ${PN5180_RESET_PIN}"
+            echo "  busy_pin:          ${PN5180_BUSY_PIN}"
+        fi
+    fi
     echo "  LED effects:       (whole-chain — all gate exit LEDs flash simultaneously)"
     echo "    tag detected:    ${BOLD}${MMU_LED_UNIT}_mmu_RFID_read_exit${RESET}"
     echo "    spool ready:     ${BOLD}${MMU_LED_UNIT}_mmu_RFID_ready_exit${RESET}"
@@ -1898,8 +1986,20 @@ set_config_value "${NFC_READER_CFG}" "nfc_gate" "spoolman_auto_create" \
 
 if [ "${READER_TYPE}" = "shared" ]; then
     # startup_polling and scan_enabled live in [nfc_gate shared], not [nfc_gate]
-    set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "i2c_mcu" "${I2C_MCU}"
-    set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "i2c_bus" "${I2C_BUS}"
+    set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "reader_type" "${SHARED_READER_TYPE}"
+    if [ "${SHARED_READER_TYPE}" = "pn532" ] || [ "${SHARED_READER_TYPE}" = "pn7160" ]; then
+        set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "i2c_mcu" "${I2C_MCU}"
+        set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "i2c_bus" "${I2C_BUS}"
+        set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "i2c_address" "${I2C_ADDRESS}"
+    else
+        set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "spi_bus" "${SPI_BUS}"
+        set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "cs_pin" "${SPI_CS_PIN}"
+        set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "spi_speed" "${SPI_SPEED}"
+        if [ "${SHARED_READER_TYPE}" = "pn5180" ]; then
+            set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "reset_pin" "${PN5180_RESET_PIN}"
+            set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "busy_pin" "${PN5180_BUSY_PIN}"
+        fi
+    fi
     set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "shared" "true"
     set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "startup_polling" \
         "$( [ "${STARTUP_POLLING}" = "yes" ] && echo "1" || echo "0" )"
@@ -2021,8 +2121,20 @@ if [ "${READER_TYPE}" = "lane" ]; then
         echo "    scan_max_travel:    Bowden calibration"
     fi
 else
-    echo "    i2c_mcu:            ${I2C_MCU}"
-    echo "    i2c_bus:            ${I2C_BUS}"
+    echo "    reader_type:        ${SHARED_READER_TYPE}"
+    if [ "${SHARED_READER_TYPE}" = "pn532" ] || [ "${SHARED_READER_TYPE}" = "pn7160" ]; then
+        echo "    i2c_mcu:            ${I2C_MCU}"
+        echo "    i2c_bus:            ${I2C_BUS}"
+        echo "    i2c_address:        ${I2C_ADDRESS}"
+    else
+        echo "    spi_bus:            ${SPI_BUS}"
+        echo "    cs_pin:             ${SPI_CS_PIN}"
+        echo "    spi_speed:          ${SPI_SPEED}"
+        if [ "${SHARED_READER_TYPE}" = "pn5180" ]; then
+            echo "    reset_pin:          ${PN5180_RESET_PIN}"
+            echo "    busy_pin:           ${PN5180_BUSY_PIN}"
+        fi
+    fi
 fi
 echo "    spoolman_url:       ${SPOOLMAN_URL}"
 echo "    startup_polling:    ${STARTUP_POLLING}"
@@ -2064,8 +2176,16 @@ echo "Next steps (first install only):"
 echo ""
 
 if [ "${READER_TYPE}" = "shared" ]; then
-    echo "  1. Confirm i2c_mcu and i2c_bus in nfc_reader_shared.cfg match your hardware."
-    echo "     The installer wrote i2c_mcu: ${I2C_MCU} and i2c_bus: ${I2C_BUS}."
+    if [ "${SHARED_READER_TYPE}" = "pn532" ] || [ "${SHARED_READER_TYPE}" = "pn7160" ]; then
+        echo "  1. Confirm i2c_mcu, i2c_bus, and i2c_address in nfc_reader_shared.cfg."
+        echo "     The installer wrote i2c_mcu: ${I2C_MCU}, i2c_bus: ${I2C_BUS}, and address: ${I2C_ADDRESS}."
+    else
+        echo "  1. Confirm SPI wiring in nfc_reader_shared.cfg."
+        echo "     The installer wrote spi_bus: ${SPI_BUS}, cs_pin: ${SPI_CS_PIN}, and speed: ${SPI_SPEED}."
+        if [ "${SHARED_READER_TYPE}" = "pn5180" ]; then
+            echo "     PN5180 reset_pin: ${PN5180_RESET_PIN}; busy_pin: ${PN5180_BUSY_PIN}."
+        fi
+    fi
     echo ""
     echo "  2. Add includes to printer.cfg:"
     echo "       [include nfc/nfc_reader.cfg]"
@@ -2075,7 +2195,7 @@ if [ "${READER_TYPE}" = "shared" ]; then
     echo "  3. Restart Klipper:"
     echo "     sudo systemctl restart klipper"
     echo ""
-    echo "  4. Update and flash the MCU hosting the shared NFC reader (${I2C_MCU})."
+    echo "  4. Update and flash the MCU hosting the shared NFC reader."
     echo "     The MCU must be on the same Klipper version as the host."
     echo ""
     echo "  5. Wire the Happy Hare post-preload hook in mmu_macro_vars.cfg:"
@@ -2086,12 +2206,17 @@ if [ "${READER_TYPE}" = "shared" ]; then
     echo "  6. Moonraker update_manager — added automatically by this script."
     echo "     If moonraker.conf was not found, add [update_manager Happy-Hare-RFID-Reader] manually."
     echo ""
-    echo "  PN7160 note:"
-    echo "     For PN7160 hardware, edit [nfc_gate shared] in nfc_reader_shared.cfg:"
-    echo "       reader_type: pn7160"
-    echo "       i2c_address: 40   # 40-43 depending on address switches"
-    echo "     See docs/i2c-nfc/pn7160-wiring.md for VEN/IRQ and I2C bus notes."
-    echo ""
+    if [ "${SHARED_READER_TYPE}" = "pn7160" ]; then
+        echo "  PN7160 note:"
+        echo "     i2c_address must be 40-43, matching the module address switches."
+        echo "     See docs/i2c-nfc/pn7160-wiring.md for VEN/IRQ and I2C bus notes."
+        echo ""
+    elif [ "${SHARED_READER_TYPE}" = "pn5180" ]; then
+        echo "  PN5180 note:"
+        echo "     BUSY is mandatory and active high. Do not use pn5180_command_delay;"
+        echo "     the driver synchronizes every SPI command with busy_pin instead."
+        echo ""
+    fi
 else
     echo "  1. Review ~/printer_data/config/nfc/nfc_reader.cfg"
     echo "     The installer has applied your selected settings."

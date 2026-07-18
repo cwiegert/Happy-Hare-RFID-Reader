@@ -27,9 +27,8 @@ Practical hardware choices:
 - **Single shared reader:** PN532 or PN7160 can be mounted inside the MMU body
   and used as a tap-before-loading reader.
 
-For EMU installations, the printable [LED holder for the EMU NFC reader](https://www.printables.com/model/1783248-led-holder-for-emu-nfc-reader/files)
-provides the NFC-reader mounting hardware. The matching STEP source is included
-in [`NFC Mounting Bracket/`](NFC%20Mounting%20Bracket/).
+For EMU installations, [`NFC Mounting Bracket/`](NFC%20Mounting%20Bracket/)
+contains the printable STL and editable STEP source for the NFC-reader LED holder.
 
 ## Virtual Endstop — How Scan-Jog Finds the Tag
 

@@ -1155,7 +1155,7 @@ def stopped_step_event(gate, eventtime):
         return gate.reactor.NEVER
 
     # Re-assert searching LED every step after the initial Happy Hare prep.
-    # MMU_TEST_MOVE and Happy Hare's own LED timer both kill custom effects — this
+    # Happy Hare's own LED timer both kill custom effects — this
     # keeps the clockwise animation alive between and after every jog.
     if not getattr(gate, '_scan_hh_prep_pending', True):
         _led_effect(gate, getattr(gate, '_scan_searching_effect', LED_SEARCHING))

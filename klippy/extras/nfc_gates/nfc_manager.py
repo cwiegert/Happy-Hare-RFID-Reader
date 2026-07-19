@@ -3157,7 +3157,10 @@ class NFCGate:
         self._shared_last_action = "tag metadata staged uid=%s" % uid
 
     def _shared_handle_event(self, event_type, uid, spool):
-        if event_type == EVENT_CHANGED and spool is DIRECT_METADATA_SPOOL:
+        # GateState exposes metadata-only reads as EVENT_CHANGED with a None
+        # event spool, while retaining the sentinel on current_spool.
+        if (event_type == EVENT_CHANGED
+                and self._state.current_spool is DIRECT_METADATA_SPOOL):
             self._shared_stage_metadata(uid)
             return
 

@@ -53,7 +53,7 @@ reader.
 
 1. **Shared reader is polling.** `startup_polling: 1` starts it at boot. It scans continuously, pausing automatically when printing starts and resuming when printing completes — no manual intervention required.
 
-2. **Tap your spool tag on the shared reader.** NFC reads the UID and looks it up in Spoolman. Tag detection can flash yellow, auto-create can run a yellow chase while Spoolman creates a missing spool, and the ready-to-load confirmation is the green 2x blink. On success the spool ID is stored as pending, its timeout countdown starts, and polling stops.
+2. **Tap your spool tag on the shared reader.** NFC reads the UID and looks it up in Spoolman. Tag detection can flash yellow, auto-create can run a yellow chase while Spoolman creates a missing spool, and the ready-to-load confirmation is the green 2x blink. On success the spool ID is stored as pending and its timeout countdown starts. Polling continues with UID-only probes: the same UID skips rich reads, while a different UID immediately clears staged data and triggers a new full read.
 
 3. **Drop the spool into an MMU lane** (physical action — NFC takes no action here).
 

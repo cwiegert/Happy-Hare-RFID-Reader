@@ -2610,6 +2610,28 @@ class NFCGate:
         if self._poll_hh_pause_check():
             return
         self._check_hh_cleared()
+
+        if self._shared and self._shared_has_pending():
+            self._shared_expire_pending_and_maybe_resume()
+            if self._shared_has_pending():
+                target_info = self._reader.read_target()
+                uid_hex = target_info.get('uid') if target_info else None
+                tag_handler.release_reader_target(
+                    self, "shared_pending_uid_probe")
+                if uid_hex == self._shared_pending_uid:
+                    if self._debug >= 3:
+                        logger.debug(
+                            "[%s]: shared pending UID probe matched %s; "
+                            "rich read skipped",
+                            self._name, uid_hex)
+                    return uid_hex is not None
+                if uid_hex is not None:
+                    logger.info(
+                        "[%s]: shared UID changed from %s to %s; "
+                        "clearing staged data before rich read",
+                        self._name, self._shared_pending_uid, uid_hex)
+                    self._shared_clear_pending()
+
         uid_hex  = self._read_current_tag()
         new_shared_uid = uid_hex is not None and uid_hex != self._state.current_uid
         if (self._shared and new_shared_uid
@@ -3124,12 +3146,13 @@ class NFCGate:
                 logger.info(
                     "[%s]: shared duplicate metadata tag ignored uid=%s",
                     self._name, uid)
+                return
             else:
-                logger.warning(
-                    "[%s]: %s already pending; metadata tag uid=%s ignored - "
-                    "use NFC_SHARED REPLACE=1 to replace",
-                    self._name, self._shared_pending_label(), uid)
-            return
+                logger.info(
+                    "[%s]: shared metadata UID changed from %s to %s; "
+                    "replacing staged data",
+                    self._name, self._shared_pending_uid, uid)
+                self._shared_clear_pending()
         now = self.reactor.monotonic()
         self._shared_pending_uid            = uid
         self._shared_pending_spool          = None
@@ -3140,9 +3163,6 @@ class NFCGate:
         self._shared_last_error             = None
         self._shared_read_deadline          = 0.0
         self._shared_missed_resolutions     = 0
-        self._polling = False
-        self.reactor.update_timer(
-            self._poll_timer, now + 0.8 * self._shared_pending_timeout)
         self.reactor.update_timer(
             self._warning_timer, now + 0.8 * self._shared_pending_timeout)
         logger.info(
@@ -3167,23 +3187,20 @@ class NFCGate:
         if event_type == EVENT_CHANGED and spool is not None:
             self._shared_expire_pending_if_needed()
             if self._shared_has_pending():
-                pending_spool = self._shared_pending_spool
-                if pending_spool is not None and pending_spool == spool:
+                if self._shared_pending_uid == uid:
                     logger.info(
                         "[%s]: shared duplicate tag ignored — "
                         "spool=%d uid=%s",
                         self._name, spool, uid)
                     self._shared_last_action = (
                         "ignored duplicate read for pending spool %d" % spool)
-                else:
-                    logger.warning(
-                        "[%s]: %s already pending; new spool=%d "
-                        "uid=%s ignored — use NFC_SHARED REPLACE=1 to replace",
-                        self._name, self._shared_pending_label(), spool, uid)
-                    self._shared_last_action = (
-                        "ignored spool %d while %s pending"
-                        % (spool, self._shared_pending_label()))
-                return
+                    return
+                logger.info(
+                    "[%s]: shared UID changed from %s to %s; "
+                    "replacing staged %s",
+                    self._name, self._shared_pending_uid, uid,
+                    self._shared_pending_label())
+                self._shared_clear_pending()
             auto_created = False
             if self._state.current_tag is not None:
                 res = self._state.current_tag.resolution or {}
@@ -3201,10 +3218,6 @@ class NFCGate:
             self._shared_read_deadline          = 0.0
             self._shared_missed_resolutions     = 0
             self._shared_stage_next_spool_id(spool, auto_created)
-            # Stop polling — pending spool survives tag removal.
-            self._polling = False
-            self.reactor.update_timer(
-                self._poll_timer, now + 0.8 * self._shared_pending_timeout)
             # Warning timer fires at 80% of the pending timeout.
             self.reactor.update_timer(
                 self._warning_timer,
@@ -3217,7 +3230,7 @@ class NFCGate:
             if self._debug >= 3:
                 logger.info(
                     "[%s]: shared CHANGED — spool=%d uid=%s "
-                    "auto_created=%s; polling stopped, awaiting PRELOAD_CHECK",
+                    "auto_created=%s; UID polling continues while staged",
                     self._name, spool, uid, auto_created)
             _ac_note = " [new spool]" if auto_created else ""
             logger.info(

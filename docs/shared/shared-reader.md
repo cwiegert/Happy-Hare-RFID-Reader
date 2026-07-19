@@ -41,6 +41,10 @@ enabling `spoolman_auto_create`.
 
 **No per-lane readers are required.** A shared-only installation needs only the base `[nfc_gate]` section (for Spoolman config) and `[nfc_gate shared]`.
 
+For a hybrid installation with both reader types, use `_NFC_HYBRID_PRELOAD`
+instead of `_NFC_SHARED_PRELOAD`. It starts scan-jog for a configured lane
+reader and uses the shared reader only for a loaded gate without one.
+
 ---
 
 ## Normal load flow
@@ -53,7 +57,7 @@ enabling `spoolman_auto_create`.
 
 4. **Push the filament tip into the pregate/buffer sensor.** Happy Hare detects filament at the sensor and begins a pregate load. HH's action transitions to `loading`.
 
-5. **Happy Hare fires `user_post_preload_extension` -> `_NFC_SHARED_PRELOAD` macro.** This happens automatically - no user action required. The macro validates the pending shared-reader spool that was already staged as `NEXT_SPOOLID`.
+5. **Happy Hare fires `user_post_preload_extension` -> `_NFC_SHARED_PRELOAD` macro.** This happens automatically - no user action required. The macro validates the pending shared-reader spool that was already staged as `NEXT_SPOOLID`. Hybrid installs use `_NFC_HYBRID_PRELOAD`, which sends gates with a configured lane reader to scan-jog first.
 
 6. **The macro commits the staged spool.** It calls `NFC_SHARED PRELOAD_CHECK=1 EXPECTED_SPOOL_ID=<spool_id>`, then `NFC_SHARED PRELOAD_COMMIT=1 SPOOL_ID=<spool_id>`. Happy Hare owns the gate assignment through its preload flow.
 
@@ -234,6 +238,9 @@ Add one user extension hook to `mmu_macro_vars.cfg`:
 variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'
 ```
 
+For a hybrid installation, set it to `_NFC_HYBRID_PRELOAD` instead. Do not use
+`NFC JOG_SCAN=1` directly as the hook.
+
 `variable_user_post_preload_extension` fires at the start of every pregate load. `PRELOAD_CHECK` is safe to leave wired for all loads; it skips only while printing, and emits an advisory message when no spool is staged.
 
 Do not leave this hook set to `NFC JOG_SCAN=1` when the shared reader is active. That is the per-lane scan-jog hook; Happy Hare may append the loaded gate number to it, which can produce `NFC GATE=<n>` errors and prevent `NFC_SHARED PRELOAD_COMMIT=1` from clearing the staged spool.
@@ -309,7 +316,7 @@ spools.
 Run `NFC_SHARED INIT=1`. If it fails, check I2C wiring and confirm the MCU is flashed with the correct firmware.
 
 **Tag scanned but spool not staged at preload.**
-Check that `variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'` is set in `mmu_macro_vars.cfg` and that the printer was not actively printing when the preload fired.
+Check that `variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'` is set in `mmu_macro_vars.cfg` for a shared-only install, or `_NFC_HYBRID_PRELOAD` for a hybrid install, and that the printer was not actively printing when the preload fired.
 
 Run `NFC_DOCTOR` and confirm it reports the shared preload hook as present. If
 the pending spool expired before preload, tap the tag again.

@@ -203,6 +203,15 @@ If you are using the shared reader (`[nfc_gate shared]`), two more things must b
 variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'
 ```
 
+For a hybrid installation that also has per-lane readers, use this instead:
+
+```ini
+variable_user_post_preload_extension: '_NFC_HYBRID_PRELOAD'
+```
+
+`_NFC_HYBRID_PRELOAD` gives a configured lane reader priority and uses the
+shared reader only when the loaded gate has no lane reader.
+
 Without this, NFC never sees the preload event and the spool ID is never applied to the gate.
 
 If this value is still set to `NFC JOG_SCAN=1`, the printer is using the per-lane reader hook. Shared-reader loads will stage a spool, but the post-preload commit will not run; the pending spool will eventually time out and you may see `NFC GATE=<n>` errors.

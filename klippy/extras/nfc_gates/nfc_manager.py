@@ -3342,21 +3342,31 @@ class NFCGate:
 
     def _shared_expire_pending_and_maybe_resume(self):
         if self._shared_expire_pending_if_needed():
-            # Always restart polling after timeout (equivalent to
-            # NFC_SHARED REPLACE=1) so the user can tap a new tag
-            # immediately without a manual command.
+            # Startup polling is intentionally unbounded. A timed manual
+            # READ/REPLACE session gets a fresh read deadline instead.
             polling_resumed = not self._failed and not self._is_printing()
             if polling_resumed:
                 self._shared_missed_resolutions = 0
                 self._shared_last_error = None
-                self._shared_read_deadline = (
-                    self.reactor.monotonic() + self._shared_read_timeout)
-                self._polling = True
-                self.reactor.update_timer(self._poll_timer, self.reactor.NOW)
-                logger.info(
-                    "[%s]: shared pending timeout — "
-                    "polling restarted (NFC_SHARED REPLACE=1 behavior)",
-                    self._name)
+                if self._startup_polling == 1:
+                    self._shared_read_deadline = 0.0
+                    self._polling = True
+                    self.reactor.update_timer(
+                        self._poll_timer, self.reactor.NOW)
+                    logger.info(
+                        "[%s]: shared pending timeout — "
+                        "startup polling resumed",
+                        self._name)
+                else:
+                    self._shared_read_deadline = (
+                        self.reactor.monotonic() + self._shared_read_timeout)
+                    self._polling = True
+                    self.reactor.update_timer(
+                        self._poll_timer, self.reactor.NOW)
+                    logger.info(
+                        "[%s]: shared pending timeout — "
+                        "polling restarted with %.0fs read timeout",
+                        self._name, self._shared_read_timeout)
             else:
                 logger.info(
                     "[%s]: shared pending timeout — "

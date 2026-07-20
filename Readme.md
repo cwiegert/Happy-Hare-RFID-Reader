@@ -154,7 +154,9 @@ bash install.sh
 
 Beta cutover note: if an old `~/emu-nfc-reader` install exists, the installer prompts before backing it up/removing it and continuing with a fresh `~/rfid-reader` install.
 
-Add the includes to `printer.cfg` in this order.
+The interactive installer runs once. Normal updates are installed afterward from Moonraker's web interface in Mainsail or Fluidd. If installer-owned links or integration files are damaged, run `bash install.sh -r`; repair does not rewrite user NFC settings. To change the configured reader layout or settings later, run `bash install.sh --reconfigure`; the wizard backs up the complete NFC configuration before applying changes.
+
+The installer adds the matching includes to `printer.cfg` in this order.
 
 Per-lane readers:
 
@@ -181,7 +183,7 @@ Hybrid:
 [include nfc/nfc_reader_shared.cfg]
 ```
 
-Set Spoolman in `~/printer_data/config/nfc/nfc_reader.cfg`:
+The installer sets Spoolman in `~/printer_data/config/nfc/nfc_reader.cfg`; verify the selected value after installation:
 
 ```ini
 [nfc_gate]

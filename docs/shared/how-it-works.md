@@ -242,7 +242,7 @@ The default macro body for `_NFC_SPOOL_CHANGED` handles both paths:
 MMU_GATE_MAP GATE={gate} APPLY=1 QUIET=1
 ```
 
-`nfc_macros.cfg` is read-only. To customize it, make a copy and include the copy instead of the original file.
+`nfc_macros.cfg` is read-only. To customize it, make a copy and include the copy instead of the original.
 
 ---
 

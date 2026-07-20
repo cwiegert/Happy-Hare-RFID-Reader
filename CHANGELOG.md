@@ -9,24 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Read-Only NFC Macros
+### One-Time Installer and Moonraker Web Updates
 
-- ♻️ **`nfc_macros.cfg` is now read-only** — the installer links the
-  printer-config path to the shipped macro file, matching Happy Hare's macro
-  file behavior.
-- ♻️ **Existing installs migrate once without losing local content** — a regular
-  `nfc_macros.cfg` is moved to a timestamped `pre-managed` backup before the
-  read-only link is created. Later installer runs verify and maintain the link.
-
-### Test Infrastructure
-
-- ✨ **Added a `tests/` scaffold** — a dependency-free bash harness
-  (`tests/bash/`) that exercises `install.sh` helpers like
-  `install_managed_macros()` and `merge_config()` in sandboxed temp dirs, and
-  a pytest suite (`tests/python/`) covering `GateState` and
-  `KlipperInterface` in `klippy/extras/nfc_gates/` against small fakes
-  instead of a real Klipper install. Run both with `bash tests/run_tests.sh`.
-  This is a first pass, not full coverage — see `tests/README.md`.
+- ♻️ **The interactive installer now runs once** — an existing installation
+  exits without revisiting setup or rewriting user configuration.
+- ✨ **Added `-r` / `--repair`** — repair restores installer-owned Python and
+  macro links, ordered printer includes, the Moonraker updater, and the install
+  state marker while preserving NFC reader and hardware settings.
+- ✨ **Added `-c` / `--reconfigure`** — users can intentionally rerun the setup
+  wizard to change reader choices without manually rebuilding the config files;
+  the complete NFC configuration is backed up before changes are applied.
+- ♻️ **Normal updates now use Moonraker's web interface** — the deprecated
+  `install_script` updater hook was removed; Moonraker updates the checkout and
+  restarts Klipper directly.
+- ♻️ **`nfc_macros.cfg` is read-only** — the protected Happy Hare interface is
+  linked to the shipped file and existing local copies are backed up once.
 
 ## [1.3.1] - 07/17/2026 - WoodWorker
 

@@ -8,10 +8,11 @@
 
 The installer creates **symlinks** — it does not copy Python files into the Klipper directory. This means:
 
-- Updating is just `git pull` — the new code is live immediately, no file copy needed
-- Hardware and reader config files in `~/printer_data/config/nfc/` are yours — the installer never overwrites sections you have already edited
-- `nfc_macros.cfg` is read-only and updates automatically
-- Running `bash install.sh` again after an update is always safe
+- Normal updates are installed from Moonraker's web interface in Mainsail or Fluidd
+- Reader and hardware config files in `~/printer_data/config/nfc/` are yours and are not changed during updates or repair
+- `nfc_macros.cfg` is a read-only link and updates with the project
+- `bash install.sh -r` repairs installer-owned links and integration files without rewriting user settings
+- `bash install.sh --reconfigure` backs up the NFC configuration and reruns the setup wizard
 
 **What gets created:**
 
@@ -30,7 +31,7 @@ gear-rail homing endstop. `nfc_reader_hw.cfg` gets one `[mmu_nfc_endstop
 laneN]` section per enabled lane automatically, alongside the matching
 `[nfc_gate laneN]` — see [Virtual Endstop](../shared/klipper-functions.md#virtual-endstop).
 
-User-owned config files use a non-destructive merge: if a section already exists in your file, it is left alone. Only missing sections are appended. `nfc_macros.cfg` is read-only and should not be edited directly. The first installer run after this change backs up an existing regular file beside the new symlink as `nfc_macros.cfg.pre-managed-<timestamp>`.
+The interactive installer runs once. It creates user-owned configuration with a non-destructive merge, adds the ordered NFC includes to `printer.cfg`, configures Moonraker, and records the completed installation in `nfc/.install-state`. Later runs exit without changing configuration. Use `bash install.sh -r` only to repair installer-owned links, includes, the update-manager section, or the state marker. Use `bash install.sh --reconfigure` when you intentionally want to rerun the wizard; it creates a timestamped copy of the complete NFC configuration first.
 
 ---
 
@@ -73,9 +74,9 @@ V4's default single-unit layout; it creates matching `unit0_laneN`,
 uses only the standard `unit0` layout. Multi-unit or custom gate mappings must
 be edited in `nfc_reader_hw.cfg` after installation.
 
-### Step 4 — Add Includes to `printer.cfg`
+### Step 4 — Verify Includes in `printer.cfg`
 
-Open `~/printer_data/config/printer.cfg` and add the matching includes in this order.
+The installer backs up `printer.cfg` and adds the matching includes in this order. Verify them after installation.
 
 Per-lane readers:
 
@@ -104,9 +105,9 @@ Hybrid:
 
 Order is required. `nfc_reader.cfg` defines the base `[nfc_gate]` section that each lane section inherits from. Including the lane file first causes a Klipper startup error.
 
-### Step 5 — Configure Spoolman
+### Step 5 — Verify Spoolman
 
-Edit `~/printer_data/config/nfc/nfc_reader.cfg`:
+The installer writes the selected Spoolman mode to `~/printer_data/config/nfc/nfc_reader.cfg`. Verify it after installation:
 
 ```ini
 [nfc_gate]
@@ -232,11 +233,11 @@ The installer adds this block to `~/printer_data/config/moonraker.conf` automati
 ```ini
 [update_manager Happy-Hare-RFID-Reader]
 type:             git_repo
+channel:          dev
 path:             ~/rfid-reader
 origin:           https://github.com/cwiegert/Happy-Hare-RFID-Reader.git
 primary_branch:   main
 managed_services: klipper
-install_script:   install.sh
 ```
 
 Restart Moonraker:
@@ -246,18 +247,29 @@ sudo systemctl restart moonraker
 ```
 
 > [!NOTE]
-> The update manager runs `install.sh` automatically after pulling. Since the Python extras are symlinks, new code is live immediately after the pull. You still need to **manually rebuild and flash lane MCU firmware** when a Klipper MCU protocol change is included in an update — the update notes will say so.
+> Moonraker updates the Git checkout and restarts Klipper; it does not rerun the interactive installer. You still need to **manually rebuild and flash lane MCU firmware** when a Klipper MCU protocol change is included in an update — the update notes will say so.
 
 ---
 
 ## Updating
 
+Use the Update Manager in Mainsail or Fluidd and select **Update** for Happy Hare RFID Reader. Moonraker pulls the update and restarts Klipper automatically.
+
+If installer-owned links or integration files are damaged, repair them explicitly:
+
 ```bash
 cd ~/rfid-reader
-git pull
-bash install.sh
-sudo systemctl restart klipper
+bash install.sh -r
 ```
+
+To change the reader layout or installer-managed setup choices, rerun the wizard explicitly:
+
+```bash
+cd ~/rfid-reader
+bash install.sh --reconfigure
+```
+
+The wizard saves the previous configuration as `~/printer_data/config/nfc_pre_reconfigure_<timestamp>` before applying any selected values.
 
 If the update notes mention a Klipper MCU protocol change, rebuild and flash each lane MCU before restarting Klipper.
 

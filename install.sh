@@ -11,18 +11,19 @@
 #        nfc_gates/    — shared implementation package
 #
 #   2. Installs user-owned config files into ~/printer_data/config/nfc/ using a
-#      non-destructive merge strategy. nfc_macros.cfg is the exception: it is a
-#      read-only symlink, like Happy Hare's shipped macro files. On first
-#      migration, the old file is backed up.
-#
-#      For user-owned config files:
+#      non-destructive merge strategy. nfc_macros.cfg is read-only and linked
+#      to the repository copy.
 #        - If a file does not exist yet, it is copied from the repo template.
 #        - If a file already exists, only sections that are present in the
 #          repo template but MISSING from the existing file are appended.
 #          Sections the user has already configured are never overwritten.
 #
 # Usage:
-#   bash install.sh
+#   bash install.sh             # first install; exits if already installed
+#   bash install.sh -r          # repair installer-owned files and links
+#   bash install.sh --repair
+#   bash install.sh -c          # back up config and rerun the setup wizard
+#   bash install.sh --reconfigure
 #
 # Can be run from anywhere — the script resolves its own location.
 # =============================================================================
@@ -42,7 +43,45 @@ NFC_MACROS_CFG="${NFC_CONFIG_DIR}/nfc_macros.cfg"
 NFC_READER_HW_CFG="${NFC_CONFIG_DIR}/nfc_reader_hw.cfg"
 NFC_READER_SHARED_CFG="${NFC_CONFIG_DIR}/nfc_reader_shared.cfg"
 NFC_SHARED_READER_CFG="${NFC_CONFIG_DIR}/nfc_shared_reader.cfg"
+INSTALL_STATE_FILE="${NFC_CONFIG_DIR}/.install-state"
+INSTALL_SCHEMA="1"
 MMU_HW_CFG="${PRINTER_CONFIG}/mmu/base/mmu_hardware.cfg"
+INSTALL_MODE="install"
+
+usage() {
+    echo "Usage: bash install.sh [-r|--repair|-c|--reconfigure]"
+    echo ""
+    echo "  no option    Run the interactive first-time installer"
+    echo "  -r, --repair Repair installer-owned links and integration files"
+    echo "  -c, --reconfigure"
+    echo "               Back up NFC config and rerun the setup wizard"
+    echo "  -h, --help   Show this help"
+}
+
+case "${1:-}" in
+    "") ;;
+    -r|--repair)
+        INSTALL_MODE="repair"
+        ;;
+    -c|--reconfigure)
+        INSTALL_MODE="reconfigure"
+        ;;
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    *)
+        echo "ERROR: Unknown option: $1"
+        usage
+        exit 2
+        ;;
+esac
+
+if [ "$#" -gt 1 ]; then
+    echo "ERROR: Too many arguments."
+    usage
+    exit 2
+fi
 
 if [ -t 1 ]; then
     BOLD="$(printf '\033[1m')"
@@ -144,27 +183,48 @@ install_managed_macros() {
     local current backup_base backup_path
 
     if [ ! -f "${source}" ]; then
-        echo "ERROR: Managed macro source not found: ${source}"
-        exit 1
+        echo "ERROR: Read-only macro source not found: ${source}"
+        return 1
     fi
 
     if [ -L "${target}" ]; then
         current="$(readlink "${target}")"
         if [ "${current}" = "${source}" ]; then
-            echo "  [managed] nfc_macros.cfg -> ${source}"
+            echo "  [ok]      nfc_macros.cfg read-only link"
             return 0
         fi
         rm "${target}"
-        echo "  [replace] old nfc_macros.cfg symlink (${current})"
+        echo "  [replace] old nfc_macros.cfg link (${current})"
     elif [ -e "${target}" ]; then
-        backup_base="${target}.pre-managed-$(date +%Y%m%d_%H%M%S)"
+        backup_base="${target}.pre-read-only-$(date +%Y%m%d_%H%M%S)"
         backup_path="$(next_available_path "${backup_base}")"
         mv "${target}" "${backup_path}"
         echo "  [backup]  existing nfc_macros.cfg -> ${backup_path}"
     fi
 
+    RESTART_KLIPPER_NEEDED=yes
     ln -s "${source}" "${target}"
     echo "  [link]    nfc_macros.cfg -> ${source} (read-only)"
+}
+
+backup_nfc_config_for_reconfigure() {
+    RECONFIGURE_BACKUP=""
+    # Best-effort: try to preserve any existing config, but never abort the run.
+    # If there is nothing to back up (fresh dir, or a partial install without a
+    # populated nfc/ directory), just continue and let the wizard create it.
+    if [ ! -d "${NFC_CONFIG_DIR}" ]; then
+        echo "  [skip]    no NFC configuration to back up at ${NFC_CONFIG_DIR}"
+        return 0
+    fi
+    local backup_base backup_dir
+    backup_base="${PRINTER_CONFIG}/nfc_pre_reconfigure_$(date +%Y%m%d_%H%M%S)"
+    backup_dir="$(next_available_path "${backup_base}")"
+    if cp -a "${NFC_CONFIG_DIR}" "${backup_dir}"; then
+        RECONFIGURE_BACKUP="${backup_dir}"
+        echo "  [backup]  NFC configuration -> ${RECONFIGURE_BACKUP}"
+    else
+        echo "  [warn]    could not back up ${NFC_CONFIG_DIR}; continuing without a backup"
+    fi
 }
 
 backup_nfc_config_for_cutover() {
@@ -1112,6 +1172,382 @@ print('lane')
 PYEOF
 }
 
+state_value() {
+    local key="$1"
+    [ -f "${INSTALL_STATE_FILE}" ] || return 1
+    sed -n "s/^${key}=//p" "${INSTALL_STATE_FILE}" | head -n 1
+}
+
+installed_layout() {
+    local layout lane_include=no shared_include=no
+    layout="$(state_value layout 2>/dev/null || true)"
+    case "${layout}" in
+        lane|shared|hybrid)
+            printf '%s\n' "${layout}"
+            ;;
+        *)
+            if [ -f "${PRINTER_CFG}" ]; then
+                if grep -Eq '^[[:space:]]*\[include[[:space:]]+nfc/nfc_reader_hw\.cfg\][[:space:]]*$' \
+                    "${PRINTER_CFG}"; then
+                    lane_include=yes
+                fi
+                if grep -Eq '^[[:space:]]*\[include[[:space:]]+nfc/(nfc_reader_shared|nfc_shared_reader)\.cfg\][[:space:]]*$' \
+                    "${PRINTER_CFG}"; then
+                    shared_include=yes
+                fi
+            fi
+            if [ "${lane_include}" = "yes" ] && [ "${shared_include}" = "yes" ]; then
+                echo "hybrid"
+                return 0
+            fi
+            detect_reader_type "${PRINTER_CFG}" "${NFC_READER_HW_CFG}" \
+                "${NFC_READER_SHARED_CFG}" "${NFC_SHARED_READER_CFG}"
+            ;;
+    esac
+}
+
+installation_present() {
+    [ -f "${INSTALL_STATE_FILE}" ] || \
+    [ -f "${NFC_READER_CFG}" ] || \
+    [ -L "${KLIPPER_EXTRAS}/nfc_gate.py" ] || \
+    { [ -f "${PRINTER_CONFIG}/moonraker.conf" ] && \
+      grep -qF '[update_manager Happy-Hare-RFID-Reader]' \
+          "${PRINTER_CONFIG}/moonraker.conf"; }
+}
+
+link_matches() {
+    [ -L "$1" ] && [ "$(readlink "$1")" = "$2" ]
+}
+
+ensure_managed_link() {
+    local source="$1"
+    local target="$2"
+    local label="$3"
+
+    if [ ! -e "${source}" ]; then
+        echo "  [error]   missing source for ${label}: ${source}"
+        return 1
+    fi
+    if link_matches "${target}" "${source}"; then
+        echo "  [ok]      ${label}"
+        return 0
+    fi
+    if [ -L "${target}" ]; then
+        rm "${target}"
+    elif [ -e "${target}" ]; then
+        echo "  [error]   ${target} exists and is not a symlink; left unchanged"
+        return 1
+    fi
+    RESTART_KLIPPER_NEEDED=yes
+    ln -s "${source}" "${target}"
+    echo "  [link]    ${label} -> ${source}"
+}
+
+required_includes() {
+    local layout="$1"
+    echo "[include nfc/nfc_reader.cfg]"
+    echo "[include nfc/nfc_macros.cfg]"
+    case "${layout}" in
+        lane) echo "[include nfc/nfc_reader_hw.cfg]" ;;
+        shared) echo "[include nfc/nfc_reader_shared.cfg]" ;;
+        hybrid)
+            echo "[include nfc/nfc_reader_hw.cfg]"
+            echo "[include nfc/nfc_reader_shared.cfg]"
+            ;;
+    esac
+}
+
+printer_includes_are_complete() {
+    local layout="$1"
+    local include
+    [ -f "${PRINTER_CFG}" ] || return 1
+    while IFS= read -r include; do
+        awk -v target="${include}" '
+            {
+                line = $0
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+                gsub(/[[:space:]]+/, " ", line)
+                if (line == target) found = 1
+            }
+            END { exit(found ? 0 : 1) }
+        ' "${PRINTER_CFG}" || return 1
+    done < <(required_includes "${layout}")
+}
+
+ensure_printer_includes() {
+    local layout="$1"
+    local required backup
+    required="$(required_includes "${layout}")"
+    if printer_includes_are_complete "${layout}"; then
+        echo "  [ok]      printer.cfg NFC includes"
+        return 0
+    fi
+    if [ ! -f "${PRINTER_CFG}" ]; then
+        echo "  [error]   printer.cfg not found at ${PRINTER_CFG}"
+        return 1
+    fi
+    backup="$(next_available_path "${PRINTER_CFG}.pre-nfc-includes-$(date +%Y%m%d_%H%M%S)")"
+    cp "${PRINTER_CFG}" "${backup}"
+    python3 - "${PRINTER_CFG}" "${required}" <<'PYEOF'
+import re
+import sys
+
+path, required_text = sys.argv[1:3]
+required = required_text.splitlines()
+all_nfc = {
+    '[include nfc/nfc_reader.cfg]',
+    '[include nfc/nfc_macros.cfg]',
+    '[include nfc/nfc_reader_hw.cfg]',
+    '[include nfc/nfc_reader_shared.cfg]',
+    '[include nfc/nfc_shared_reader.cfg]',
+}
+with open(path) as f:
+    lines = f.readlines()
+
+first = None
+kept = []
+for line in lines:
+    normalized = re.sub(r'\s+', ' ', line.strip())
+    if normalized in all_nfc:
+        if first is None:
+            first = len(kept)
+        continue
+    kept.append(line)
+
+if first is None:
+    first = len(kept)
+    if kept and kept[-1].strip():
+        kept.append('\n')
+        first += 1
+
+block = [item + '\n' for item in required]
+kept[first:first] = block
+with open(path, 'w') as f:
+    f.writelines(kept)
+PYEOF
+    RESTART_KLIPPER_NEEDED=yes
+    echo "  [backup]  printer.cfg -> ${backup}"
+    echo "  [repair]  installed ordered NFC includes for ${layout} layout"
+}
+
+moonraker_updater_is_current() {
+    local conf="${PRINTER_CONFIG}/moonraker.conf"
+    [ -f "${conf}" ] || return 1
+    python3 - "${conf}" "${REPO_DIR}" "${RFID_READER_REPO_URL}" <<'PYEOF'
+import sys
+
+path, repo, origin = sys.argv[1:]
+wanted = {
+    'type': 'git_repo',
+    'channel': 'dev',
+    'path': repo,
+    'origin': origin,
+    'primary_branch': 'main',
+    'managed_services': 'klipper',
+}
+section = '[update_manager Happy-Hare-RFID-Reader]'
+values = {}
+active = False
+canonical_count = 0
+legacy_found = False
+known_sections = {
+    '[update_manager Happy-Hare-RFID-Reader]',
+    '[update_manager Happy-Hare-rfid-reader]',
+    '[update_manager happy_hare_rfid_reader]',
+    '[update_manager emu_nfc_reader]',
+}
+with open(path) as f:
+    for line in f:
+        stripped = line.strip()
+        if stripped.startswith('[') and stripped.endswith(']'):
+            active = stripped == section
+            if active:
+                canonical_count += 1
+            elif stripped in known_sections:
+                legacy_found = True
+            continue
+        if active and ':' in stripped and not stripped.startswith('#'):
+            key, value = stripped.split(':', 1)
+            values[key.strip()] = value.strip()
+ok = all(values.get(k) == v for k, v in wanted.items())
+ok = ok and canonical_count == 1 and not legacy_found
+ok = ok and 'install_script' not in values
+raise SystemExit(0 if ok else 1)
+PYEOF
+}
+
+ensure_moonraker_updater() {
+    local conf="${PRINTER_CONFIG}/moonraker.conf"
+    local backup
+    if [ ! -f "${conf}" ]; then
+        echo "  [error]   moonraker.conf not found at ${conf}"
+        return 1
+    fi
+    if moonraker_updater_is_current; then
+        echo "  [ok]      Moonraker web updater"
+        return 0
+    fi
+    backup="$(python3 - "${conf}" "${REPO_DIR}" "${RFID_READER_REPO_URL}" <<'PYEOF'
+import datetime
+import os
+import shutil
+import sys
+
+path, repo, origin = sys.argv[1:]
+sections = {
+    '[update_manager Happy-Hare-RFID-Reader]',
+    '[update_manager Happy-Hare-rfid-reader]',
+    '[update_manager happy_hare_rfid_reader]',
+    '[update_manager emu_nfc_reader]',
+}
+with open(path) as f:
+    lines = f.readlines()
+
+out = []
+skip = False
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith('[') and stripped.endswith(']'):
+        skip = stripped in sections
+    if not skip:
+        out.append(line)
+
+while out and not out[-1].strip():
+    out.pop()
+out.extend([
+    '\n',
+    '[update_manager Happy-Hare-RFID-Reader]\n',
+    'type:             git_repo\n',
+    'channel:          dev\n',
+    'path:             {}\n'.format(repo),
+    'origin:           {}\n'.format(origin),
+    'primary_branch:   main\n',
+    'managed_services: klipper\n',
+    'info_tags:        desc=EMU NFC Gate Reader for Happy Hare\n',
+])
+
+stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+backup = '{}.pre-nfc-updater-{}'.format(path, stamp)
+candidate = backup
+index = 1
+while os.path.lexists(candidate):
+    candidate = '{}_{}'.format(backup, index)
+    index += 1
+shutil.copy2(path, candidate)
+with open(path, 'w') as f:
+    f.writelines(out)
+print(candidate)
+PYEOF
+    )"
+    RESTART_MOONRAKER_NEEDED=yes
+    echo "  [backup]  moonraker.conf -> ${backup}"
+    echo "  [repair]  Moonraker updater configured for web updates"
+}
+
+write_install_state() {
+    local layout="$1"
+    local tmp="${INSTALL_STATE_FILE}.tmp"
+    {
+        echo "install_schema=${INSTALL_SCHEMA}"
+        echo "repo_path=${REPO_DIR}"
+        echo "layout=${layout}"
+    } > "${tmp}"
+    mv "${tmp}" "${INSTALL_STATE_FILE}"
+    echo "  [state]   ${INSTALL_STATE_FILE}"
+}
+
+installation_is_healthy() {
+    local layout="$1"
+    [ "$(state_value install_schema 2>/dev/null || true)" = "${INSTALL_SCHEMA}" ] || return 1
+    [ "$(state_value repo_path 2>/dev/null || true)" = "${REPO_DIR}" ] || return 1
+    [ -f "${NFC_READER_CFG}" ] || return 1
+    case "${layout}" in
+        lane) [ -f "${NFC_READER_HW_CFG}" ] || return 1 ;;
+        shared) [ -f "${NFC_READER_SHARED_CFG}" ] || return 1 ;;
+        hybrid)
+            [ -f "${NFC_READER_HW_CFG}" ] && [ -f "${NFC_READER_SHARED_CFG}" ] || return 1
+            ;;
+    esac
+    link_matches "${KLIPPER_EXTRAS}/nfc_gate.py" "${REPO_DIR}/klippy/extras/nfc_gate.py" || return 1
+    link_matches "${KLIPPER_EXTRAS}/mmu_nfc_endstop.py" "${REPO_DIR}/klippy/extras/mmu_nfc_endstop.py" || return 1
+    link_matches "${KLIPPER_EXTRAS}/nfc_gates" "${REPO_DIR}/klippy/extras/nfc_gates" || return 1
+    link_matches "${NFC_MACROS_CFG}" "${REPO_DIR}/config/nfc_macros.cfg" || return 1
+    printer_includes_are_complete "${layout}" || return 1
+    moonraker_updater_is_current || return 1
+}
+
+repair_installation() {
+    local layout failures=0
+    layout="$(installed_layout)"
+    echo "Repairing ${layout} installation..."
+    echo "User-owned NFC settings will not be changed."
+    echo ""
+
+    mkdir -p "${NFC_CONFIG_DIR}"
+    [ -f "${NFC_READER_CFG}" ] || {
+        echo "  [error]   missing user config: ${NFC_READER_CFG}"
+        failures=$((failures + 1))
+    }
+    case "${layout}" in
+        lane)
+            [ -f "${NFC_READER_HW_CFG}" ] || {
+                echo "  [error]   missing user config: ${NFC_READER_HW_CFG}"
+                failures=$((failures + 1))
+            }
+            ;;
+        shared)
+            [ -f "${NFC_READER_SHARED_CFG}" ] || {
+                echo "  [error]   missing user config: ${NFC_READER_SHARED_CFG}"
+                failures=$((failures + 1))
+            }
+            ;;
+        hybrid)
+            [ -f "${NFC_READER_HW_CFG}" ] || {
+                echo "  [error]   missing user config: ${NFC_READER_HW_CFG}"
+                failures=$((failures + 1))
+            }
+            [ -f "${NFC_READER_SHARED_CFG}" ] || {
+                echo "  [error]   missing user config: ${NFC_READER_SHARED_CFG}"
+                failures=$((failures + 1))
+            }
+            ;;
+    esac
+
+    ensure_managed_link "${REPO_DIR}/klippy/extras/nfc_gate.py" \
+        "${KLIPPER_EXTRAS}/nfc_gate.py" "nfc_gate.py" || failures=$((failures + 1))
+    ensure_managed_link "${REPO_DIR}/klippy/extras/mmu_nfc_endstop.py" \
+        "${KLIPPER_EXTRAS}/mmu_nfc_endstop.py" "mmu_nfc_endstop.py" || failures=$((failures + 1))
+    ensure_managed_link "${REPO_DIR}/klippy/extras/nfc_gates" \
+        "${KLIPPER_EXTRAS}/nfc_gates" "nfc_gates/" || failures=$((failures + 1))
+    install_managed_macros || failures=$((failures + 1))
+    ensure_printer_includes "${layout}" || failures=$((failures + 1))
+    ensure_moonraker_updater || failures=$((failures + 1))
+
+    if [ "${failures}" -ne 0 ]; then
+        echo ""
+        echo "Repair incomplete: ${failures} problem(s) require attention."
+        echo "No user-owned configuration values were overwritten."
+        return 1
+    fi
+    write_install_state "${layout}"
+    echo ""
+    echo "Repair complete."
+    if [ "${RESTART_KLIPPER_NEEDED:-no}" = "yes" ] || \
+       [ "${RESTART_MOONRAKER_NEEDED:-no}" = "yes" ]; then
+        echo ""
+        echo "Restart the affected services so the repaired files take effect"
+        echo "(skip while a print is running; restart when the printer is idle):"
+        if [ "${RESTART_KLIPPER_NEEDED:-no}" = "yes" ]; then
+            echo "  sudo systemctl restart klipper"
+        fi
+        if [ "${RESTART_MOONRAKER_NEEDED:-no}" = "yes" ]; then
+            echo "  sudo systemctl restart moonraker"
+        fi
+    fi
+    echo ""
+    echo "Future updates are installed from Moonraker's web interface."
+}
+
 detect_shared_mcu() {
     local shared_cfg="$1"
     python3 - "${shared_cfg}" <<'PYEOF'
@@ -1530,16 +1966,60 @@ if [ ! -d "${PRINTER_CONFIG}" ]; then
     exit 1
 fi
 
-handle_legacy_beta_cutover
 enforce_supported_install_dir
 
 print_banner
-echo "Interactive setup"
-echo ""
 
-if [ -f "${NFC_READER_CFG}" ]; then
-    echo "${BOLD}  Existing install detected — updating.${RESET}"
-    echo "  Your current configuration will be preserved; only changed values will be written."
+if [ "${INSTALL_MODE}" = "repair" ]; then
+    if ! installation_present; then
+        echo "No existing installation was found."
+        echo "Run the first-time installer without -r:"
+        echo ""
+        echo "  bash install.sh"
+        exit 1
+    fi
+    repair_installation
+    exit $?
+fi
+
+if [ "${INSTALL_MODE}" = "reconfigure" ]; then
+    if ! installation_present; then
+        echo "No existing installation was found."
+        echo "Run the first-time installer without --reconfigure:"
+        echo ""
+        echo "  bash install.sh"
+        exit 1
+    fi
+    echo "${BOLD}Interactive reconfiguration${RESET}"
+    echo ""
+    echo "The current NFC configuration will be backed up before changes are made."
+    backup_nfc_config_for_reconfigure
+    echo ""
+else
+    handle_legacy_beta_cutover
+
+    if installation_present; then
+        EXISTING_LAYOUT="$(installed_layout)"
+        if installation_is_healthy "${EXISTING_LAYOUT}"; then
+            echo "${BOLD}Happy Hare RFID Reader is already installed and healthy.${RESET}"
+            echo ""
+            echo "Use Moonraker's web interface in Mainsail or Fluidd for updates."
+        else
+            echo "${BOLD}An existing Happy Hare RFID Reader installation was found.${RESET}"
+            echo ""
+            echo "The installer will not rerun setup or modify user configuration."
+            echo "Repair installer-owned links and integration files with:"
+            echo ""
+            echo "  bash install.sh -r"
+            echo ""
+            echo "To rerun the configuration wizard instead:"
+            echo ""
+            echo "  bash install.sh --reconfigure"
+        fi
+        exit 0
+    fi
+
+    echo "Interactive first-time setup"
     echo ""
 fi
 
@@ -1773,9 +2253,16 @@ else
 fi
 
 # ── Summary + confirm before any writes ──────────────────────────────────────
+if [ "${INSTALL_MODE}" = "reconfigure" ]; then
+    SUMMARY_TITLE="Reconfiguration summary — review before writing"
+    CONFIRM_PROMPT="  Apply this reconfiguration?"
+else
+    SUMMARY_TITLE="Install summary — review before writing"
+    CONFIRM_PROMPT="  Start the install with these settings?"
+fi
 echo ""
 echo "${BOLD}════════════════════════════════════════════════════════════════${RESET}"
-echo "${BOLD}  Install summary — review before writing${RESET}"
+echo "${BOLD}  ${SUMMARY_TITLE}${RESET}"
 echo "${BOLD}════════════════════════════════════════════════════════════════${RESET}"
 echo "  Happy Hare:        ${HH_VERSION}"
 echo "  Reader layout:     ${READER_TYPE}"
@@ -1848,10 +2335,13 @@ fi
 echo "${BOLD}════════════════════════════════════════════════════════════════${RESET}"
 echo ""
 prompt_yes_no _CONFIRM_INSTALL \
-    "  Start the install with these settings?" \
+    "${CONFIRM_PROMPT}" \
     "yes"
 if [ "${_CONFIRM_INSTALL}" != "yes" ]; then
-    echo "  Install cancelled — no files were written."
+    echo "  Cancelled — no configuration changes were applied."
+    if [ -n "${RECONFIGURE_BACKUP:-}" ]; then
+        echo "  The precautionary backup remains at ${RECONFIGURE_BACKUP}."
+    fi
     exit 0
 fi
 echo ""
@@ -1874,13 +2364,16 @@ elif [ -e "${LEGACY_HH_PORTING}" ]; then
 fi
 
 echo "Linking nfc_gate.py..."
-ln -sfn "${REPO_DIR}/klippy/extras/nfc_gate.py" "${KLIPPER_EXTRAS}/nfc_gate.py"
+ensure_managed_link "${REPO_DIR}/klippy/extras/nfc_gate.py" \
+    "${KLIPPER_EXTRAS}/nfc_gate.py" "nfc_gate.py"
 
 echo "Linking mmu_nfc_endstop.py..."
-ln -sfn "${REPO_DIR}/klippy/extras/mmu_nfc_endstop.py" "${KLIPPER_EXTRAS}/mmu_nfc_endstop.py"
+ensure_managed_link "${REPO_DIR}/klippy/extras/mmu_nfc_endstop.py" \
+    "${KLIPPER_EXTRAS}/mmu_nfc_endstop.py" "mmu_nfc_endstop.py"
 
 echo "Linking nfc_gates/ package..."
-ln -sfn "${REPO_DIR}/klippy/extras/nfc_gates" "${KLIPPER_EXTRAS}/nfc_gates"
+ensure_managed_link "${REPO_DIR}/klippy/extras/nfc_gates" \
+    "${KLIPPER_EXTRAS}/nfc_gates" "nfc_gates/"
 
 # ── Create NFC config directory if it does not exist ─────────────────────────
 if [ -e "${NFC_CONFIG_DIR}" ] && [ ! -d "${NFC_CONFIG_DIR}" ]; then
@@ -2080,55 +2573,40 @@ if [ "${BAMBU_READS}" = "yes" ]; then
     fi
 fi
 
-# ── Moonraker update_manager ──────────────────────────────────────────────────
-#
-# Append [update_manager Happy-Hare-RFID-Reader] to moonraker.conf if not already present.
-# The section is identical every install so idempotency is a simple grep check.
-#
-MOONRAKER_CONF="${PRINTER_CONFIG}/moonraker.conf"
-MOONRAKER_SECTION="[update_manager Happy-Hare-RFID-Reader]"
-LEGACY_MOONRAKER_SECTION="[update_manager emu_nfc_reader]"
-PREVIOUS_MOONRAKER_SECTION="[update_manager happy_hare_rfid_reader]"
-PREVIOUS_MOONRAKER_SECTION_MIXED="[update_manager Happy-Hare-rfid-reader]"
-
-if [ ! -f "${MOONRAKER_CONF}" ]; then
-    echo "  [skip]   moonraker.conf not found at ${MOONRAKER_CONF} — add update_manager manually"
-    echo "           ${MOONRAKER_SECTION}"
-    echo "           type:             git_repo"
-    echo "           path:             ${REPO_DIR}"
-    echo "           origin:           ${RFID_READER_REPO_URL}"
-    echo "           primary_branch:   main"
-    echo "           managed_services: klipper"
-    echo "           install_script:   install.sh"
-elif grep -qF "${MOONRAKER_SECTION}" "${MOONRAKER_CONF}"; then
-    echo "  [skip]   moonraker.conf already has ${MOONRAKER_SECTION}"
-else
-    if grep -qF "${LEGACY_MOONRAKER_SECTION}" "${MOONRAKER_CONF}"; then
-        backup_and_remove_legacy_moonraker_section "${LEGACY_MOONRAKER_SECTION}"
-    fi
-    if grep -qF "${PREVIOUS_MOONRAKER_SECTION}" "${MOONRAKER_CONF}"; then
-        backup_and_remove_legacy_moonraker_section "${PREVIOUS_MOONRAKER_SECTION}"
-    fi
-    if grep -qF "${PREVIOUS_MOONRAKER_SECTION_MIXED}" "${MOONRAKER_CONF}"; then
-        backup_and_remove_legacy_moonraker_section "${PREVIOUS_MOONRAKER_SECTION_MIXED}"
-    fi
-    cat >> "${MOONRAKER_CONF}" <<MOONRAKER
-
-${MOONRAKER_SECTION}
-type:             git_repo
-path:             ${REPO_DIR}
-origin:           ${RFID_READER_REPO_URL}
-primary_branch:   main
-managed_services: klipper
-install_script:   install.sh
-info_tags:        desc=EMU NFC Gate Reader for Happy Hare
-MOONRAKER
-    echo "  [added]  ${MOONRAKER_SECTION} → ${MOONRAKER_CONF}"
-fi
+# ── Printer and Moonraker integration ─────────────────────────────────────────
+echo ""
+echo "Configuring printer and Moonraker integration..."
+# These are non-fatal: a missing printer.cfg or moonraker.conf must not abort the
+# install after config files are already written. Record the gap, keep going, and
+# always write the state marker so the install is recoverable with `install.sh -r`.
+ensure_printer_includes "${READER_TYPE}" || PRINTER_INCLUDES_INCOMPLETE=yes
+ensure_moonraker_updater || MOONRAKER_UNAVAILABLE=yes
+write_install_state "${READER_TYPE}"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
-echo "${BOLD}Install complete.${RESET}"
+if [ "${INSTALL_MODE}" = "reconfigure" ]; then
+    echo "${BOLD}Reconfiguration complete.${RESET}"
+    if [ -n "${RECONFIGURE_BACKUP:-}" ]; then
+        echo "  Previous NFC configuration: ${RECONFIGURE_BACKUP}"
+    else
+        echo "  No previous NFC configuration was found to back up."
+    fi
+else
+    echo "${BOLD}Install complete.${RESET}"
+fi
+if [ "${PRINTER_INCLUDES_INCOMPLETE:-no}" = "yes" ]; then
+    echo ""
+    echo "  ${BOLD}WARNING:${RESET} printer.cfg was not found, so the NFC [include] lines"
+    echo "  could not be added automatically. The plugin will not load until you add"
+    echo "  the includes listed below to printer.cfg and restart Klipper."
+fi
+if [ "${MOONRAKER_UNAVAILABLE:-no}" = "yes" ]; then
+    echo ""
+    echo "  ${BOLD}WARNING:${RESET} moonraker.conf was not found, so one-click web updates"
+    echo "  were not configured. This does not affect the NFC reader itself. After"
+    echo "  setting up Moonraker, run 'bash install.sh -r' to enable web updates."
+fi
 echo ""
 if [ "${LEGACY_CUTOVER_PERFORMED:-no}" = "yes" ]; then
     echo "  Legacy beta cutover:"
@@ -2204,16 +2682,21 @@ echo "    ${KLIPPER_EXTRAS}/nfc_gates    ->  ${REPO_DIR}/klippy/extras/nfc_gates
 echo ""
 echo "  Config files in ${NFC_CONFIG_DIR}/:"
 echo "    nfc_reader.cfg          ← Spoolman URL, tag parsing, debug settings"
-echo "    nfc_macros.cfg          ← read-only macros"
+echo "    nfc_macros.cfg          ← read-only Happy Hare interface macros"
 if [ "${READER_TYPE}" = "shared" ]; then
     echo "    nfc_reader_shared.cfg   ← [nfc_gate shared] hardware config  (settings applied)"
 else
     echo "    nfc_reader_hw.cfg       ← [nfc_gate laneN] hardware layout   (settings applied)"
 fi
-echo "  To add the other hardware config later, re-run install.sh with the other"
-echo "  reader layout selected."
+echo "  The installer will not rewrite these settings on later runs or repairs."
 echo ""
-echo "Next steps (first install only):"
+if [ "${INSTALL_MODE}" = "reconfigure" ]; then
+    echo "Next steps after reconfiguration:"
+    echo "  (Hardware flashing and Happy Hare hook steps only apply if you changed"
+    echo "   reader hardware or layout — skip any you already completed.)"
+else
+    echo "Next steps (first install only):"
+fi
 echo ""
 
 if [ "${READER_TYPE}" = "shared" ]; then
@@ -2228,7 +2711,7 @@ if [ "${READER_TYPE}" = "shared" ]; then
         fi
     fi
     echo ""
-    echo "  2. Add includes to printer.cfg:"
+    echo "  2. Confirm these includes were added to printer.cfg:"
     echo "       [include nfc/nfc_reader.cfg]"
     echo "       [include nfc/nfc_macros.cfg]"
     echo "       [include nfc/nfc_reader_shared.cfg]"
@@ -2246,8 +2729,14 @@ if [ "${READER_TYPE}" = "shared" ]; then
     echo "     Polling pauses/resumes automatically on print start/end —"
     echo "     the post-unload hook is no longer needed."
     echo ""
-    echo "  6. Moonraker update_manager — added automatically by this script."
-    echo "     If moonraker.conf was not found, add [update_manager Happy-Hare-RFID-Reader] manually."
+    if [ "${MOONRAKER_UNAVAILABLE:-no}" = "yes" ]; then
+        echo "  6. Moonraker web updater — NOT configured (moonraker.conf not found)."
+        echo "     After setting up Moonraker, run: bash install.sh -r"
+    else
+        echo "  6. Activate the Moonraker web updater — restart Moonraker so it reads"
+        echo "     the new [update_manager] block (do this when the printer is idle):"
+        echo "       sudo systemctl restart moonraker"
+    fi
     echo ""
     if [ "${SHARED_READER_TYPE}" = "pn7160" ]; then
         echo "  PN7160 note:"
@@ -2282,7 +2771,7 @@ else
     echo "     Also review ~/printer_data/config/nfc/nfc_reader_hw.cfg"
     echo "     and confirm each lane's i2c_mcu name matches your Klipper config."
     echo ""
-    echo "  2. Add includes to printer.cfg:"
+    echo "  2. Confirm these includes were added to printer.cfg:"
     echo "       [include nfc/nfc_reader.cfg]"
     echo "       [include nfc/nfc_macros.cfg]"
     echo "       [include nfc/nfc_reader_hw.cfg]"
@@ -2297,8 +2786,14 @@ else
     echo ""
     echo "  4. Update and flash Klipper on each lane MCU / EBB42 board used by NFC."
     echo ""
-    echo "  5. Moonraker update_manager — added automatically by this script."
-    echo "     If moonraker.conf was not found, add [update_manager Happy-Hare-RFID-Reader] manually."
+    if [ "${MOONRAKER_UNAVAILABLE:-no}" = "yes" ]; then
+        echo "  5. Moonraker web updater — NOT configured (moonraker.conf not found)."
+        echo "     After setting up Moonraker, run: bash install.sh -r"
+    else
+        echo "  5. Activate the Moonraker web updater — restart Moonraker so it reads"
+        echo "     the new [update_manager] block (do this when the printer is idle):"
+        echo "       sudo systemctl restart moonraker"
+    fi
     echo ""
     echo "  PN7160 note:"
     if [ "${HH_VERSION}" = "v4" ]; then

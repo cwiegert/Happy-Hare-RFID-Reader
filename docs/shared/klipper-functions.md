@@ -727,10 +727,10 @@ If Happy Hare updates correctly, the pipeline from macro inward is working. If i
 
 ## Read-Only Macros
 
-The event macros appear at `~/printer_data/config/nfc/nfc_macros.cfg`. This file is read-only and should not be edited directly. To customize it, make a copy, include the copy instead of `nfc_macros.cfg`, and edit the copy.
+The event macros are in `~/printer_data/config/nfc/nfc_macros.cfg`. This file is read-only because it defines the NFC reader's interface to Happy Hare. To customize it, make a copy and include the copy instead of the original.
 
 For lane readers, the Happy Hare-facing gate assignment commands live in
-`nfc_macros.cfg` so the integration boundary remains visible without putting it in Python.
+`nfc_macros.cfg` so the interface remains visible without putting it in Python.
 The shared reader stages `MMU_GATE_MAP NEXT_SPOOLID=<id>` in Python when the
 tag resolves. The hook macro is deliberately narrow: Python validates pending
 state with `NFC_SHARED PRELOAD_CHECK=1`, and `NFC_SHARED PRELOAD_COMMIT=1`

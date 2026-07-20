@@ -29,8 +29,8 @@ class SharedPreloadCoordinator:
         gate._shared_clear_preload_approval()
         if gate._debug >= 3:
             logger.info(
-                "[%s]: PRELOAD_CHECK entered — pending spool=%s uid=%s",
-                gate._name, gate._shared_pending_spool,
+                "[%s]: PRELOAD_CHECK entered - pending=%s uid=%s",
+                gate._name, gate._shared_pending_label(),
                 gate._shared_pending_uid)
         if gate._is_printing():
             logger.warning(
@@ -47,7 +47,7 @@ class SharedPreloadCoordinator:
             return
 
         expired = gate._shared_expire_pending_if_needed()
-        if gate._shared_pending_spool is None:
+        if not gate._shared_has_pending():
             logger.info(
                 "[%s]: PRELOAD_CHECK — no pending spool; "
                 "advising manual preload",
@@ -87,6 +87,21 @@ class SharedPreloadCoordinator:
                 "shared reader first, or use MMU_PRELOAD to load without "
                 "spool assignment" % gate._name))
             gate._shared_last_action = "preload check found no staged spool"
+            return
+
+        if gate._shared_pending_metadata is not None:
+            gate._shared_clear_pending_warning_feedback()
+            gate._shared_preload_metadata = dict(
+                gate._shared_pending_metadata)
+            gate._shared_preload_uid = gate._shared_pending_uid
+            gate._shared_last_action = "approved tag metadata for gate assignment"
+            logger.info(
+                "[%s]: PRELOAD_CHECK - metadata uid=%s approved; "
+                "waiting for PRELOAD_COMMIT",
+                gate._name, gate._shared_preload_uid)
+            gcmd.respond_info(color_console_tags(
+                "[OK] NFC[%s]: tag metadata approved - ready for "
+                "preload commit" % gate._name))
             return
 
         spool_id = gate._shared_pending_spool
@@ -136,6 +151,41 @@ class SharedPreloadCoordinator:
     def commit(self, gcmd):
         gate = self._gate
         spool_id = gcmd.get_int('SPOOL_ID', -1)
+        target_gate = gcmd.get_int('GATE', -1)
+        if gate._shared_preload_metadata is not None:
+            if target_gate < 0:
+                logger.warning(
+                    "[%s]: PRELOAD_COMMIT metadata missing GATE; "
+                    "pending metadata kept", gate._name)
+                gcmd.respond_info(color_console_tags(
+                    "[WARN] NFC[%s]: metadata preload commit needs GATE; "
+                    "pending tag kept" % gate._name))
+                return
+            if gate._shared_pending_metadata != gate._shared_preload_metadata:
+                logger.warning(
+                    "[%s]: pending metadata changed before commit; "
+                    "pending tag kept", gate._name)
+                gcmd.respond_info(color_console_tags(
+                    "[WARN] NFC[%s]: pending tag changed before metadata "
+                    "commit; pending tag kept" % gate._name))
+                return
+            metadata = dict(gate._shared_preload_metadata)
+            uid = gate._shared_preload_uid or ''
+            gate._shared_clear_pending()
+            gate._klipper.dispatch(
+                'changed', target_gate, uid, None, metadata)
+            gate._shared_last_action = (
+                "metadata uid=%s applied to gate %d" % (uid, target_gate))
+            gate._shared_read_deadline = 0.0
+            gate._polling = True
+            gate.reactor.update_timer(gate._poll_timer, gate.reactor.NOW)
+            logger.info(
+                "[OK] NFC[%s]: tag metadata applied to gate %d; "
+                "polling restarted", gate._name, target_gate)
+            gcmd.respond_info(color_console_tags(
+                "[OK] NFC[%s]: tag metadata loaded into gate %d - ready "
+                "for next tag" % (gate._name, target_gate)))
+            return
         if gate._shared_preload_spool is None:
             logger.warning(
                 "[%s]: PRELOAD_COMMIT without approved spool; "
@@ -181,6 +231,42 @@ class SharedPreloadCoordinator:
         gcmd.respond_info(color_console_tags(
             "[OK] NFC[%s]: spool %d loaded — ready for next tag"
             % (gate._name, spool_id)))
+
+    def fallback_to_gate(self, target_gate):
+        """Assign a staged shared tag after a hybrid lane scan cannot read it."""
+        gate = self._gate
+        if target_gate < 0 or gate._is_printing():
+            return False
+        gate._shared_clear_preload_approval()
+        gate._shared_expire_pending_if_needed()
+        if not gate._shared_has_pending():
+            return False
+
+        uid = gate._shared_pending_uid or ''
+        spool_id = gate._shared_pending_spool
+        metadata = (dict(gate._shared_pending_metadata)
+                    if gate._shared_pending_metadata is not None else None)
+        auto_created = gate._shared_pending_auto_created
+        pending_label = gate._shared_pending_label()
+
+        gate._shared_clear_pending()
+        gate._shared_read_deadline = 0.0
+        gate._polling = True
+        gate.reactor.update_timer(gate._poll_timer, gate.reactor.NOW)
+        gate._klipper.dispatch(
+            'changed', target_gate, uid, spool_id, meta=metadata,
+            auto_created=auto_created)
+        gate._shared_last_action = (
+            "applied %s to gate %d after lane scan fallback"
+            % (pending_label, target_gate))
+        logger.info(
+            "[OK] NFC[%s]: lane scan fallback applied %s to gate %d",
+            gate._name, pending_label, target_gate)
+        if gate._gcode is not None:
+            gate._gcode.respond_info(color_console_tags(
+                "[OK] NFC[%s]: lane scan fallback applied %s to gate %d"
+                % (gate._name, pending_label, target_gate)))
+        return True
 
     def clear_assigned(self, gcmd):
         gate = self._gate

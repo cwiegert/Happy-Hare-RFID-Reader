@@ -57,14 +57,6 @@ def led_unit_index(led_unit):
         return None
 
 
-def is_happy_hare_v4(printer):
-    """Return whether the installed Happy Hare exposes the V4 drive API."""
-    if printer is None:
-        return False
-    mmu = printer.lookup_object('mmu', None)
-    return callable(getattr(mmu, 'drive', None))
-
-
 def hh_led_script(effect_name, duration=None, gate=None, unit=None,
                   direct_effect=False):
     """Build the appropriate Happy Hare command for an NFC LED effect."""
@@ -112,12 +104,13 @@ class LEDEffectManager:
     request short-lived effects and to release control back to HH.
     """
     def __init__(self, printer, reactor=None, runner=None, name='nfc',
-                 console=None):
+                 console=None, happy_hare_v4=False):
         self.printer = printer
         self.reactor = reactor
         self.runner = runner
         self.name = name
         self.console = console
+        self._happy_hare_v4 = bool(happy_hare_v4)
 
     def _v4_effect_registry(self):
         """Return NFC's printer-scoped registry of directly started V4 effects."""
@@ -207,7 +200,7 @@ class LEDEffectManager:
                    target=None):
         effect = (effect_name or '').strip()
         display_effect = (display_effect or effect).strip()
-        v4_direct = is_happy_hare_v4(self.printer) and gate is None
+        v4_direct = self._happy_hare_v4
         script = hh_led_script(
             display_effect if v4_direct else effect,
             duration=duration, gate=gate, unit=unit,
@@ -377,7 +370,7 @@ class LEDEffectManager:
         self._register_timer(_run, delay)
 
     def release(self, async_dispatch=False, gate=None, unit=None):
-        if is_happy_hare_v4(self.printer):
+        if self._happy_hare_v4:
             registry = self._v4_effect_registry()
             if gate is None:
                 effects = sorted(set(

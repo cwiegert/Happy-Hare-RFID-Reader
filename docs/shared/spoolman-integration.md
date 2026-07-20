@@ -264,12 +264,12 @@ scan-jog interference handling.
 
 Reader compatibility:
 
-| Tag capability | PN532 | PN7160 | RC522 | Notes |
-|---|---:|---:|---:|---|
-| UID lookup through Spoolman | Yes | Yes | Yes | Factory UID matching works on all supported readers. |
-| NTAG / Type-2 rich tags | Yes | Yes | Yes | Used by common NDEF text, JSON, OpenSpool, TigerTag, and several manufacturer tags. |
-| MIFARE Classic rich reads (Bambu, QIDI, Creality) | Yes | Yes | Yes | Requires `tag_parsing: True` and `bambu_reads: True` on all three. Bambu and Creality additionally require `pycryptodome`; QIDI uses a default-key fallback that needs no extra dependency. |
-| ISO15693 / Type-5 rich tags | No | Yes | No | Used by SLIX2/OpenPrintTag-style Type-5 tags. |
+| Tag capability | PN532 | PN7160 | RC522 | PN5180 | Notes |
+|---|---:|---:|---:|---:|---|
+| UID lookup through Spoolman | Yes | Yes | Yes | Yes | Factory UID matching works on all supported readers. |
+| NTAG / Type-2 rich tags | Yes | Yes | Yes | Yes | Used by common NDEF text, JSON, OpenSpool, TigerTag, and several manufacturer tags. |
+| MIFARE Classic rich reads (Bambu, QIDI, Creality) | Yes | Yes | Yes | Yes | Requires `tag_parsing: True` and `bambu_reads: True` on all four. Bambu and Creality additionally require `pycryptodome`; QIDI uses a default-key fallback that needs no extra dependency. |
+| SLIX2 / ISO15693 Type-5 rich tags | No | Yes | No | Yes | Current Type-5 rich-read path is for SLIX2 tags. Read bytes enter the normal parser and are not limited to OpenPrintTag. |
 
 Example OpenSpool-like JSON payload (MIME `application/vnd.openspool` or generic NDEF JSON):
 

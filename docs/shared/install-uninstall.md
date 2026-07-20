@@ -41,7 +41,7 @@ User-owned config files use a non-destructive merge: if a section already exists
 > [!CAUTION]
 > Do this before anything else. The NFC reader driver communicates directly with the MCU firmware over I2C. If the host Klipper and the MCU firmware are on different versions, I2C reads fail with errors that look like hardware faults.
 >
-> Build and flash Klipper firmware for every lane MCU / EBB42 that will carry an NFC reader before you run the installer.
+> Build and flash Klipper firmware for every MCU that will carry an NFC reader before you run the installer.
 
 ### Step 2 — Clone the Repository
 
@@ -133,7 +133,7 @@ mmu_gate: 0
 i2c_mcu:  mmu0
 ```
 
-`i2c_mcu` must exactly match the MCU name in your Happy Hare config (from `mmu_hardware.cfg`), typically `mmu0`, `mmu1`, etc. `i2c_bus` can be set once in the base `[nfc_gate]` section or overridden per lane.
+`i2c_mcu` must exactly match the MCU name in your Happy Hare config (from `mmu_hardware.cfg`), typically `mmu0`, `mmu1`, etc. `i2c_bus` can be set once in the base `[nfc_gate]` section or overridden per lane. RC522 and PN5180 use SPI settings instead; PN5180 additionally requires wired `reset_pin` and active-high `busy_pin`. See [PN5180 wiring](../i2c-nfc/pn5180-wiring.md) for the SLB nine-wire example.
 
 > [!IMPORTANT]
 > **Temperature sensor I2C bus must match.** If your lane MCU also has a thermistor or temperature sensor connected over I2C (e.g. an SHT3x), configure it on the same I2C bus as the NFC reader. PN532 should use hardware I2C. PN7160 supports software I2C, but hardware I2C is recommended because software I2C increases MCU load.
@@ -204,17 +204,24 @@ If you are using the shared reader (`[nfc_gate shared]`), two more things must b
 variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'
 ```
 
+For a hybrid installation that also has per-lane readers, use this instead:
+
+```ini
+variable_user_post_preload_extension: '_NFC_HYBRID_PRELOAD'
+```
+
+`_NFC_HYBRID_PRELOAD` starts a configured lane reader first. If the lane scan
+cannot read a tag, it applies staged shared-reader data to the loaded gate.
+It uses the shared reader directly for a gate without a lane reader.
+
 Without this, NFC never sees the preload event and the spool ID is never applied to the gate.
 
 If this value is still set to `NFC JOG_SCAN=1`, the printer is using the per-lane reader hook. Shared-reader loads will stage a spool, but the post-preload commit will not run; the pending spool will eventually time out and you may see `NFC GATE=<n>` errors.
 
-**Set the pending timeout.** Open `~/printer_data/config/mmu/base/mmu_parameters.cfg` and set:
-
-```ini
-pending_spool_id_timeout: 120   # seconds between tapping the tag and inserting filament
-```
-
-NFC reads this value automatically at connect time (falls back to 30 s if not set). 30 s is short enough that a first load will almost always time out before the filament reaches the gate — increase it to match your typical tap-to-load time.
+**Pending timeout.** NFC uses Happy Hare's active `[mmu]`
+`pending_spool_id_timeout` when Klipper exposes that value. Otherwise it uses
+its 60 s default. No additional Happy Hare configuration is required for the
+default behavior.
 
 ---
 

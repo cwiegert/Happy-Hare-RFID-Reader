@@ -197,4 +197,33 @@ test ! -e "${NOMOON_CONFIG}/moonraker.conf"
 printf '%s\n' "${NOMOON_OUT}" | grep -qF 'moonraker.conf was not found'
 printf '%s\n' "${NOMOON_OUT}" | grep -qF 'bash install.sh -r'
 
+# --reconfigure must not crash when there is no nfc/ directory to back up. An
+# installation can be "present" via the Python symlinks / Moonraker updater while
+# the nfc/ config dir is absent (partial or cleaned-up install); the reconfigure
+# backup is best-effort and the wizard should simply proceed. (Regression guard
+# for the bare `cp -a` under set -e that stat-failed on a missing nfc/ dir.)
+NONFC_HOME="${TEST_ROOT}/nonfc-home"
+NONFC_CONFIG="${NONFC_HOME}/printer_data/config"
+NONFC_EXTRAS="${NONFC_HOME}/klipper/klippy/extras"
+mkdir -p "${NONFC_CONFIG}" "${NONFC_EXTRAS}"
+printf '%s\n' '[include mainsail.cfg]' > "${NONFC_CONFIG}/printer.cfg"
+printf '%s\n' '[server]' 'host: 0.0.0.0' > "${NONFC_CONFIG}/moonraker.conf"
+# Make the install look "present" without an nfc/ config directory.
+ln -s "${REPO_DIR}/klippy/extras/nfc_gate.py" "${NONFC_EXTRAS}/nfc_gate.py"
+test ! -d "${NONFC_CONFIG}/nfc"
+
+NONFC_OUT="$(printf '\n%.0s' {1..25} | \
+    HOME="${NONFC_HOME}" \
+    RFID_READER_ALLOW_DEV_PATH=yes \
+    RFID_READER_PRINTER_CONFIG="${NONFC_CONFIG}" \
+    RFID_READER_KLIPPER_EXTRAS="${NONFC_EXTRAS}" \
+    bash "${REPO_DIR}/install.sh" --reconfigure)"
+
+# It skipped the missing backup instead of crashing on `cp: cannot stat`, ...
+printf '%s\n' "${NONFC_OUT}" | grep -qF 'no NFC configuration to back up'
+! printf '%s\n' "${NONFC_OUT}" | grep -qF 'cannot stat'
+# ... and continued the wizard: the nfc/ dir and state marker now exist.
+grep -qF 'install_schema=1' "${NONFC_CONFIG}/nfc/.install-state"
+test -L "${NONFC_CONFIG}/nfc/nfc_macros.cfg"
+
 echo "installer repair test: PASS"

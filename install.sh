@@ -208,12 +208,23 @@ install_managed_macros() {
 }
 
 backup_nfc_config_for_reconfigure() {
+    RECONFIGURE_BACKUP=""
+    # Best-effort: try to preserve any existing config, but never abort the run.
+    # If there is nothing to back up (fresh dir, or a partial install without a
+    # populated nfc/ directory), just continue and let the wizard create it.
+    if [ ! -d "${NFC_CONFIG_DIR}" ]; then
+        echo "  [skip]    no NFC configuration to back up at ${NFC_CONFIG_DIR}"
+        return 0
+    fi
     local backup_base backup_dir
     backup_base="${PRINTER_CONFIG}/nfc_pre_reconfigure_$(date +%Y%m%d_%H%M%S)"
     backup_dir="$(next_available_path "${backup_base}")"
-    cp -a "${NFC_CONFIG_DIR}" "${backup_dir}"
-    RECONFIGURE_BACKUP="${backup_dir}"
-    echo "  [backup]  NFC configuration -> ${RECONFIGURE_BACKUP}"
+    if cp -a "${NFC_CONFIG_DIR}" "${backup_dir}"; then
+        RECONFIGURE_BACKUP="${backup_dir}"
+        echo "  [backup]  NFC configuration -> ${RECONFIGURE_BACKUP}"
+    else
+        echo "  [warn]    could not back up ${NFC_CONFIG_DIR}; continuing without a backup"
+    fi
 }
 
 backup_nfc_config_for_cutover() {
@@ -2473,7 +2484,11 @@ write_install_state "${READER_TYPE}"
 echo ""
 if [ "${INSTALL_MODE}" = "reconfigure" ]; then
     echo "${BOLD}Reconfiguration complete.${RESET}"
-    echo "  Previous NFC configuration: ${RECONFIGURE_BACKUP}"
+    if [ -n "${RECONFIGURE_BACKUP:-}" ]; then
+        echo "  Previous NFC configuration: ${RECONFIGURE_BACKUP}"
+    else
+        echo "  No previous NFC configuration was found to back up."
+    fi
 else
     echo "${BOLD}Install complete.${RESET}"
 fi

@@ -1839,7 +1839,7 @@ fi
 echo ""
 echo "  Files that will be written / merged:"
 echo "    ${BOLD}${NFC_READER_CFG}${RESET}"
-echo "    ${BOLD}${NFC_CONFIG_DIR}/nfc_macros.cfg${RESET}"
+echo "    ${BOLD}${NFC_MACROS_CFG}${RESET}  (symlink → repo, read-only)"
 if [ "${READER_TYPE}" = "shared" ]; then
     echo "    ${BOLD}${NFC_READER_SHARED_CFG}${RESET}  (settings applied)"
 else

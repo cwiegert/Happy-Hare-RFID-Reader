@@ -10,7 +10,7 @@ Three files, included in this order from `printer.cfg`:
 
 ```ini
 [include nfc/nfc_reader.cfg]    ; base settings — edit this
-[include nfc/nfc_macros.cfg]    ; Happy Hare event macros — edit only if needed
+[include nfc/nfc_macros.cfg]    ; read-only Happy Hare interface macros
 [include nfc/nfc_reader_hw.cfg] ; one section per physical gate — edit this
 ```
 

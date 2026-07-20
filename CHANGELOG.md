@@ -7,6 +7,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### One-Time Installer and Moonraker Web Updates
+
+- ♻️ **The interactive installer now runs once** — an existing installation
+  exits without revisiting setup or rewriting user configuration.
+- ✨ **Added `-r` / `--repair`** — repair restores installer-owned Python and
+  macro links, ordered printer includes, the Moonraker updater, and the install
+  state marker while preserving NFC reader and hardware settings.
+- ✨ **Added `-c` / `--reconfigure`** — users can intentionally rerun the setup
+  wizard to change reader choices without manually rebuilding the config files;
+  the complete NFC configuration is backed up before changes are applied.
+- ♻️ **Normal updates now use Moonraker's web interface** — the deprecated
+  `install_script` updater hook was removed; Moonraker updates the checkout and
+  restarts Klipper directly.
+- ♻️ **`nfc_macros.cfg` is read-only** — the protected Happy Hare interface is
+  linked to the shipped file and existing local copies are backed up once.
+
 ## [1.3.1] - 07/17/2026 - WoodWorker
 
 ### Scan-Jog Rewind LED Release Cleanup

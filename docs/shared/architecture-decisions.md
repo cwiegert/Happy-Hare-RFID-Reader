@@ -151,19 +151,19 @@ Gating them behind a config flag means they are discoverable for bring-up but ca
 
 **What we decided:** `install.sh` creates symlinks from Klipper's extras directory into the repo clone. It does not copy files.
 
-**Why:** If files were copied, every update would require running `install.sh` to copy the new versions. With symlinks, `git pull` in the repo directory is sufficient — Klipper reads the updated Python files directly from the repo at next restart. The Moonraker update manager calls `install.sh` after a `git pull`, which updates the symlinks if they ever change targets. But for normal code-only updates, the symlinks just keep working.
+**Why:** If files were copied, every update would require running `install.sh` to copy the new versions. With symlinks, Moonraker can update the Git checkout from its web interface and Klipper reads the updated Python files after Moonraker restarts it. The interactive installer does not run during normal updates.
 
 **Implication:** The repo clone must remain present on the Pi. If the repo is deleted, the symlinks break and Klipper will fail to start.
 
 ---
 
-## Decision: Config Files Are User-Owned (Non-Destructive Merge)
+## Decision: User Config Is Preserved; Interface Macros Are Read-Only
 
-**What we decided:** `install.sh` never overwrites a config file section the user has already configured. On subsequent runs, it only appends sections that are missing.
+**What we decided:** `install.sh` creates user configuration once. A completed installation does not rerun interactive setup, and `install.sh -r` repairs only installer-owned integration files. An explicit `--reconfigure` path backs up the complete NFC configuration before rerunning the wizard. `nfc_macros.cfg` is read-only because it defines the NFC reader's interface to Happy Hare.
 
-**Why:** Config files in `~/printer_data/config/nfc/` are part of the user's printer configuration. Overwriting them on update would destroy local customizations — particularly in `nfc_macros.cfg` where users may have adapted the Happy Hare calls for their version, and in `nfc_reader_hw.cfg` where the exact lane names and MCU names are specific to each user's hardware.
+**Why:** Reader and hardware files contain machine-specific settings. Rewriting them during a software update or repair could destroy working local configuration. The interface macros need to track the installed code and therefore update through their link.
 
-The merge strategy (copy-if-absent, append-missing-sections) means that new features that add new config sections are picked up on the next `install.sh` run, while existing customizations survive.
+New optional settings must have working code defaults so existing configurations remain valid. Structural migrations, if ever required, must be explicit and backed up rather than hidden inside a normal web update.
 
 ---
 

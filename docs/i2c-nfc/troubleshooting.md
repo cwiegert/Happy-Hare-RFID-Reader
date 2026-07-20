@@ -42,9 +42,9 @@ ls -la ~/klipper/klippy/extras/nfc_gate.py
 ls -la ~/klipper/klippy/extras/nfc_gates/
 ```
 
-If missing, run the installer again:
+If missing, run repair:
 ```bash
-cd ~/rfid-reader && bash install.sh
+cd ~/rfid-reader && bash install.sh -r
 ```
 
 ---

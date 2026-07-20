@@ -1208,7 +1208,7 @@ prompt_lane_i2c_bus() {
     local reply
 
     default_label="$(lane_bus_label "${default_bus}")"
-    echo "7. Per-lane reader I2C bus"
+    echo "6. Per-lane reader I2C bus"
     echo "   $(choice_style SLB "${default_label}") = i2c2_PB10_PB11"
     echo "   $(choice_style EBB "${default_label}") = i2c3_PB3_PB4"
     echo "   Enter a bus name directly if your lane MCUs use different pins."
@@ -1245,7 +1245,7 @@ prompt_scan_jog_max_mode() {
     local default_mode="fixed"
     local default_distance="480.0"
 
-    echo "8. Scan-jog max travel"
+    echo "7. Scan-jog max travel"
     echo "   $(choice_style fixed "${default_mode}")  = use scan_jog_max, default 480mm"
     echo "   $(choice_style bowden "${default_mode}") = keep trying until the lane Bowden length is reached"
     while true; do
@@ -1467,9 +1467,8 @@ with open(path, 'w') as f:
     f.write("# [mmu_led_effect] to run a bright yellow chase while Spoolman creates a missing spool.\n")
     f.write("shared_auto_create_effect: mmu_RFID_creating\n")
     f.write("\n")
-    f.write("# The pending spool timeout is read automatically from Happy Hare's\n")
-    f.write("# mmu_parameters.cfg ([mmu] -> pending_spool_id_timeout).  Set it there.\n")
-    f.write("# NFC falls back to 30 s if the HH config is not readable at connect time.\n")
+    f.write("# NFC uses pending_spool_id_timeout when Happy Hare exposes it in the active\n")
+    f.write("# [mmu] config. Otherwise, the shared-reader pending timeout is 60 s.\n")
     f.write("\n")
     f.write("# Seconds polling may run after NFC_SHARED READ=1 without resolving a tag\n")
     f.write("# before auto-stopping.  No effect for startup_polling or post-PRELOAD_CHECK.\n")
@@ -1510,9 +1509,19 @@ if [ -f "${NFC_READER_CFG}" ]; then
     echo ""
 fi
 
-# ── Q1: Reader layout ─────────────────────────────────────────────────────────
+# ── Q1: Happy Hare version ────────────────────────────────────────────────────
+echo "1. Happy Hare version"
+echo "   $(choice_style v3 v3) = V3 LED compatibility transport"
+echo "   $(choice_style v4 v3) = V4 generated direct LED transport"
+prompt_choice HH_VERSION \
+    "   Select Happy Hare version" \
+    "v3" \
+    "v3" "v4"
+echo ""
+
+# ── Q2: Reader layout ─────────────────────────────────────────────────────────
 DEFAULT_READER_TYPE="$(detect_reader_type "${PRINTER_CFG}" "${NFC_READER_HW_CFG}" "${NFC_READER_SHARED_CFG}" "${NFC_SHARED_READER_CFG}")"
-echo "1. Reader layout"
+echo "2. Reader layout"
 echo "   $(choice_style lane "${DEFAULT_READER_TYPE}")   = per-lane NFC readers, one per EBB42 board"
 echo "   $(choice_style shared "${DEFAULT_READER_TYPE}") = single NFC reader inside the MMU body for staging spools"
 prompt_choice READER_TYPE \
@@ -1523,15 +1532,6 @@ echo ""
 
 # ── Lane path ─────────────────────────────────────────────────────────────────
 if [ "${READER_TYPE}" = "lane" ]; then
-
-    echo "2. Happy Hare version"
-    echo "   $(choice_style v3 v3) = conventional lane0 / mmu0 naming"
-    echo "   $(choice_style v4 v3) = unit0_lane0 / unit0_gate0 naming"
-    prompt_choice HH_VERSION \
-        "   Select Happy Hare version" \
-        "v3" \
-        "v3" "v4"
-    echo ""
 
     DEFAULT_LANE_COUNT="$(count_lane_sections "${NFC_READER_HW_CFG}" "${HH_VERSION}")"
     prompt_with_default LANE_COUNT \
@@ -1561,21 +1561,21 @@ if [ "${READER_TYPE}" = "lane" ]; then
         SPOOLMAN_URL="disabled"
     fi
 
-    prompt_yes_no STARTUP_POLLING \
-        "5. Start NFC polling automatically on Klipper startup?" \
-        "yes"
+    # Per-lane readers are driven by the Happy Hare post-preload hook.
+    # Keep optional background polling disabled in the generated config.
+    STARTUP_POLLING="no"
 
     prompt_yes_no SCAN_ENABLED \
-        "6. Enable scan-jog when a loaded tag is out of read range?" \
+        "5. Enable scan-jog when a loaded tag is out of read range?" \
         "yes"
 
     if [ "${HH_VERSION}" = "v4" ]; then
         LANE_MCU_PREFIX="unit0_gate"
-        echo "7. Happy Hare V4 default MCU naming"
+        echo "6. Happy Hare V4 default MCU naming"
         echo "   This writes i2c_mcu values as unit0_gate0, unit0_gate1, etc."
     else
         prompt_with_default LANE_MCU_PREFIX \
-            "7. Lane reader MCU name prefix" \
+            "6. Lane reader MCU name prefix" \
             "mmu"
         echo "   This writes i2c_mcu values as ${LANE_MCU_PREFIX}0, ${LANE_MCU_PREFIX}1, etc."
     fi
@@ -1588,7 +1588,7 @@ if [ "${READER_TYPE}" = "lane" ]; then
     prompt_scan_jog_max_mode SCAN_JOG_MAX_MODE SCAN_JOG_MAX
     echo ""
 
-    echo "10. Tag read mode"
+    echo "8. Tag read mode"
     echo "   $(choice_style spoolman spoolman) = UID-only lookup in Spoolman's extra field"
     echo "   $(choice_style rich spoolman)     = read tag metadata, then resolve/create Spoolman records"
     if [ "${SPOOLMAN_MODE}" = "disabled" ]; then
@@ -1610,11 +1610,11 @@ if [ "${READER_TYPE}" = "lane" ]; then
         echo "   Factory-tagged Bambu spools are MIFARE Classic and require"
         echo "   authenticated reads plus the pycryptodome HKDF dependency."
         prompt_yes_no BAMBU_READS \
-            "11. Will you read factory-tagged Bambu spools with rich metadata?" \
+            "9. Will you read factory-tagged Bambu spools with rich metadata?" \
             "no"
         if [ "${SPOOLMAN_MODE}" != "disabled" ]; then
             prompt_yes_no SPOOLMAN_AUTO_CREATE \
-                "12. Auto-create missing Spoolman spools from rich tag metadata?" \
+                "10. Auto-create missing Spoolman spools from rich tag metadata?" \
                 "yes"
         fi
     fi
@@ -1624,7 +1624,6 @@ if [ "${READER_TYPE}" = "lane" ]; then
 # ── Shared path ───────────────────────────────────────────────────────────────
 else
 
-    HH_VERSION=""
     LANE_COUNT="0"
     LANE_MCU_PREFIX=""
     LANE_I2C_BUS=""
@@ -1744,9 +1743,14 @@ echo ""
 echo "${BOLD}════════════════════════════════════════════════════════════════${RESET}"
 echo "${BOLD}  Install summary — review before writing${RESET}"
 echo "${BOLD}════════════════════════════════════════════════════════════════${RESET}"
+echo "  Happy Hare:        ${HH_VERSION}"
 echo "  Reader layout:     ${READER_TYPE}"
 echo "  Spoolman:          ${SPOOLMAN_URL}"
-echo "  Startup polling:   ${STARTUP_POLLING}"
+if [ "${READER_TYPE}" = "lane" ]; then
+    echo "  Lane polling:      disabled (post-preload hook)"
+else
+    echo "  Startup polling:   ${STARTUP_POLLING}"
+fi
 if [ "${READER_TYPE}" = "shared" ]; then
     echo "  Reader hardware:   ${SHARED_READER_TYPE}"
     if [ "${SHARED_READER_TYPE}" = "pn532" ] || [ "${SHARED_READER_TYPE}" = "pn7160" ]; then
@@ -1770,7 +1774,6 @@ if [ "${READER_TYPE}" = "shared" ]; then
     echo "    bypass read:     ${BOLD}${MMU_LED_UNIT}_mmu_RFID_bypass_read_exit${RESET}"
     echo "    bypass ready:    ${BOLD}${MMU_LED_UNIT}_mmu_RFID_bypass_ready_exit${RESET}"
 else
-    echo "  Happy Hare:        ${HH_VERSION}"
     echo "  Lane count:        ${LANE_COUNT}"
     if [ "${HH_VERSION}" = "v4" ]; then
         echo "  Lane mapping:      unit0_laneN -> unit0_gateN"
@@ -1981,6 +1984,8 @@ set_config_value "${NFC_READER_CFG}" "nfc_gate" "bambu_reads" \
     "$( [ "${BAMBU_READS}" = "yes" ] && echo "True" || echo "False" )"
 set_config_value "${NFC_READER_CFG}" "nfc_gate" "spoolman_auto_create" \
     "$( [ "${SPOOLMAN_AUTO_CREATE}" = "yes" ] && echo "True" || echo "False" )"
+set_config_value "${NFC_READER_CFG}" "nfc_gate" "happy_hare_v4" \
+    "$( [ "${HH_VERSION}" = "v4" ] && echo "True" || echo "False" )"
 
 if [ "${READER_TYPE}" = "shared" ]; then
     # startup_polling and scan_enabled live in [nfc_gate shared], not [nfc_gate]
@@ -2135,7 +2140,11 @@ else
     fi
 fi
 echo "    spoolman_url:       ${SPOOLMAN_URL}"
-echo "    startup_polling:    ${STARTUP_POLLING}"
+if [ "${READER_TYPE}" = "lane" ]; then
+    echo "    startup_polling:    -1 (post-preload hook)"
+else
+    echo "    startup_polling:    ${STARTUP_POLLING}"
+fi
 if [ "${READER_TYPE}" = "lane" ]; then
     echo "    scan_jog:           ${SCAN_ENABLED}"
 fi
@@ -2198,6 +2207,8 @@ if [ "${READER_TYPE}" = "shared" ]; then
     echo ""
     echo "  5. Wire the Happy Hare post-preload hook in mmu_macro_vars.cfg:"
     echo "       variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'"
+    echo "     If this printer also has per-lane readers, use:"
+    echo "       variable_user_post_preload_extension: '_NFC_HYBRID_PRELOAD'"
     echo "     Polling pauses/resumes automatically on print start/end —"
     echo "     the post-unload hook is no longer needed."
     echo ""
@@ -2241,6 +2252,11 @@ else
     echo "       [include nfc/nfc_reader.cfg]"
     echo "       [include nfc/nfc_macros.cfg]"
     echo "       [include nfc/nfc_reader_hw.cfg]"
+    echo ""
+    echo "  Configure the Happy Hare post-preload hook in mmu_macro_vars.cfg:"
+    echo "       variable_user_post_preload_extension: '_NFC_SCAN_JOG_PRELOAD'"
+    echo "     If you later add nfc_reader_shared.cfg, replace it with:"
+    echo "       variable_user_post_preload_extension: '_NFC_HYBRID_PRELOAD'"
     echo ""
     echo "  3. Restart Klipper:"
     echo "     sudo systemctl restart klipper"

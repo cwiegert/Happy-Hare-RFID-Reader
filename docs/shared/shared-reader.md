@@ -41,19 +41,25 @@ enabling `spoolman_auto_create`.
 
 **No per-lane readers are required.** A shared-only installation needs only the base `[nfc_gate]` section (for Spoolman config) and `[nfc_gate shared]`.
 
+For a hybrid installation with both reader types, use `_NFC_HYBRID_PRELOAD`
+instead of `_NFC_SHARED_PRELOAD`. It starts scan-jog for a configured lane
+reader and applies staged shared-reader data only if that scan cannot read a
+tag. It uses the shared reader directly for a loaded gate without a lane
+reader.
+
 ---
 
 ## Normal load flow
 
 1. **Shared reader is polling.** `startup_polling: 1` starts it at boot. It scans continuously, pausing automatically when printing starts and resuming when printing completes — no manual intervention required.
 
-2. **Tap your spool tag on the shared reader.** NFC reads the UID and looks it up in Spoolman. Tag detection can flash yellow, auto-create can run a yellow chase while Spoolman creates a missing spool, and the ready-to-load confirmation is the green 2x blink. On success the spool ID is stored as pending, the `pending_spool_id_timeout` countdown starts (set in `mmu_parameters.cfg`), and polling stops.
+2. **Tap your spool tag on the shared reader.** NFC reads the UID and looks it up in Spoolman. Tag detection can flash yellow, auto-create can run a yellow chase while Spoolman creates a missing spool, and the ready-to-load confirmation is the green 2x blink. On success the spool ID is stored as pending and its timeout countdown starts. Polling continues with UID-only probes: the same UID skips rich reads, while a different UID immediately clears staged data and triggers a new full read.
 
 3. **Drop the spool into an MMU lane** (physical action — NFC takes no action here).
 
 4. **Push the filament tip into the pregate/buffer sensor.** Happy Hare detects filament at the sensor and begins a pregate load. HH's action transitions to `loading`.
 
-5. **Happy Hare fires `user_post_preload_extension` -> `_NFC_SHARED_PRELOAD` macro.** This happens automatically - no user action required. The macro validates the pending shared-reader spool that was already staged as `NEXT_SPOOLID`.
+5. **Happy Hare fires `user_post_preload_extension` -> `_NFC_SHARED_PRELOAD` macro.** This happens automatically - no user action required. The macro validates the pending shared-reader spool that was already staged as `NEXT_SPOOLID`. Hybrid installs use `_NFC_HYBRID_PRELOAD`, which scans a configured lane reader first and uses staged shared data only when that scan cannot read a tag.
 
 6. **The macro commits the staged spool.** It calls `NFC_SHARED PRELOAD_CHECK=1 EXPECTED_SPOOL_ID=<spool_id>`, then `NFC_SHARED PRELOAD_COMMIT=1 SPOOL_ID=<spool_id>`. Happy Hare owns the gate assignment through its preload flow.
 
@@ -197,7 +203,7 @@ force_spool_id:         true
 | `startup_polling` | `1` in the shipped template | Set to `1` to start polling at Klipper boot. |
 | `scan_poll_interval` | inherited from `[nfc_gate]` | Seconds between shared-reader tag reads while polling. The shipped default is `0.25`. |
 | `poll_interval` | inherited from `[nfc_gate]` | Ignored for shared-reader read cadence; lane readers still use it for normal background polling. |
-| `pending_spool_id_timeout` | set in `mmu_parameters.cfg` | Seconds a resolved spool stays eligible for the next preload. Set in Happy Hare's `[mmu]` section (`~/printer_data/config/mmu/base/mmu_parameters.cfg`); NFC reads it automatically at connect time (falls back to 30 s). |
+| `pending_spool_id_timeout` | Happy Hare `[mmu]` value or `60s` | Seconds a resolved spool stays eligible for the next preload. NFC uses Happy Hare's active `[mmu]` value when Klipper exposes it; otherwise it uses 60 s. |
 | `shared_read_timeout` | `120.0` | Seconds polling may run after `NFC_SHARED READ=1` without resolving a tag before auto-stopping. Has no effect when started via `startup_polling` or after a successful `PRELOAD_CHECK`. |
 | `shared_tag_read_effect` | `''` | Name of a `[mmu_led_effect]` to play as soon as the shared reader sees a tag. |
 | `read_effect_duration` | `2.0` | HH duration used by `NFC_SHARED LED_TEST=1`. Normal shared scans do not pass this duration to HH; NFC uses it only as a failsafe release window if no follow-up state replaces the read cue. |
@@ -233,6 +239,9 @@ Add one user extension hook to `mmu_macro_vars.cfg`:
 ; approve the staged shared-reader spool during pregate preload
 variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'
 ```
+
+For a hybrid installation, set it to `_NFC_HYBRID_PRELOAD` instead. Do not use
+`NFC JOG_SCAN=1` directly as the hook.
 
 `variable_user_post_preload_extension` fires at the start of every pregate load. `PRELOAD_CHECK` is safe to leave wired for all loads; it skips only while printing, and emits an advisory message when no spool is staged.
 
@@ -309,13 +318,13 @@ spools.
 Run `NFC_SHARED INIT=1`. If it fails, check I2C wiring and confirm the MCU is flashed with the correct firmware.
 
 **Tag scanned but spool not staged at preload.**
-Check that `variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'` is set in `mmu_macro_vars.cfg` and that the printer was not actively printing when the preload fired.
+Check that `variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'` is set in `mmu_macro_vars.cfg` for a shared-only install, or `_NFC_HYBRID_PRELOAD` for a hybrid install, and that the printer was not actively printing when the preload fired.
 
 Run `NFC_DOCTOR` and confirm it reports the shared preload hook as present. If
 the pending spool expired before preload, tap the tag again.
 
 **`NFC_STATUS` shows `expired`.**
-The pending timeout elapsed before the preload fired. The expired pending spool is cleared automatically; with `startup_polling: 1`, polling resumes. Tap the tag again. Increase `pending_spool_id_timeout` in `mmu_parameters.cfg` if you regularly take longer than the configured window between tapping and loading.
+The pending timeout elapsed before the preload fired. The expired pending spool is cleared automatically; with `startup_polling: 1`, polling resumes. Tap the tag again. NFC uses 60 s unless Happy Hare exposes an explicit active `[mmu]` `pending_spool_id_timeout` value.
 
 **Console shows "uid=<uid> not in Spoolman after N attempts".**
 The tag is not registered in Spoolman. Either register the spool first or use `MMU_PRELOAD` to load without spool assignment.

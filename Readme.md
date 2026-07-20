@@ -189,11 +189,15 @@ spoolman_url:      auto
 spoolman_rfid_key: rfid_tag
 ```
 
-For shared-reader installs, wire Happy Hare's post-preload hook:
+Choose the Happy Hare post-preload hook that matches the reader layout:
 
 ```ini
 [gcode_macro _MMU_SEQUENCE_VARS]
+# Shared reader only:
 variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'
+
+# Per-lane and shared readers together:
+# variable_user_post_preload_extension: '_NFC_HYBRID_PRELOAD'
 ```
 
 Restart Klipper and run the doctor:
@@ -235,7 +239,7 @@ These are the defaults shipped in `config/nfc_reader.cfg`:
 
 | Setting | Default | Notes |
 |---|---:|---|
-| `startup_polling` | `1` | Start polling after reader init succeeds |
+| `startup_polling` | `-1` | Lane polling is manual by default; post-preload scan-jog does not need it |
 | `poll_interval` | `10` | Per-lane background poll interval in seconds |
 | `absent_threshold` | `3` | Missed polls before a removal event |
 | `scan_enabled` | `False` | Disables automatic gate-status scan-jog trigger; manual/hook `JOG_SCAN` still works |

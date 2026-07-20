@@ -225,7 +225,7 @@ spoolman_auto_create: False
 
 ```ini
 [nfc_gate]
-startup_polling:    1
+startup_polling:    -1
 startup_poll_delay: 0.0
 poll_interval:      10
 absent_threshold:   3
@@ -233,7 +233,7 @@ absent_threshold:   3
 
 | Setting | Default | Description |
 |---|---|---|
-| `startup_polling` | `1` | `-1` = manual start only. `1` = start polling automatically after reader init. `0` = explicitly disabled (useful as a lane override). |
+| `startup_polling` | `-1` | `-1` = manual start only, the default for hook-driven lane scans. `1` = start optional background lane polling automatically after reader init. `0` = explicitly disabled. The shared-reader section overrides this with `1`. |
 | `startup_poll_delay` | `0.0` | Seconds to wait before the first automatic poll. The shipped hardware config staggers this by 0.5 seconds per lane. |
 | `poll_interval` | `10` | Seconds between polls while background polling is active. |
 | `absent_threshold` | `3` | Consecutive missed reads before `_NFC_SPOOL_REMOVED` fires. At 10s interval, default = ~30s before removal. |
@@ -634,7 +634,7 @@ force_spool_id:         true
 | `startup_polling` | `1` in the shipped template | Set to `1` to poll at Klipper boot. Set to `0` or `-1` if you want to start it manually with `NFC_SHARED READ=1`. |
 | `scan_poll_interval` | inherited from `[nfc_gate]` | Seconds between shared-reader tag reads while polling. The shipped default is `0.25`. |
 | `poll_interval` | inherited from `[nfc_gate]` | Ignored for shared-reader read cadence; lane readers still use it for normal background polling. |
-| `pending_spool_id_timeout` | set in `mmu_parameters.cfg` | Seconds a scanned spool remains eligible for the next preload. NFC reads this from Happy Hare's `[mmu]` section at connect time (falls back to 30 s). Set it in `~/printer_data/config/mmu/base/mmu_parameters.cfg`. |
+| `pending_spool_id_timeout` | Happy Hare `[mmu]` value or `60s` | Seconds a scanned spool remains eligible for the next preload. NFC uses Happy Hare's active `[mmu]` value when it is exposed through Klipper; otherwise it uses 60 s. |
 | `shared_read_timeout` | `120.0` | Seconds polling may run without resolving a valid tag before auto-stopping. No effect when started via `startup_polling` or PRELOAD_CHECK auto-restart. |
 | `shared_tag_read_effect` | `''` | Name of a `[mmu_led_effect]` to play as soon as the shared reader sees a tag. Leave empty to skip tag-detected LED feedback. |
 | `read_effect_duration` | `2.0` | HH duration used by `NFC_SHARED LED_TEST=1`. Normal shared scans do not pass this duration to HH; NFC uses it only as a failsafe release window if no follow-up state replaces the read cue. |
@@ -673,6 +673,17 @@ Add one user extension hook to `mmu_macro_vars.cfg`:
 ; stage NEXT_SPOOLID before a pregate-triggered automatic preload
 variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'
 ```
+
+Use `_NFC_SHARED_PRELOAD` only for a shared-reader-only installation. When
+per-lane readers and a shared reader coexist, configure:
+
+```ini
+variable_user_post_preload_extension: '_NFC_HYBRID_PRELOAD'
+```
+
+The hybrid hook starts the configured lane reader first. If its scan reaches a
+final no-tag result, staged shared-reader data is assigned to that same gate.
+Gates without a lane reader use the shared-reader transaction directly.
 
 `variable_user_post_preload_extension` fires at the start of every pregate load. `PRELOAD_CHECK` skips only while printing — it is safe to leave wired for all loads. If no spool is staged a console message advises the user; with `force_spool_id: true` that advisory uses the `[ERROR]` prefix.
 

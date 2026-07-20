@@ -764,7 +764,7 @@ The shared reader is a single NFC reader mounted inside the MMU body. It default
 1. Shared reader is polling. With `startup_polling: 1` it starts at boot, reads at `scan_poll_interval`, and pauses automatically when printing starts, resuming when printing completes.
 2. Tap your spool tag on the shared reader — NFC resolves the spool in Spoolman and stores it as pending. LED effect fires if configured.
 3. Drop the spool into an MMU lane and push the filament tip into the pregate sensor.
-4. Happy Hare detects the pregate load and fires `variable_user_post_preload_extension` → `_NFC_SHARED_PRELOAD`.
+4. Happy Hare detects the pregate load and fires `variable_user_post_preload_extension` → `_NFC_SHARED_PRELOAD`. Hybrid installs use `_NFC_HYBRID_PRELOAD`, which starts scan-jog for a configured lane reader and applies staged shared data only after a final no-tag result.
 5. The macro reads the pending spool from `printer['nfc_gate shared']`, runs `NFC_SHARED PRELOAD_CHECK=1 EXPECTED_SPOOL_ID=<id>`, then `NFC_SHARED PRELOAD_COMMIT=1 SPOOL_ID=<id>`.
 6. Pending state is cleared only after the commit command matches the approved spool. Polling restarts automatically for the next spool.
 
@@ -827,10 +827,12 @@ pending spool in its gate map.
 
 ### Pending timeout
 
-The pending timeout (`pending_spool_id_timeout` in Happy Hare's `mmu_parameters.cfg`)
-starts when a tag resolves. If no preload fires within that window, the pending
-spool expires automatically. With `startup_polling: 1`, polling resumes after
-the expired spool is cleared. Tap again to queue a new spool.
+The pending timeout starts when a tag resolves. NFC uses Happy Hare's active
+`[mmu]` `pending_spool_id_timeout` when Klipper exposes it; otherwise it uses
+60 s. If no preload fires within that window, the pending spool expires
+automatically. Polling remains active while data is staged, but repeated probes
+of the same UID skip rich reads. A different UID immediately clears the staged
+data, then starts a new full read and pending timeout when it resolves.
 
 ### Unresolvable tags
 
@@ -838,14 +840,11 @@ If the reader sees a UID that Spoolman cannot resolve, it increments a miss coun
 
 ### Re-scanning
 
-Once a tag resolves, polling stops. To scan a different spool issue
-`NFC_SHARED REPLACE=1`. Plain `READ=1` will refuse to overwrite a pending spool
-and will tell you to use `REPLACE=1` or `CANCEL=1`.
-
-If an advanced/manual read path sees another valid tag while a spool is already
-pending, NFC keeps the original pending spool, reports the newly read
-UID/spool as ignored, and tells the user to run `NFC_SHARED REPLACE=1` if
-replacement was intentional.
+After a tag resolves, polling continues with lightweight UID probes. The same
+UID keeps the staged result and skips rich reads. A different UID immediately
+clears the staged result and is read in full.
+Use `NFC_SHARED REPLACE=1` to explicitly discard the staged result and start a
+fresh timed scan before another tag is detected.
 
 ---
 

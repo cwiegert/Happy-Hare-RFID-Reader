@@ -10,8 +10,12 @@
 #        mmu_nfc_endstop.py — virtual endstop wrapper for lane readers
 #        nfc_gates/    — shared implementation package
 #
-#   2. Installs config files into ~/printer_data/config/nfc/ using a
-#      non-destructive merge strategy:
+#   2. Installs user-owned config files into ~/printer_data/config/nfc/ using a
+#      non-destructive merge strategy. nfc_macros.cfg is the exception: it is a
+#      read-only symlink, like Happy Hare's shipped macro files. On first
+#      migration, the old file is backed up.
+#
+#      For user-owned config files:
 #        - If a file does not exist yet, it is copied from the repo template.
 #        - If a file already exists, only sections that are present in the
 #          repo template but MISSING from the existing file are appended.
@@ -34,6 +38,7 @@ PRINTER_CONFIG="${RFID_READER_PRINTER_CONFIG:-${HOME}/printer_data/config}"
 PRINTER_CFG="${PRINTER_CONFIG}/printer.cfg"
 NFC_CONFIG_DIR="${PRINTER_CONFIG}/nfc"
 NFC_READER_CFG="${NFC_CONFIG_DIR}/nfc_reader.cfg"
+NFC_MACROS_CFG="${NFC_CONFIG_DIR}/nfc_macros.cfg"
 NFC_READER_HW_CFG="${NFC_CONFIG_DIR}/nfc_reader_hw.cfg"
 NFC_READER_SHARED_CFG="${NFC_CONFIG_DIR}/nfc_reader_shared.cfg"
 NFC_SHARED_READER_CFG="${NFC_CONFIG_DIR}/nfc_shared_reader.cfg"
@@ -131,6 +136,35 @@ next_available_path() {
         i=$((i + 1))
     done
     printf '%s\n' "${candidate}"
+}
+
+install_managed_macros() {
+    local source="${REPO_DIR}/config/nfc_macros.cfg"
+    local target="${NFC_MACROS_CFG}"
+    local current backup_base backup_path
+
+    if [ ! -f "${source}" ]; then
+        echo "ERROR: Managed macro source not found: ${source}"
+        exit 1
+    fi
+
+    if [ -L "${target}" ]; then
+        current="$(readlink "${target}")"
+        if [ "${current}" = "${source}" ]; then
+            echo "  [managed] nfc_macros.cfg -> ${source}"
+            return 0
+        fi
+        rm "${target}"
+        echo "  [replace] old nfc_macros.cfg symlink (${current})"
+    elif [ -e "${target}" ]; then
+        backup_base="${target}.pre-managed-$(date +%Y%m%d_%H%M%S)"
+        backup_path="$(next_available_path "${backup_base}")"
+        mv "${target}" "${backup_path}"
+        echo "  [backup]  existing nfc_macros.cfg -> ${backup_path}"
+    fi
+
+    ln -s "${source}" "${target}"
+    echo "  [link]    nfc_macros.cfg -> ${source} (read-only)"
 }
 
 backup_nfc_config_for_cutover() {
@@ -1870,7 +1904,7 @@ echo "Installing config files to ${NFC_CONFIG_DIR}/..."
 echo ""
 
 merge_config "${REPO_DIR}/config/nfc_reader.cfg"        "${NFC_READER_CFG}"
-merge_config "${REPO_DIR}/config/nfc_macros.cfg"         "${NFC_CONFIG_DIR}/nfc_macros.cfg"
+install_managed_macros
 if [ "${READER_TYPE}" != "shared" ]; then
     merge_config "${REPO_DIR}/config/nfc_reader_hw.cfg"  "${NFC_READER_HW_CFG}"
     echo "  [notice]   Adding NFC virtual endstop definitions below each per-lane reader when missing."
@@ -2051,7 +2085,7 @@ echo "    ${KLIPPER_EXTRAS}/nfc_gates    ->  ${REPO_DIR}/klippy/extras/nfc_gates
 echo ""
 echo "  Config files in ${NFC_CONFIG_DIR}/:"
 echo "    nfc_reader.cfg          ← Spoolman URL, tag parsing, debug settings"
-echo "    nfc_macros.cfg          ← Happy Hare handoff macros"
+echo "    nfc_macros.cfg          ← read-only macros"
 if [ "${READER_TYPE}" = "shared" ]; then
     echo "    nfc_reader_shared.cfg   ← [nfc_gate shared] hardware config  (settings applied)"
 else

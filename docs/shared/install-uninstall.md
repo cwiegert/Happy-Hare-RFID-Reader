@@ -9,7 +9,8 @@
 The installer creates **symlinks** — it does not copy Python files into the Klipper directory. This means:
 
 - Updating is just `git pull` — the new code is live immediately, no file copy needed
-- Config files in `~/printer_data/config/nfc/` are yours — the installer never overwrites sections you have already edited
+- Hardware and reader config files in `~/printer_data/config/nfc/` are yours — the installer never overwrites sections you have already edited
+- `nfc_macros.cfg` is read-only and updates automatically
 - Running `bash install.sh` again after an update is always safe
 
 **What gets created:**
@@ -19,7 +20,7 @@ The installer creates **symlinks** — it does not copy Python files into the Kl
 ~/klipper/klippy/extras/nfc_gates/          →  symlink → repo/klippy/extras/nfc_gates/
 ~/klipper/klippy/extras/mmu_nfc_endstop.py  →  symlink → repo/klippy/extras/mmu_nfc_endstop.py
 ~/printer_data/config/nfc/nfc_reader.cfg
-~/printer_data/config/nfc/nfc_macros.cfg
+~/printer_data/config/nfc/nfc_macros.cfg          →  symlink → repo/config/nfc_macros.cfg
 ~/printer_data/config/nfc/nfc_reader_hw.cfg
 ~/printer_data/config/nfc/nfc_reader_shared.cfg
 ```
@@ -29,7 +30,7 @@ gear-rail homing endstop. `nfc_reader_hw.cfg` gets one `[mmu_nfc_endstop
 laneN]` section per enabled lane automatically, alongside the matching
 `[nfc_gate laneN]` — see [Virtual Endstop](../shared/klipper-functions.md#virtual-endstop).
 
-Config files use a non-destructive merge: if a section already exists in your file, it is left alone. Only missing sections are appended.
+User-owned config files use a non-destructive merge: if a section already exists in your file, it is left alone. Only missing sections are appended. `nfc_macros.cfg` is read-only and should not be edited directly. The first installer run after this change backs up an existing regular file beside the new symlink as `nfc_macros.cfg.pre-managed-<timestamp>`.
 
 ---
 

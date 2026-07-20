@@ -7,6 +7,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Read-Only NFC Macros
+
+- ♻️ **`nfc_macros.cfg` is now read-only** — the installer links the
+  printer-config path to the shipped macro file, matching Happy Hare's macro
+  file behavior.
+- ♻️ **Existing installs migrate once without losing local content** — a regular
+  `nfc_macros.cfg` is moved to a timestamped `pre-managed` backup before the
+  read-only link is created. Later installer runs verify and maintain the link.
+
+### Test Infrastructure
+
+- ✨ **Added a `tests/` scaffold** — a dependency-free bash harness
+  (`tests/bash/`) that exercises `install.sh` helpers like
+  `install_managed_macros()` and `merge_config()` in sandboxed temp dirs, and
+  a pytest suite (`tests/python/`) covering `GateState` and
+  `KlipperInterface` in `klippy/extras/nfc_gates/` against small fakes
+  instead of a real Klipper install. Run both with `bash tests/run_tests.sh`.
+  This is a first pass, not full coverage — see `tests/README.md`.
+
 ## [1.3.1] - 07/17/2026 - WoodWorker
 
 ### Scan-Jog Rewind LED Release Cleanup

@@ -157,13 +157,13 @@ Gating them behind a config flag means they are discoverable for bring-up but ca
 
 ---
 
-## Decision: Config Files Are User-Owned (Non-Destructive Merge)
+## Decision: Configuration Is User-Owned; Shipped Macros Are Read-Only
 
-**What we decided:** `install.sh` never overwrites a config file section the user has already configured. On subsequent runs, it only appends sections that are missing.
+**What we decided:** `install.sh` never overwrites a user-owned config file section that is already configured. On subsequent runs, it only appends sections that are missing. `nfc_macros.cfg` is intentionally different: the installed file is read-only.
 
-**Why:** Config files in `~/printer_data/config/nfc/` are part of the user's printer configuration. Overwriting them on update would destroy local customizations — particularly in `nfc_macros.cfg` where users may have adapted the Happy Hare calls for their version, and in `nfc_reader_hw.cfg` where the exact lane names and MCU names are specific to each user's hardware.
+**Why:** Reader and hardware files in `~/printer_data/config/nfc/` contain machine-specific choices and must preserve local customization. Keeping the macro file read-only ensures fixes arrive with updates and prevents installed copies from drifting.
 
-The merge strategy (copy-if-absent, append-missing-sections) means that new features that add new config sections are picked up on the next `install.sh` run, while existing customizations survive.
+The merge strategy (copy-if-absent, append-missing-sections) still applies to user-owned files. During the one-time macro migration, an existing regular `nfc_macros.cfg` is moved to a timestamped `nfc_macros.cfg.pre-managed-*` backup before the read-only link is created. Later installer runs verify and maintain the link. Users who need changes should make and include their own copy.
 
 ---
 

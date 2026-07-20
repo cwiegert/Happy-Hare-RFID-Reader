@@ -1,6 +1,6 @@
 # Happy Hare RFID/NFC Reader
 
-NFC spool identification for Happy Hare. Use one NFC reader on each EMU lane, one shared reader inside the MMU body, or both. PN532 remains the default reader; PN7160 is also supported with `reader_type: pn7160`; RC522 is supported as an SPI reader with `reader_type: rc522`.
+NFC spool identification for Happy Hare. Use one NFC reader on each EMU lane, one shared reader inside the MMU body, or both. PN532 remains the default reader; PN7160, RC522, and PN5180 are available with `reader_type: pn7160`, `rc522`, and `pn5180`.
 
 This is a system-level Klipper integration, not a plug-and-play appliance. It touches Klipper extras, Happy Hare macros, lane MCU firmware, I2C wiring, Spoolman, and optional LED effects. If you are not comfortable recovering from a Klipper config error, reflashing lane MCUs, and reading logs, expect a learning curve.
 
@@ -24,8 +24,12 @@ Practical hardware choices:
   the better choice for multiple readers on one bus because it has four
   selectable I2C addresses (`40-43` / `0x28-0x2B`). That matches many four-color
   MMU layouts.
-- **Single shared reader:** PN532 or PN7160 can be mounted inside the MMU body
-  and used as a tap-before-loading reader.
+- **Single shared reader:** PN532, PN7160, RC522, or PN5180 can be mounted
+  inside the MMU body and used as a tap-before-loading reader. PN5180 is the
+  SPI option when SLIX2 (ISO15693/Type-5) support is required.
+
+For EMU installations, [`NFC Mounting Bracket/`](NFC%20Mounting%20Bracket/)
+contains the printable STL and editable STEP source for the NFC-reader LED holder.
 
 ## Virtual Endstop — How Scan-Jog Finds the Tag
 
@@ -51,8 +55,8 @@ multi-unit installations.
 
 | Mode | Hardware | Best For | Flow |
 |---|---|---|---|
-| Per-lane readers | One NFC reader per EMU gate/lane MCU (default PN532, optional PN7160) | Automatic spool identification during lane preload | Load spool -> HH parks filament -> NFC scan-jog rotates spool -> Spoolman lookup -> HH gate map |
-| Shared reader | One NFC reader mounted inside the MMU body (default PN532, optional PN7160) | Fewer readers, manual tap before loading | Tap tag -> spool staged -> load any gate -> HH pregate preload -> staged spool assigned |
+| Per-lane readers | One NFC reader per EMU gate/lane MCU (default PN532; PN7160, RC522, or PN5180 supported) | Automatic spool identification during lane preload | Load spool -> HH parks filament -> NFC scan-jog rotates spool -> Spoolman lookup -> HH gate map |
+| Shared reader | One NFC reader mounted inside the MMU body (PN532, PN7160, RC522, or PN5180) | Fewer readers, manual tap before loading | Tap tag -> spool staged -> load any gate -> HH pregate preload -> staged spool assigned |
 | Hybrid | Per-lane readers plus shared reader | Normal lanes with per-lane readers, plus shared/bypass workflows | Lane readers handle scan-jog; shared reader stages tapped spools for preload |
 
 The shared reader can stage only a real Spoolman spool ID. UID lookup, embedded spool IDs, and auto-created Spoolman records work. Metadata-only tags without a Spoolman spool ID cannot be staged for Happy Hare preload.
@@ -102,15 +106,16 @@ Supported readers:
 | PN532 | `pn532` | `36` (`0x24`) | Default reader and documented PN532 wiring path |
 | PN7160 | `pn7160` | `40-43` (`0x28-0x2B`) | Supports NTAG/Type2, ISO15693/Type5, and authenticated Bambu/MIFARE reads |
 | RC522 | `rc522` | SPI (`cs_pin` + `spi_bus`/software SPI pins) | UID lookup, NTAG/Type-2 rich reads, and authenticated MIFARE/Bambu reads; no ISO15693 |
+| PN5180 | `pn5180` | SPI (`cs_pin`, `spi_bus`/software SPI pins, `busy_pin`, `reset_pin`) | ISO14443A/NTAG, authenticated MIFARE/Bambu, and SLIX2 (ISO15693/Type-5) reads; see the SLB nine-wire wiring guide |
 
 Supported tag formats:
 
-| Tag / data path | PN532 | PN7160 | RC522 | Notes |
-|---|---:|---:|---:|---|
-| Spoolman UID lookup | Yes | Yes | Yes | Default path. The tag only needs a readable factory UID registered in Spoolman's extra field. |
-| NTAG / NFC Type 2 rich tags | Yes | Yes | Yes | NDEF text/URI/MIME/JSON payloads, OpenSpool, OpenTag3D, TigerTag, OpenPrintTag text-compatible payloads, and several manufacturer binary tags. |
-| MIFARE Classic rich tags | Yes | Yes | Yes | Bambu, QIDI Box, and Creality CFS all require `tag_parsing: True` and `bambu_reads: True`. Bambu's own keys and Creality's UID-derived Key B both additionally require `pycryptodome`; QIDI uses a factory-default-key fallback that needs no extra dependency (see [Configuration Reference](docs/shared/configuration.md#tag-data-parsing)). |
-| ISO15693 / NFC Type 5 rich tags | No | Yes | No | Used by SLIX2 / OpenPrintTag Type-5 tags. Official OpenPrintTag antenna size is best suited to a shared reader; per-lane use needs hardware testing. |
+| Tag / data path | PN532 | PN7160 | RC522 | PN5180 | Notes |
+|---|---:|---:|---:|---:|---|
+| Spoolman UID lookup | Yes | Yes | Yes | Yes | Default path. The tag only needs a readable factory UID registered in Spoolman's extra field. |
+| NTAG / NFC Type 2 rich tags | Yes | Yes | Yes | Yes | NDEF text/URI/MIME/JSON payloads, OpenSpool, OpenTag3D, TigerTag, OpenPrintTag text-compatible payloads, and several manufacturer binary tags. |
+| MIFARE Classic rich tags | Yes | Yes | Yes | Yes | Bambu, QIDI Box, and Creality CFS all require `tag_parsing: True` and `bambu_reads: True`. Bambu's own keys and Creality's UID-derived Key B both additionally require `pycryptodome`; QIDI uses a factory-default-key fallback that needs no extra dependency (see [Configuration Reference](docs/shared/configuration.md#tag-data-parsing)). |
+| SLIX2 / ISO15693 Type 5 rich tags | No | Yes | No | Yes | Current Type-5 rich-read path is for SLIX2 tags. Its payload enters the normal parser and is not limited to OpenPrintTag. Official OpenPrintTag antenna size is best suited to a shared reader; per-lane use needs hardware testing. |
 
 The vendored parser currently recognizes Bambu Lab, ELEGOO, Anycubic ACE,
 TigerTag, Creality CFS/K1/K2, QIDI Box, SimplyPrint/QIDI URL tags, OpenTag3D,
@@ -124,7 +129,7 @@ values for scan-jog left-neighbor interference handling.
 
 | Guide | Purpose |
 |---|---|
-| [NFC Reader Wiring](docs/i2c-nfc/wiring.md) | PN532 and PN7160 wiring, I2C address, and bus notes |
+| [NFC Reader Wiring](docs/i2c-nfc/wiring.md) | PN532, PN7160, RC522, and PN5180 wiring; includes the PN5180 SLB nine-wire guide |
 | [Install & Uninstall](docs/shared/install-uninstall.md) | Installer behavior, includes, updates, removal |
 | [First-Time Setup](docs/i2c-nfc/setup.md) | Configure Spoolman, lane hardware, first verification |
 | [Shared Reader](docs/shared/shared-reader.md) | Shared-reader workflow, hook wiring, commands, LED behavior |
@@ -186,11 +191,15 @@ spoolman_url:      auto
 spoolman_rfid_key: rfid_tag
 ```
 
-For shared-reader installs, wire Happy Hare's post-preload hook:
+Choose the Happy Hare post-preload hook that matches the reader layout:
 
 ```ini
 [gcode_macro _MMU_SEQUENCE_VARS]
+# Shared reader only:
 variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'
+
+# Per-lane and shared readers together:
+# variable_user_post_preload_extension: '_NFC_HYBRID_PRELOAD'
 ```
 
 Restart Klipper and run the doctor:
@@ -232,7 +241,7 @@ These are the defaults shipped in `config/nfc_reader.cfg`:
 
 | Setting | Default | Notes |
 |---|---:|---|
-| `startup_polling` | `1` | Start polling after reader init succeeds |
+| `startup_polling` | `-1` | Lane polling is manual by default; post-preload scan-jog does not need it |
 | `poll_interval` | `10` | Per-lane background poll interval in seconds |
 | `absent_threshold` | `3` | Missed polls before a removal event |
 | `scan_enabled` | `False` | Disables automatic gate-status scan-jog trigger; manual/hook `JOG_SCAN` still works |

@@ -205,10 +205,11 @@ Each layer owns one responsibility and must not reach across the boundary.
 
 | Layer | File | Owns | Does not own |
 |---|---|---|---|
-| **ReaderFactory** | `reader_factory.py` | Selects `PN532Driver`, `PN7160Driver`, or `RC522Driver` from `reader_type`, validates reader-specific bus defaults | Tag parsing, gate policy, Happy Hare |
+| **ReaderFactory** | `reader_factory.py` | Selects `PN532Driver`, `PN7160Driver`, `RC522Driver`, or `PN5180Driver` from `reader_type`, validates reader-specific bus defaults | Tag parsing, gate policy, Happy Hare |
 | **PN532Driver** | `pn532_driver.py` | PN532 wire protocol, I2C frames, UID/page/block reads | Spoolman, gate policy, Happy Hare |
 | **PN7160Driver** | `pn7160_driver.py` | PN7160/NCI protocol, Type2/Type5/MIFARE reads, RF discovery lifecycle | Spoolman, gate policy, Happy Hare |
 | **RC522Driver** | `rc522_driver.py` | RC522 SPI register protocol, ISO14443A select/cascade, UID reads, NTAG/Type-2 page reads, and MIFARE Classic auth/block reads | Rich tag parsing, Spoolman, gate policy, Happy Hare |
+| **PN5180Driver** | `pn5180_driver.py` | PN5180 SPI protocol, BUSY-synchronized commands, hardware-reset recovery, ISO14443A/NTAG/MIFARE and SLIX2 (ISO15693) reads | Rich tag parsing, Spoolman, gate policy, Happy Hare |
 | **SpoolmanClient** | `spoolman_client.py` | UID → spool record lookup, TTL cache, URL discovery | Gate state, lane assignment, MMU commands |
 | **TagHandler** | `tag_handler.py` | Tag classification, NTAG/MIFARE capture, metadata parsing, spool resolution ladder | Gate lifecycle, polling timers, GCode dispatch |
 | **GateState** | `gate_state.py` | Per-gate debounce state machine, event generation, `CurrentTag` observation | Hardware reads, Spoolman, GCode |

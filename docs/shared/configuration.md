@@ -23,9 +23,8 @@ For a shared-reader-only install, include `nfc_reader_shared.cfg` instead of
 This includes hardware keys. `i2c_address` and `i2c_bus` set in the base `[nfc_gate]` section are inherited by all lanes — you only need to specify them per lane if a particular reader uses different hardware.
 
 `reader_type` is inherited the same way as other hardware keys. The shipped
-default is `pn532`; set `reader_type: pn7160` in a lane or shared-reader section
-only when that physical reader is PN7160. Set `reader_type: rc522` only for
-RC522 SPI hardware.
+default is `pn532`; set `reader_type` to `pn7160`, `rc522`, or `pn5180` when
+that physical reader is installed. RC522 and PN5180 use SPI rather than I2C.
 
 Example:
 
@@ -65,15 +64,17 @@ i2c_speed:   100000
 
 | Setting | Default | Description |
 |---|---|---|
-| `reader_type` | `pn532` | Reader driver to use. Supported values are `pn532`, `pn7160`, and `rc522`. |
-| `i2c_address` | `36` for PN532 | I2C address. PN532 uses fixed decimal `36` (`0x24`). PN7160 must use decimal `40-43` (`0x28-0x2B`). Not used by RC522. |
-| `i2c_bus` | board-specific | I2C bus name on the selected MCU. PN532 should use hardware I2C. PN7160 supports software I2C, but hardware I2C is recommended because software I2C increases MCU load. Not used by RC522. |
+| `reader_type` | `pn532` | Reader driver to use. Supported values are `pn532`, `pn7160`, `rc522`, and `pn5180`. |
+| `i2c_address` | `36` for PN532 | I2C address. PN532 uses fixed decimal `36` (`0x24`). PN7160 must use decimal `40-43` (`0x28-0x2B`). Not used by RC522 or PN5180. |
+| `i2c_bus` | board-specific | I2C bus name on the selected MCU. PN532 should use hardware I2C. PN7160 supports software I2C, but hardware I2C is recommended because software I2C increases MCU load. Not used by RC522 or PN5180. |
 | `i2c_speed` | `100000` | I2C speed in Hz. Keep `100000` for PN7160 and for conservative PN532 bring-up. |
 | `i2c_mcu` | per section | Klipper MCU name that hosts the reader. Required in `[nfc_gate laneN]` and `[nfc_gate shared]`. |
-| `cs_pin` | unset | Required for RC522 SPI readers. Use the Klipper pin name connected to RC522 SDA/SS/CS. |
-| `spi_bus` / software SPI pins | unset | Required for RC522 SPI readers. Use Klipper's normal SPI config keys for the selected MCU. |
-| `spi_speed` | `1000000` for RC522 | Optional RC522 SPI clock in Hz. The default is conservative. |
+| `cs_pin` | unset | Required for RC522 and PN5180 SPI readers. Use the Klipper pin connected to RC522 SDA/SS/CS or PN5180 NSS/CS. |
+| `spi_bus` / software SPI pins | unset | Required for RC522 and PN5180. Use Klipper's normal SPI config keys for the selected MCU. |
+| `spi_speed` | `500000` | Optional SPI clock in Hz for RC522 and PN5180. Use `500000` with hardware SPI; set `100000` for software SPI. |
 | `rc522_transceive_delay` | `0.035` | Optional RC522 UID-read response wait in seconds. Leave at the default unless hardware testing shows the reader needs more time. |
+| `reset_pin` | unset | Required for PN5180. Connect PN5180 RST to an MCU output so the driver can recover a communication lockup. |
+| `busy_pin` | `mmu:PB0` | Required PN5180 active-high BUSY signal. The configuration key has this default, but the BUSY wire must be connected. |
 
 Reader settings inherit from the base `[nfc_gate]` section. A lane with no
 `reader_type` uses the base reader type. A lane with no `i2c_address` uses the
@@ -117,7 +118,7 @@ mmu_gate:    1
 i2c_mcu:     mmu1
 cs_pin:      mmu1:PA4
 spi_bus:     spi1
-# spi_speed: 1000000
+# spi_speed: 500000  # Hardware SPI default; use 100000 for software SPI
 # rc522_transceive_delay: 0.035
 ```
 
@@ -128,6 +129,26 @@ when `tag_parsing: True` and `bambu_reads: True` are set; Bambu's own reads
 and Creality's UID-derived Key B both require `pycryptodome`, QIDI's
 default-key fallback does not (see [Tag Data Parsing](#tag-data-parsing)).
 It does not support ISO15693 rich tag metadata.
+
+PN5180 lane example (SLB wiring):
+
+```ini
+[nfc_gate lane0]
+enabled:     True
+reader_type: pn5180
+mmu_gate:    0
+i2c_mcu:     mmu
+spi_bus:     spi2_PB14_PB15_PB13
+cs_pin:      mmu:PA8
+reset_pin:   mmu:PC6
+busy_pin:    mmu:PB0
+spi_speed:   500000
+```
+
+PN5180 supports ISO14443A/NTAG, authenticated MIFARE/Bambu, and SLIX2
+(ISO15693/Type-5) reads. It requires nine physical connections on the documented
+SLB setup, including both 5V and PSF 3.3V power rails, BUSY, and RST. See
+[PN5180 wiring](../i2c-nfc/pn5180-wiring.md) before wiring or configuring it.
 
 ---
 
@@ -204,7 +225,7 @@ spoolman_auto_create: False
 
 ```ini
 [nfc_gate]
-startup_polling:    1
+startup_polling:    -1
 startup_poll_delay: 0.0
 poll_interval:      10
 absent_threshold:   3
@@ -212,7 +233,7 @@ absent_threshold:   3
 
 | Setting | Default | Description |
 |---|---|---|
-| `startup_polling` | `1` | `-1` = manual start only. `1` = start polling automatically after reader init. `0` = explicitly disabled (useful as a lane override). |
+| `startup_polling` | `-1` | `-1` = manual start only, the default for hook-driven lane scans. `1` = start optional background lane polling automatically after reader init. `0` = explicitly disabled. The shared-reader section overrides this with `1`. |
 | `startup_poll_delay` | `0.0` | Seconds to wait before the first automatic poll. The shipped hardware config staggers this by 0.5 seconds per lane. |
 | `poll_interval` | `10` | Seconds between polls while background polling is active. |
 | `absent_threshold` | `3` | Consecutive missed reads before `_NFC_SPOOL_REMOVED` fires. At 10s interval, default = ~30s before removal. |
@@ -562,13 +583,13 @@ no rich metadata or spool assignment was available.
 
 ## Shared Reader
 
-The shared reader is an optional single NFC reader mounted inside the MMU body — not tied to any EMU lane. It defaults to PN532 hardware and can use PN7160 with `reader_type: pn7160`. Tap a tagged spool on it before loading; when Happy Hare starts the pregate preload NFC stages the spool ID automatically.
+The shared reader is an optional single NFC reader mounted inside the MMU body — not tied to any EMU lane. It defaults to PN532 hardware and also supports PN7160, RC522, and PN5180. Tap a tagged spool on it before loading; when Happy Hare starts the pregate preload NFC stages the spool ID automatically.
 
 **No per-lane readers are required.** A shared-only installation needs only the base `[nfc_gate]` section (for Spoolman config) and the `[nfc_gate shared]` section. No `[nfc_gate lane0]` or similar sections are needed.
 
 The shared reader lives in its own file — `nfc_reader_shared.cfg` — so it can be added to any install without editing the lane hardware config. For a **pure shared install**, include it instead of `nfc_reader_hw.cfg`. For a **hybrid install** (per-lane readers plus a shared reader), include both.
 
-Run `install.sh` to generate `nfc_reader_shared.cfg` with your hardware values, or copy the template from `config/nfc_reader_shared.cfg` in the repo and edit `reader_type`, `i2c_mcu`, `i2c_bus`, and `i2c_address` manually.
+Run `install.sh` to generate `nfc_reader_shared.cfg` with your hardware values, or copy the template from `config/nfc_reader_shared.cfg` in the repo and edit the I2C or SPI settings required by the selected `reader_type`.
 
 ### Config
 
@@ -613,7 +634,7 @@ force_spool_id:         true
 | `startup_polling` | `1` in the shipped template | Set to `1` to poll at Klipper boot. Set to `0` or `-1` if you want to start it manually with `NFC_SHARED READ=1`. |
 | `scan_poll_interval` | inherited from `[nfc_gate]` | Seconds between shared-reader tag reads while polling. The shipped default is `0.25`. |
 | `poll_interval` | inherited from `[nfc_gate]` | Ignored for shared-reader read cadence; lane readers still use it for normal background polling. |
-| `pending_spool_id_timeout` | set in `mmu_parameters.cfg` | Seconds a scanned spool remains eligible for the next preload. NFC reads this from Happy Hare's `[mmu]` section at connect time (falls back to 30 s). Set it in `~/printer_data/config/mmu/base/mmu_parameters.cfg`. |
+| `pending_spool_id_timeout` | Happy Hare `[mmu]` value or `60s` | Seconds a scanned spool remains eligible for the next preload. NFC uses Happy Hare's active `[mmu]` value when it is exposed through Klipper; otherwise it uses 60 s. |
 | `shared_read_timeout` | `120.0` | Seconds polling may run without resolving a valid tag before auto-stopping. No effect when started via `startup_polling` or PRELOAD_CHECK auto-restart. |
 | `shared_tag_read_effect` | `''` | Name of a `[mmu_led_effect]` to play as soon as the shared reader sees a tag. Leave empty to skip tag-detected LED feedback. |
 | `read_effect_duration` | `2.0` | HH duration used by `NFC_SHARED LED_TEST=1`. Normal shared scans do not pass this duration to HH; NFC uses it only as a failsafe release window if no follow-up state replaces the read cue. |
@@ -652,6 +673,17 @@ Add one user extension hook to `mmu_macro_vars.cfg`:
 ; stage NEXT_SPOOLID before a pregate-triggered automatic preload
 variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'
 ```
+
+Use `_NFC_SHARED_PRELOAD` only for a shared-reader-only installation. When
+per-lane readers and a shared reader coexist, configure:
+
+```ini
+variable_user_post_preload_extension: '_NFC_HYBRID_PRELOAD'
+```
+
+The hybrid hook starts the configured lane reader first. If its scan reaches a
+final no-tag result, staged shared-reader data is assigned to that same gate.
+Gates without a lane reader use the shared-reader transaction directly.
 
 `variable_user_post_preload_extension` fires at the start of every pregate load. `PRELOAD_CHECK` skips only while printing — it is safe to leave wired for all loads. If no spool is staged a console message advises the user; with `force_spool_id: true` that advisory uses the `[ERROR]` prefix.
 

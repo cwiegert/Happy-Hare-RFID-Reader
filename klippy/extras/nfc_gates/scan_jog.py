@@ -28,7 +28,7 @@ DECODE_RETRY_SETTLE_DELAY = 0.2
 SCAN_JOG_SUBSTEPS = 3
 LEFT_NEIGHBOR_CLEARANCE_MM = 75.0
 LEFT_NEIGHBOR_CLEARANCE_RETRIES = 3
-TAG_READ_HOLD_DELAY = 0.1
+TAG_READ_HOLD_DELAY = 0.35
 CONTINUOUS_QUEUE_COMPLETE_POLL_FRACTION = 0.25
 CONTINUOUS_QUEUE_COMPLETE_MIN_EPSILON = 0.01
 # Treat sub-step floating-point residue as the end of a scan move.  Formatting
@@ -55,7 +55,8 @@ def _led_effect(gate, effect_name):
         return
     led = LEDEffectManager(
         gate.printer, reactor=gate.reactor, name=gate._name,
-        console=getattr(gate, '_console', None))
+        console=getattr(gate, '_console', None),
+        happy_hare_v4=getattr(gate, '_happy_hare_v4', False))
     result = led.play_lane_event(
         _scan_led_event(effect_name), effect_name, gate._gate, replace=True)
     if not result.ok and result.error is not None:
@@ -107,12 +108,26 @@ def _led_release(gate):
     if getattr(gate, '_scan_rewind_led_released', False):
         return True
     _cancel_led_reassert(gate)
-    led = LEDEffectManager(gate.printer, reactor=gate.reactor, name=gate._name)
+    led = LEDEffectManager(
+        gate.printer, reactor=gate.reactor, name=gate._name,
+        happy_hare_v4=getattr(gate, '_happy_hare_v4', False))
     result = led.release(gate=gate._gate)
     if result.ok:
         gate._scan_rewind_led_released = True
     return result.ok
 
+
+def _restore_hh_gate_led_quiet(gate):
+    """Restore this gate's normal Happy Hare LED state after parking."""
+    script = "MMU_SET_LED GATE=%d EXIT_EFFECT=gate_status FADETIME=0" % gate._gate
+    try:
+        run_hh_script(gate, script)
+        logger.info("[%s]: Happy Hare gate LED restored", gate._name)
+        return True
+    except Exception as e:
+        logger.warning("[%s]: Happy Hare gate LED restore failed: %s",
+                       gate._name, e)
+        return False
 
 
 def manual_jog_scan(gate, gcmd):
@@ -177,7 +192,9 @@ def manual_jog_scan(gate, gcmd):
         return
 
     gate.reactor.update_timer(gate._poll_timer, gate.reactor.NEVER)
-    start(gate, max_mm=max_mm)
+    start(
+        gate, max_mm=max_mm,
+        shared_fallback=gcmd.get_int('SHARED_FALLBACK', 0) == 1)
     if getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous':
         msg = ("[SCAN] NFC[%s]: continuous scan-jog started for gate %d"
                % (gate._name, gate._gate))
@@ -956,6 +973,29 @@ def clear_unresolved_scan(gate):
             gate._name, gate._gate, e)
 
 
+def apply_shared_fallback(gate):
+    """Apply staged shared-reader data after a hybrid lane scan fails."""
+    if not getattr(gate, '_scan_shared_fallback', False):
+        return False
+    shared = gate.printer.lookup_object('nfc_gate shared', None)
+    if shared is None or not getattr(shared, '_shared', False):
+        return False
+    try:
+        applied = shared._shared_preload_policy().fallback_to_gate(gate._gate)
+    except Exception:
+        logger.exception(
+            "[%s]: gate %d scan mode - shared fallback failed",
+            gate._name, gate._gate)
+        return False
+    if applied:
+        msg = ("[OK] NFC[%s]: lane scan found no tag; applied staged "
+               "shared-reader data to gate %d"
+               % (gate._name.capitalize(), gate._gate))
+        logger.info(msg)
+        gate._console(msg)
+    return applied
+
+
 def get_active_gate(gate):
     """Return Happy Hare's currently selected gate, or -1 if unavailable."""
     hh = gate._read_hh_status()
@@ -1056,7 +1096,7 @@ def _hh_reset_filament_position(mmu):
     return False
 
 
-def start(gate, max_mm=None):
+def start(gate, max_mm=None, shared_fallback=False):
     if max_mm is not None:
         gate._scan_max_mm = float(max_mm)
     # Happy Hare's own MMU_LOAD/MMU_EJECT sequences zero this counter before
@@ -1076,6 +1116,7 @@ def start(gate, max_mm=None):
                 gate._name, gate._gate)
     gate.__class__._active_scan_gate = gate._gate
     gate._scan_mode = True
+    gate._scan_shared_fallback = bool(shared_fallback)
     gate._scan_mm_total = 0.0
     gate._scan_next_chunk_time = gate.reactor.monotonic()
     gate._scan_continuous_move_inflight = False
@@ -1124,6 +1165,7 @@ def start(gate, max_mm=None):
     gate._scan_gate_selected = False  # deferred to first jog (must run from timer, not GCode handler)
     gate._scan_hh_prep_pending = True
     gate._scan_led_reassert_effect = None
+    gate._scan_rewind_led_released = False
 
     gate._scan_timer = gate.reactor.register_timer(
         gate._scan_step_event,
@@ -1160,7 +1202,7 @@ def stopped_step_event(gate, eventtime):
         return gate.reactor.NEVER
 
     # Re-assert searching LED every step after the initial Happy Hare prep.
-    # MMU_TEST_MOVE and Happy Hare's own LED timer both kill custom effects — this
+    # Happy Hare's own LED timer both kill custom effects — this
     # keeps the clockwise animation alive between and after every jog.
     if not getattr(gate, '_scan_hh_prep_pending', True):
         _led_effect(gate, getattr(gate, '_scan_searching_effect', LED_SEARCHING))
@@ -2344,6 +2386,7 @@ def finish(gate):
     gate._scan_left_neighbor_attempts = 0
     gate._resume_poll_after_rewind()
     _led_release(gate)
+    gate._scan_shared_fallback = False
     # Only release the "one gate scans at a time" guard once every last bit of
     # cleanup above (HH dispatch, poll resume, LED release) is actually done.
     # Clearing it earlier let a second `jog_scan` command be accepted while
@@ -2366,10 +2409,12 @@ def rewind_and_exit(gate):
     logger.info(msg)
     gate._console(msg)
     restore_left_neighbor(gate)
-    clear_unresolved_scan(gate)
+    shared_fallback_applied = apply_shared_fallback(gate)
+    if not shared_fallback_applied:
+        clear_unresolved_scan(gate)
     previous_uid = getattr(gate, '_scan_previous_uid', None)
     previous_spool = getattr(gate, '_scan_previous_spool', None)
-    if previous_spool is not None:
+    if previous_spool is not None and not shared_fallback_applied:
         gate._state.current_uid = previous_uid
         gate._state.current_spool = previous_spool
         hh = gate._read_hh_status()
@@ -2381,10 +2426,16 @@ def rewind_and_exit(gate):
     gate._scan_previous_spool = None
     gate._scan_previous_spool_identity = None
     if gate._debug >= 3:
-        logger.info(
-            "[%s]: gate %d scan mode — no tag found, "
-            "NFC state and Happy Hare gate cache cleared after rewind",
-            gate._name, gate._gate)
+        if shared_fallback_applied:
+            logger.info(
+                "[%s]: gate %d scan mode - no lane tag found; "
+                "staged shared-reader data assigned after rewind",
+                gate._name, gate._gate)
+        else:
+            logger.info(
+                "[%s]: gate %d scan mode - no tag found; "
+                "NFC state and Happy Hare gate cache cleared after rewind",
+                gate._name, gate._gate)
     gate._scan_decode_retry_attempts = 0
     gate._scan_decode_retry_uid = None
     gate._scan_decode_retry_offset = 0.0
@@ -2396,6 +2447,7 @@ def rewind_and_exit(gate):
     gate._scan_left_neighbor_attempts = 0
     gate._resume_poll_after_rewind()
     _led_release(gate)
+    gate._scan_shared_fallback = False
     # See finish(): release the scan guard only after all cleanup is done.
     gate.__class__._active_scan_gate = None
 
@@ -2549,6 +2601,10 @@ def run_homing_jog(gate, mm, speed=None, accel=None):
     if not gate._scan_gate_selected:
         gate._scan_gate_selected = True
         select_gate_quiet(gate, gate._gate)
+    if getattr(gate, '_scan_mode', False) and mm > 0.0:
+        effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
+        _led_effect(gate, effect_name)
+        _schedule_led_reassert(gate, effect_name)
     if run_direct_homing_jog(gate, mm, speed=speed, accel=accel):
         return "homing"
     start_time = gate.reactor.monotonic()
@@ -2822,3 +2878,4 @@ def run_rewind(gate):
     finally:
         _led_release(gate)
     run_hh_script(gate, "_MMU_STEP_UNLOAD_GATE")
+    _restore_hh_gate_led_quiet(gate)

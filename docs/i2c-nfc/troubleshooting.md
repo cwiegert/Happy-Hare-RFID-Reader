@@ -12,6 +12,7 @@
 - [PN7160 Not Responding](#pn7160-not-responding)
   - [`connect_nci failed: I2C label=CORE_RESET status=START_NACK`](#connect_nci-failed-i2c-labelcore_reset-statusstart_nack)
   - [`Unable to obtain 'i2c_read_response' response`](#unable-to-obtain-i2c_read_response-response)
+- [PN5180 Not Responding](#pn5180-not-responding)
 - [BME280 Fails After PN532 Is Added](#bme280-fails-after-pn532-is-added)
 - [Tag Detected But No Spool Found](#tag-detected-but-no-spool-found)
 - [False Spool Removals](#false-spool-removals)
@@ -176,6 +177,45 @@ transceive_delay: 0.500
 ```
 
 If `INIT=1` fails immediately, the bus is not functional — check wiring and mode selection first.
+
+---
+
+## PN5180 Not Responding
+
+PN5180 failures are usually power, SPI wiring, BUSY, or RST related. The
+documented SLB connection uses nine wires: 5V, PSF 3.3V, GND, SCK, MISO, MOSI,
+NSS/CS, BUSY, and RST. See [PN5180 wiring](pn5180-wiring.md) for the table.
+
+### `invalid PN5180 health registers`
+
+The reader returned invalid register data during initialization. Check these in
+order:
+
+1. **Both power rails** - the module needs 5V and the PSF connector's 3.3V.
+2. **Ground** - PN5180 and the SLB/MMU must share GND.
+3. **SPI direction** - SCK=`PB13`, MISO=`PB14`, MOSI=`PB15`, and NSS=`PA8` for
+   the documented SLB wiring.
+4. **Configuration** - `spi_bus: spi2_PB14_PB15_PB13`, `cs_pin: mmu:PA8`, and
+   `reader_type: pn5180` must match the physical wiring.
+5. **RST** - must be connected to the configured MCU output (`mmu:PC6` in the
+   SLB example), not tied permanently high.
+
+### `timeout waiting for PN5180 BUSY low`
+
+The BUSY input stayed high longer than `pn5180_busy_timeout` (default `0.100`).
+The driver resets and reinitializes the reader after this condition, but a
+repeated timeout is a wiring or power fault, not a normal no-tag result.
+
+1. Confirm PN5180 BUSY is connected to the configured input (`mmu:PB0` in the
+   SLB example) and is not inverted.
+2. Confirm BUSY is not shorted to 3.3V or 5V.
+3. Confirm both power rails and RST are connected.
+4. Run `NFC_SHARED INIT=1` for a shared reader or `NFC GATE=<n> INIT=1` for a
+   lane reader after correcting the wiring.
+
+Do not use `pn5180_command_delay`; the driver synchronizes each command from
+the actual BUSY signal. For a complete wire-by-wire check, use
+[PN5180 wiring](pn5180-wiring.md).
 
 ---
 

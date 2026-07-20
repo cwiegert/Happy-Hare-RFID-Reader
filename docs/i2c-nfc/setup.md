@@ -66,9 +66,12 @@ i2c_mcu:    mmu1
 | `mmu_gate` | Yes | Happy Hare gate number (0-based integer) |
 | `i2c_mcu` | Yes | Klipper MCU name — must match an `[mcu laneN]` in your config |
 | `enabled` | No | Defaults to `True`. Set `False` to keep a future lane template without creating hardware. |
-| `reader_type` | Inherited unless overridden | `pn532` by default. Set `pn7160` for PN7160 hardware or `rc522` for RC522 SPI hardware. |
-| `i2c_address` | Inherited unless overridden | PN532 uses `36`; PN7160 must use `40-43`. Not used by RC522. |
-| `i2c_bus` | Inherited unless overridden | I2C bus name on that MCU — use `i2c3_PB3_PB4` for PB3/PB4 on EBB42 or set it once in `[nfc_gate]`. Not used by RC522. |
+| `reader_type` | Inherited unless overridden | `pn532` by default. Set `pn7160`, `rc522`, or `pn5180` for the installed reader. |
+| `i2c_address` | Inherited unless overridden | PN532 uses `36`; PN7160 must use `40-43`. Not used by RC522 or PN5180. |
+| `i2c_bus` | Inherited unless overridden | I2C bus name on that MCU — use `i2c3_PB3_PB4` for PB3/PB4 on EBB42 or set it once in `[nfc_gate]`. Not used by RC522 or PN5180. |
+
+| `spi_bus`, `cs_pin`, `spi_speed` | SPI readers | Required for RC522 and PN5180. Use `500000` for hardware SPI or `100000` for software SPI. |
+| `reset_pin`, `busy_pin` | PN5180 | Required PN5180 RST and active-high BUSY GPIO. See [PN5180 wiring](pn5180-wiring.md). |
 
 > [!NOTE]
 > `i2c_mcu` must exactly match the MCU name Klipper uses. These names come from Happy Hare's `mmu_hardware.cfg`, typically `lane0`, `lane1`, etc. A mismatch causes a Klipper startup error.

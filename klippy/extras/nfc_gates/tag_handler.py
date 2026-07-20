@@ -31,7 +31,8 @@ def _lane_led_effect(gate, effect_name):
         return
     result = LEDEffectManager(
         printer, reactor=getattr(gate, 'reactor', None),
-        name=getattr(gate, '_name', 'nfc')).play_lane_event(
+        name=getattr(gate, '_name', 'nfc'),
+        happy_hare_v4=getattr(gate, '_happy_hare_v4', False)).play_lane_event(
             _lane_led_event(effect_name), effect_name, gate._gate,
             replace=True, log_failure=False)
     if (not result.ok and result.error is not None

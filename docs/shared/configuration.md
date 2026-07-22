@@ -33,19 +33,16 @@ Example:
 reader_type:      pn532
 i2c_address:      36
 i2c_bus:          i2c3_PB3_PB4
-scan_enabled:     False
 
 [nfc_gate lane0]
 enabled:          True
 mmu_gate:         0
 i2c_mcu:          lane0
-# inherits i2c_address, i2c_bus, scan_enabled=False
+# inherits i2c_address and i2c_bus
 
 [nfc_gate lane1]
 mmu_gate:         1
 i2c_mcu:          lane1
-scan_enabled:     True
-# overrides only scan_enabled for lane1
 ```
 
 ---
@@ -253,15 +250,11 @@ poll_interval × absent_threshold = seconds before removal fires
 
 ```ini
 [nfc_gate]
-scan_enabled:          False
-scan_jog_mm:           150.0
 #scan_jog_max:         480.0
-scan_reads_per_position: 1
 scan_rewind_buffer_mm: 30.0
 scan_decode_retry_mm:     5.0
 scan_decode_retry_rounds: 5
 scan_poll_interval:    0.25
-scan_motion_mode: continuous
 scan_continuous_step_mm: 150.0
 scan_continuous_speed: 200.0
 scan_continuous_accel: 2000.0
@@ -270,15 +263,11 @@ scan_continuous_poll_interval: 0.05
 
 | Setting | Default | Description |
 |---|---|---|
-| `scan_enabled` | `False` | Controls the automatic Happy Hare gate-status edge trigger. `False` disables automatic 0→1 scan-jog, but manual `NFC JOG_SCAN=1` or Happy Hare hook-triggered `_NFC_SCAN_JOG_PRELOAD` still works. |
-| `scan_jog_mm` | `150.0` | Logical filament advance per scan chunk (mm). NFC divides this into three blocking MMU_TEST_MOVE substeps so it can read at stopped spool positions. For rich tags such as Bambu/MIFARE, a smaller value like `75.0` can improve payload-read reliability. |
 | `scan_jog_max` | unset | Optional maximum scan-jog travel distance. When set, NFC uses this value and does not read Happy Hare Bowden calibration. `480.0` is roughly one full spool rotation. Leave unset/commented to keep scanning until the active lane's Bowden calibration length is reached. |
-| `scan_reads_per_position` | `1` | Number of NFC read attempts at each stopped spool position before moving the next substep. Reads are spaced by `scan_poll_interval`. Increase for marginal tag alignment at the cost of scan time. |
 | `scan_rewind_buffer_mm` | `30.0` | Distance reserved for Happy Hare's final gate-parking step (`_MMU_STEP_UNLOAD_GATE`). After a tag is found, NFC fast-rewinds to within this buffer and then hands off to HH for sensor/encoder-based final parking. If the scan moved less than this value, the fast rewind is skipped. |
 | `scan_decode_retry_mm` | `5.0` | Distance between nearby retry positions after a UID is found but the rich tag payload is marked incomplete. |
 | `scan_decode_retry_rounds` | `5` | Nearby retry rounds before accepting the current UID/metadata result. Each round probes both sides of the first UID hit. |
-| `scan_poll_interval` | `0.25` | Seconds between stopped-position NFC read attempts during scan-jog. The shared reader also uses this value as its active polling cadence. Since Happy Hare `MMU_TEST_MOVE` blocks by default, this is not a read-while-moving interval. |
-| `scan_motion_mode` | `continuous` | `continuous` (default) uses the lane NFC virtual endstop for the full remaining forward search and records UID hits while the homing move is active. `stopped` uses blocking MMU_TEST_MOVE substeps with reads at each stopped spool position — use this for marginal reader or tag alignment. |
+| `scan_poll_interval` | `0.25` | Decode-retry read spacing and shared-reader active polling cadence. |
 | `scan_continuous_step_mm` | `150.0` | Continuous-mode forward search chunk size. Rich tag reads use the observed UID hit-window center, so this value no longer needs to be kept small just to avoid overshooting the ideal metadata-read position. |
 | `scan_continuous_speed` | `200.0` | Continuous-mode gear move speed in mm/s. |
 | `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration in mm/s^2. At `150mm`, `200mm/s`, `2000mm/s^2`, each move takes about `0.85s` before NFC read time is included. |
@@ -337,10 +326,9 @@ Recommended NFC config when using the hook:
 ```ini
 [nfc_gate]
 startup_polling: 0
-scan_enabled:    False
 ```
 
-With this setup NFC does not poll gate-status at all — Happy Hare calls NFC only after the relevant gate completes preload. The gate-status 0→1 edge trigger is disabled.
+With this setup Happy Hare calls NFC after the relevant gate completes preload.
 
 ---
 
@@ -650,7 +638,7 @@ force_spool_id:         true
 | `shared_missed_limit` | `3` | Consecutive unresolvable UID reads before a console error advises the user to use `MMU_PRELOAD`. Minimum 1. |
 | `force_spool_id` | `true` | When `true`, `PRELOAD_CHECK` emits a `[ERROR]` advisory if no spool is staged, telling the user to scan a tag before loading. |
 
-`mmu_gate` and `scan_enabled` are not user-configurable — both are set internally by `shared: true`. Only one enabled shared reader may be configured. The reader inherits `spoolman_url`, `spoolman_rfid_key`, `tag_parsing`, `spoolman_auto_create`, and all logging settings from the base `[nfc_gate]` section. Set `enabled: False` to keep the shared-reader template installed without initializing hardware.
+`mmu_gate` is not user-configurable — it is set internally by `shared: true`. Only one enabled shared reader may be configured. The reader inherits `spoolman_url`, `spoolman_rfid_key`, `tag_parsing`, `spoolman_auto_create`, and all logging settings from the base `[nfc_gate]` section. Set `enabled: False` to keep the shared-reader template installed without initializing hardware.
 
 `MMU_SET_LED DURATION=` is intentionally limited to standalone or timeout-bound LED feedback. Happy Hare sets a per-unit pending-update flag while a duration timer is active, and later LED effect calls for that unit are ignored until the timer expires. Normal shared read and staged-ready effects do not pass `DURATION` so follow-up shared-reader states can replace them immediately.
 

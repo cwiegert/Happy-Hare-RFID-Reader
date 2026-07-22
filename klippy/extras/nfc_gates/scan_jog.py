@@ -25,7 +25,6 @@ except ImportError:
 
 # Short settle after a decode-retry jog/backup before trying rich tag reads again.
 DECODE_RETRY_SETTLE_DELAY = 0.2
-SCAN_JOG_SUBSTEPS = 3
 LEFT_NEIGHBOR_CLEARANCE_MM = 75.0
 LEFT_NEIGHBOR_CLEARANCE_RETRIES = 3
 TAG_READ_HOLD_DELAY = 0.35
@@ -195,32 +194,19 @@ def manual_jog_scan(gate, gcmd):
     start(
         gate, max_mm=max_mm,
         shared_fallback=gcmd.get_int('SHARED_FALLBACK', 0) == 1)
-    if getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous':
-        msg = ("[SCAN] NFC[%s]: continuous scan-jog started for gate %d"
-               % (gate._name, gate._gate))
-    else:
-        msg = ("[SCAN] NFC[%s]: stopped scan-jog started for gate %d"
-               % (gate._name, gate._gate))
+    msg = ("[SCAN] NFC[%s]: continuous scan-jog started for gate %d"
+           % (gate._name, gate._gate))
     logger.info(msg)
     gcmd.respond_info(_color_tags(msg))
     if gate._debug >= 3:
-        if getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous':
-            logger.info(
-                "[%s]: continuous scan-jog settings — "
-                "homing_max=%.0fmm speed=%.1fmm/s "
-                "accel=%.1fmm/s^2 poll=%.2fs",
-                gate._name, gate._scan_max_mm,
-                gate._scan_continuous_speed,
-                gate._scan_continuous_accel,
-                gate._scan_continuous_poll_interval)
-        else:
-            logger.info(
-                "[%s]: stopped scan-jog settings — "
-                "homing_max=%.0fmm "
-                "reads=%d poll=%.2fs",
-                gate._name, gate._scan_max_mm,
-                max(1, int(getattr(gate, '_scan_reads_per_position', 3))),
-                gate._scan_poll_interval)
+        logger.info(
+            "[%s]: continuous scan-jog settings — "
+            "homing_max=%.0fmm speed=%.1fmm/s "
+            "accel=%.1fmm/s^2 poll=%.2fs",
+            gate._name, gate._scan_max_mm,
+            gate._scan_continuous_speed,
+            gate._scan_continuous_accel,
+            gate._scan_continuous_poll_interval)
 
 
 def is_printing(gate):
@@ -742,8 +728,6 @@ def queue_continuous_homing_backtrack_retry(gate, now, reason):
     uid = getattr(gate, '_scan_continuous_pending_uid', None)
     if not uid:
         return False
-    if getattr(gate, '_scan_motion_mode', 'stopped') != 'continuous':
-        return False
     if getattr(gate, '_scan_continuous_move_source', None) != "NFC Homing Move":
         return False
     if not getattr(gate, '_tag_parsing', False):
@@ -777,8 +761,6 @@ def queue_continuous_homing_backtrack_retry(gate, now, reason):
 def queue_continuous_overshoot_backup(gate, now):
     uid = getattr(gate, '_scan_continuous_pending_uid', None)
     if not uid:
-        return False
-    if getattr(gate, '_scan_motion_mode', 'stopped') != 'continuous':
         return False
     if getattr(gate, '_scan_continuous_overshoot_backed_up', False):
         return False
@@ -834,8 +816,6 @@ def queue_continuous_post_backup_retry(gate, now):
     uid = getattr(gate, '_scan_decode_retry_uid', None)
     if not uid:
         return False
-    if getattr(gate, '_scan_motion_mode', 'stopped') != 'continuous':
-        return False
     if not getattr(gate, '_scan_continuous_overshoot_backed_up', False):
         return False
     if getattr(gate, '_scan_continuous_overshoot_uid', None) != uid:
@@ -880,29 +860,6 @@ def full_poll_after_continuous_probe_resolved(gate):
         elif tag_found and gate._state.current_uid == uid:
             gate._scan_found_event = None
     return resolved
-
-
-def chunk_dwell(gate):
-    """Return the stationary read window after each scan substep."""
-    reads = max(1, int(getattr(gate, '_scan_reads_per_position', 3)))
-    return reads * gate._scan_poll_interval
-
-
-def substep_distance(gate):
-    """Return the scan-jog submove distance.
-
-    MMU_TEST_MOVE defaults to WAIT=1 in Happy Hare, so reads happen after the
-    move returns, not while the spool is moving.  Substeps create physical read
-    positions inside each configured scan_jog_mm chunk.
-    """
-    return gate._scan_jog_mm / float(SCAN_JOG_SUBSTEPS)
-
-
-def next_event_time(gate, mm):
-    """Return when it is safe to read after a queued scan chunk."""
-    return gate.reactor.monotonic() + max(
-        chunk_interval(gate, mm) + chunk_dwell(gate),
-        gate._scan_poll_interval)
 
 
 def sync_spoolman_before_scan(gate):
@@ -1171,33 +1128,20 @@ def start(gate, max_mm=None, shared_fallback=False):
         gate._scan_step_event,
         gate.reactor.monotonic())
     if gate._debug >= 3:
-        if getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous':
-            logger.info(
-                "[%s]: gate %d continuous scan mode started — "
-                "homing_max=%.1fmm speed=%.1fmm/s accel=%.1fmm/s^2 "
-                "gap=%.2fs",
-                gate._name, gate._gate,
-                gate._scan_max_mm,
-                gate._scan_continuous_speed, gate._scan_continuous_accel,
-                gate._scan_continuous_poll_interval)
-            return
         logger.info(
-            "[%s]: gate %d scan mode started — "
-            "homing_max=%.1fmm speed=%.1fmm/s "
-            "reads_per_position=%d poll=%.2fs",
-            gate._name, gate._gate,
-            gate._scan_max_mm, get_speed(gate),
-            max(1, int(getattr(gate, '_scan_reads_per_position', 3))),
-            gate._scan_poll_interval)
+            "[%s]: gate %d continuous scan mode started — "
+            "homing_max=%.1fmm speed=%.1fmm/s accel=%.1fmm/s^2 "
+            "gap=%.2fs",
+            gate._name, gate._gate, gate._scan_max_mm,
+            gate._scan_continuous_speed, gate._scan_continuous_accel,
+            gate._scan_continuous_poll_interval)
 
 
 def step_event(gate, eventtime):
-    if getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous':
-        return continuous_step_event(gate, eventtime)
-    return stopped_step_event(gate, eventtime)
+    return continuous_step_event(gate, eventtime)
 
 
-def stopped_step_event(gate, eventtime):
+def decode_retry_step_event(gate, eventtime):
     if not gate._scan_mode:
         return gate.reactor.NEVER
 
@@ -1228,15 +1172,6 @@ def stopped_step_event(gate, eventtime):
         return gate._scan_next_chunk_time
     if retry_poll:
         log_decode_retry_poll_start(gate)
-    elif not decode_retry_exhausted(gate) and now < gate._scan_next_chunk_time:
-        if gate._debug >= 3:
-            logger.info(
-                "[%s]: gate %d waiting %.2fs before next "
-                "stopped-position read at scan position %.1f / %.1fmm",
-                gate._name, gate._gate,
-                gate._scan_next_chunk_time - now,
-                gate._scan_mm_total, gate._scan_max_mm)
-        return gate._scan_next_chunk_time
 
     run_pending_hh_prep(gate)
 
@@ -1256,8 +1191,6 @@ def stopped_step_event(gate, eventtime):
 
     if retry_poll:
         log_decode_retry_poll_result(gate, tag_found)
-    elif not tag_found:
-        gate._scan_position_reads_done += 1
 
     if tag_found:
         if current_tag_decode_incomplete(gate):
@@ -1285,68 +1218,7 @@ def stopped_step_event(gate, eventtime):
         if gate._scan_mm_total < gate._scan_max_mm:
             return now + gate._scan_poll_interval
 
-    reads_per_position = max(
-        1, int(getattr(gate, '_scan_reads_per_position', 3)))
-    if (not decode_retry_in_progress(gate)
-            and gate._scan_position_reads_done < reads_per_position):
-        if gate._debug >= 3:
-            logger.info(
-                "[%s]: gate %d stopped-position read %d/%d "
-                "found no tag at scan position %.1f / %.1fmm",
-                gate._name, gate._gate,
-                gate._scan_position_reads_done, reads_per_position,
-                gate._scan_mm_total, gate._scan_max_mm)
-        return gate.reactor.monotonic() + gate._scan_poll_interval
-
-    if gate._scan_mm_total >= gate._scan_max_mm:
-        if gate._scan_found_event is not None:
-            msg = ("[WARN] NFC[%s]: scan reached max distance after decode retries; "
-                   "using best incomplete result" % gate._name.capitalize())
-            logger.info(msg)
-            gate._console(msg)
-            gate._finish_scan()
-            return gate.reactor.NEVER
-        logger.warning(
-            "[%s]: scan mode: no tag after %.1fmm — rewinding",
-            gate._name, gate._scan_mm_total)
-        gate._rewind_and_exit_scan()
-        return gate.reactor.NEVER
-
-    # NFC virtual homing moves block until the tag trips the lane endstop or
-    # the full scan travel completes.  Use the whole remaining travel here;
-    # the reader is the endstop that stops the move early.
-    if now >= gate._scan_next_chunk_time:
-        remaining = gate._scan_max_mm - gate._scan_mm_total
-        chunk = remaining
-        next_position = gate._scan_mm_total + chunk
-        msg = ("[SCAN] NFC[%s]: homing up to %.1fmm  "
-               "scan position %.1f / %.1fmm"
-               % (gate._name.capitalize(), chunk, next_position,
-                  gate._scan_max_mm))
-        logger.info(msg)
-        gate._console(msg)
-        if gate._debug >= 4:
-            logger.debug("[%s]: run_script %s",
-                         gate._name.capitalize(),
-                         homing_jog_command(gate, chunk))
-        gate._run_jog(chunk)
-        actual = scan_last_jog_actual(gate, chunk)
-        # MMU_TEST_MOVE causes Happy Hare to update its LED state. Re-assert now and
-        # once more after Happy Hare's own LED refresh has had time to land.
-        effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
-        _led_effect(gate, effect_name)
-        _schedule_led_reassert(gate, effect_name)
-        gate._scan_mm_total += max(0.0, actual)
-        gate._scan_position_reads_done = 0
-        gate._scan_next_chunk_time = (
-            gate.reactor.monotonic() + gate._scan_poll_interval)
-        logger.info(
-            "[%s]: homing move completed %.1fmm requested %.1fmm  "
-            "scan position %.1f / %.1fmm",
-            gate._name.capitalize(), actual, chunk,
-            gate._scan_mm_total, gate._scan_max_mm)
-
-    return gate._scan_next_chunk_time
+    return now + gate._scan_continuous_poll_interval
 
 
 def continuous_step_event(gate, eventtime):
@@ -1354,9 +1226,7 @@ def continuous_step_event(gate, eventtime):
         return gate.reactor.NEVER
 
     if (decode_retry_in_progress(gate) or decode_retry_exhausted(gate)):
-        # Rich-tag retry moves intentionally keep the existing stopped/blocking
-        # behavior. Continuous mode changes only the primary forward search jog.
-        return stopped_step_event(gate, eventtime)
+        return decode_retry_step_event(gate, eventtime)
 
     if is_printing(gate):
         logger.warning(
@@ -2000,8 +1870,6 @@ def decode_retry_exhausted(gate):
 
 
 def fail_continuous_uid_resolution_after_retries(gate):
-    if getattr(gate, '_scan_motion_mode', 'stopped') != 'continuous':
-        return False
     if getattr(gate, '_scan_decode_retry_mode', None) == 'homing_backtrack':
         return False
     uid = getattr(gate, '_scan_decode_retry_uid', None)
@@ -2218,8 +2086,7 @@ def retry_incomplete_decode(gate, now):
         else:
             reason = "incomplete rich tag read"
 
-    if (getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous'
-            and not getattr(gate, '_scan_continuous_overshoot_backed_up', False)):
+    if not getattr(gate, '_scan_continuous_overshoot_backed_up', False):
         (backup_mm, center_mm, backup_source,
          window_low, window_high, window_hits) = continuous_overshoot_backup_mm(
              gate, uid)
@@ -2256,8 +2123,7 @@ def retry_incomplete_decode(gate, now):
                     backup_source, window_low, window_high, window_hits)
             return True
 
-    if (getattr(gate, '_scan_motion_mode', 'stopped') == 'continuous'
-            and getattr(gate, '_scan_continuous_overshoot_backed_up', False)):
+    if getattr(gate, '_scan_continuous_overshoot_backed_up', False):
         return queue_decode_retry_move(gate, now, uid, reason, max_attempts, retry_mm)
 
     move = 0.0

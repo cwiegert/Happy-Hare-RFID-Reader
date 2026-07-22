@@ -130,14 +130,6 @@ def _gcmd_get_any(gcmd, names, default=None):
     return default
 
 
-def _get_scan_motion_mode(config, default='continuous'):
-    mode = str(config.get('scan_motion_mode', default) or '').strip().lower()
-    if mode not in ('stopped', 'continuous'):
-        raise config.error(
-            "scan_motion_mode must be 'stopped' or 'continuous'")
-    return mode
-
-
 def _normalise_command_uid(uid):
     uid_norm = SpoolmanClient._normalise_uid(str(uid or ''))
     if not uid_norm:
@@ -820,8 +812,8 @@ class NFCGateDefaults:
         self.i2c_address        = config.getint('i2c_address', 0x24,
                                                  minval=0, maxval=127)
         self.i2c_bus            = config.get('i2c_bus', None)
-        self.scan_jog_mm        = config.getfloat('scan_jog_mm', 50.0,
-                                                   minval=1.0, maxval=500.0)
+        # Consume retired stopped-scan settings for config compatibility.
+        config.getfloat('scan_jog_mm', 50.0, minval=1.0, maxval=500.0)
         self.scan_jog_max       = _optional_float_config(
             config, 'scan_jog_max', None, minval=1.0, maxval=5000.0)
         self.scan_rewind_buffer_mm = config.getfloat(
@@ -833,12 +825,9 @@ class NFCGateDefaults:
         self.scan_decode_retry_rounds = config.getint(
             'scan_decode_retry_rounds', 5,
             minval=0, maxval=10)
-        self.scan_reads_per_position = config.getint(
-            'scan_reads_per_position', 3,
-            minval=1, maxval=20)
+        config.getint('scan_reads_per_position', 3, minval=1, maxval=20)
         self.scan_poll_interval = config.getfloat('scan_poll_interval', 0.1,
                                                    minval=0.1, maxval=5.0)
-        self.scan_motion_mode = _get_scan_motion_mode(config, 'continuous')
         self.scan_continuous_step_mm = config.getfloat(
             'scan_continuous_step_mm', 150.0,
             minval=1.0, maxval=500.0)
@@ -851,7 +840,6 @@ class NFCGateDefaults:
         self.scan_continuous_poll_interval = config.getfloat(
             'scan_continuous_poll_interval', 0.05,
             minval=0.01, maxval=5.0)
-        self.scan_enabled         = config.getboolean('scan_enabled', True)
         self.tag_parsing          = config.getboolean('tag_parsing', False)
         self.tag_max_pages        = config.getint('tag_max_pages', 16,
                                                    minval=4, maxval=135)
@@ -998,8 +986,6 @@ class NFCGate:
             self._state = GateState(self._gate, self._absent_threshold)
             self._failed = False
             self._polling = False
-            self._scan_enabled = False
-            self._scan_motion_mode = d.scan_motion_mode if d else 'continuous'
             self._scan_continuous_step_mm = d.scan_continuous_step_mm if d else 150.0
             self._scan_continuous_speed = d.scan_continuous_speed if d else 150.0
             self._scan_continuous_accel = d.scan_continuous_accel if d else 2000.0
@@ -1122,9 +1108,7 @@ class NFCGate:
         self._shared_led_failsafe_timer = self.reactor.register_timer(
             self._shared_led_failsafe_event)
 
-        self._scan_jog_mm   = config.getfloat('scan_jog_mm',
-                                               d.scan_jog_mm if d else 50.0,
-                                               minval=1.0, maxval=500.0)
+        config.getfloat('scan_jog_mm', 50.0, minval=1.0, maxval=500.0)
         self._scan_jog_max = _optional_float_config(
             config, 'scan_jog_max',
             d.scan_jog_max if d else None,
@@ -1141,18 +1125,13 @@ class NFCGate:
             'scan_decode_retry_rounds',
             d.scan_decode_retry_rounds if d else 5,
             minval=0, maxval=10)
-        self._scan_reads_per_position = config.getint(
-            'scan_reads_per_position',
-            d.scan_reads_per_position if d else 3,
-            minval=1, maxval=20)
+        config.getint('scan_reads_per_position', 3, minval=1, maxval=20)
         self._scan_max_mm   = None
         self._mmu_vars_path = None
         self._bowden_lengths = None
         self._scan_poll_interval = config.getfloat('scan_poll_interval',
                                                     d.scan_poll_interval if d else 0.1,
                                                     minval=0.1, maxval=5.0)
-        self._scan_motion_mode = _get_scan_motion_mode(
-            config, d.scan_motion_mode if d else 'continuous')
         self._scan_continuous_step_mm = config.getfloat(
             'scan_continuous_step_mm',
             d.scan_continuous_step_mm if d else 150.0,
@@ -1169,12 +1148,10 @@ class NFCGate:
             'scan_continuous_poll_interval',
             d.scan_continuous_poll_interval if d else 0.05,
             minval=0.01, maxval=5.0)
-        # scan_enabled: forced false for shared (no physical EMU lane for jog).
-        if self._shared:
-            self._scan_enabled = False
-        else:
-            self._scan_enabled = config.getboolean('scan_enabled',
-                                                    d.scan_enabled if d else True)
+        # Automatic scan-jog is exclusively initiated by Happy Hare's
+        # post-preload hook. The former scan_enabled polling trigger was
+        # removed after its deprecation window.
+        self._debug_poll_trigger = False
         self._tag_parsing          = config.getboolean('tag_parsing',
                                                         d.tag_parsing if d else False)
         self._tag_max_pages        = config.getint('tag_max_pages',
@@ -1242,7 +1219,7 @@ class NFCGate:
         self._scan_deferred_notified = False  # True after first console msg for this deferral
 
         # ── Shared reader config and state ───────────────────────────────────
-        # (_shared, _gate, _scan_enabled already set above)
+        # (_shared and _gate already set above)
         if self._shared:
             self._shared_pending_timeout = 60.0  # overwritten at connect from [mmu] pending_spool_id_timeout
             self._shared_read_timeout = config.getfloat(
@@ -2424,7 +2401,7 @@ class NFCGate:
         # When gate is empty (curr==0) skip the I2C read entirely.
         # On 0 -> >=1 transition with Happy Hare idle and not printing, enter scan mode.
         # A -1 -> >=1 transition is Happy Hare resolving an unknown state, not a new load.
-        if self._scan_enabled:
+        if self._debug_poll_trigger:
             hh = self._read_hh_status(eventtime)
             if hh.present and self._gate < hh.gate_count:
                 curr = hh.status
@@ -3019,9 +2996,6 @@ class NFCGate:
 
     def _scan_chunk_interval(self, mm):
         return scan_jog.chunk_interval(self, mm)
-
-    def _scan_next_event_time(self, mm):
-        return scan_jog.next_event_time(self, mm)
 
     def _resume_poll_after_rewind(self):
         return scan_jog.resume_poll_after_rewind(self)

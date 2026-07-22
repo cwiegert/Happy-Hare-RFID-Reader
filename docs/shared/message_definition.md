@@ -105,12 +105,10 @@ JOG_SCAN=1` or by the automatic scan-jog trigger.
 | Another gate scanning | `[WARN] NFC[laneN]: gate <n> is already scanning — only one gate may scan at a time` | `WARNING  [WARN] NFC[laneN]: gate <n> is already scanning — only one gate may scan at a time` |
 | Same gate already scanning | `[WARN] NFC[laneN]: scan-jog already in progress for this gate` | `WARNING  [WARN] NFC[laneN]: scan-jog already in progress for this gate` |
 | Preflight failed | `[WARN] NFC[laneN]: scan-jog not available while <reason>` | `WARNING  [WARN] NFC[laneN]: scan-jog not available while <reason>` |
-| Stopped scan-jog started | `[SCAN] NFC[laneN]: stopped scan-jog started for gate <n>` | Same message at `INFO`; debug logs include the stopped-mode chunk/substep/read settings |
 | Continuous scan-jog started | `[SCAN] NFC[laneN]: continuous scan-jog started for gate <n>` | Same message at `INFO`; debug logs include the continuous-mode step/speed/accel/poll settings |
 | Auto scan-jog waiting | `[SCAN] NFC[<n>]: scan-jog waiting — gate <other> is already scanning` | `INFO     nfc_gate: [laneN] [SCAN] NFC[<n>]: scan-jog waiting — gate <other> is already scanning` |
 | Auto scan-jog unavailable | `[WARN] NFC[<n>]: scan-jog not available while <reason>` | `WARNING  nfc_gate: [laneN] NFC[<n>]: scan-jog not available while <reason>` |
 | Auto scan-jog started | `[SCAN] NFC[<n>]: starting scan-jog (max=<mm>mm  poll=<seconds>s)` | `WARNING  nfc_gate: [laneN] [SCAN] NFC[<n>]: starting scan-jog (max=<mm>mm  poll=<seconds>s)` |
-| Stopped move step queued | `[SCAN] NFC[<n>]: moving <mm>mm  scan position <mm> / <mm>mm` | `INFO     [SCAN] NFC[<n>]: moving <mm>mm  scan position <mm> / <mm>mm` and `INFO     NFC[<n>]: move queued <mm>mm  scan position <mm> / <mm>mm` |
 | Continuous move step queued | `[SCAN] NFC[<n>]: continuous <source> <mm>mm  scan position <mm> / <mm>mm` | Same message at `INFO`, followed by `INFO     [<n>]: continuous <source> queued <mm>mm ...`; `<source>` is `Direct Move` for the direct MMU-toolhead path or `MMU_TEST_MOVE` for the G-code fallback |
 | Scan poll failed | `[ERROR] NFC[<n>]: scan poll failed` | `ERROR    [ERROR] NFC[<n>]: scan poll failed` |
 | Decode retry queued | `[WARN] NFC[<n>]: tag decode incomplete; retry <try>/<max> after <mm>mm jog` | `INFO     [WARN] NFC[<n>]: tag decode incomplete; retry <try>/<max> after <mm>mm jog (uid=<uid> reason=<reason>)` |

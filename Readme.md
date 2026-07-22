@@ -244,12 +244,8 @@ These are the defaults shipped in `config/nfc_reader.cfg`:
 | `startup_polling` | `-1` | Lane polling is manual by default; post-preload scan-jog does not need it |
 | `poll_interval` | `10` | Per-lane background poll interval in seconds |
 | `absent_threshold` | `3` | Missed polls before a removal event |
-| `scan_enabled` | `False` | Disables automatic gate-status scan-jog trigger; manual/hook `JOG_SCAN` still works |
-| `scan_jog_mm` | `150.0` | Logical scan chunk divided into three stopped-position substeps |
 | `scan_jog_max` | unset | Optional fixed scan-jog travel limit; leave unset to use the lane Bowden length |
-| `scan_reads_per_position` | `1` | Reads per stopped scan position |
 | `scan_poll_interval` | `0.25` | Read spacing during scan-jog and shared-reader polling cadence |
-| `scan_motion_mode` | `continuous` | `continuous` homes the forward search against the lane's virtual NFC endstop, stopping the instant the tag is detected; `stopped` keeps blocking substep reads |
 | `scan_continuous_step_mm` | `150.0` | Continuous-mode forward chunk size. Rich reads use the observed UID hit-window center, so this no longer needs to be kept small for rich-tag positioning |
 | `scan_continuous_speed` | `200.0` | Continuous-mode gear move speed |
 | `scan_continuous_accel` | `2000.0` | Continuous-mode gear move acceleration |
@@ -257,11 +253,10 @@ These are the defaults shipped in `config/nfc_reader.cfg`:
 | `debug` | `2` | Warnings and errors in `nfc_reader.log` |
 | `console_output` | `False` | Keep routine NFC logs out of the console |
 
-To try continuous scan-jog:
+Continuous scan-jog uses these settings:
 
 ```ini
 [nfc_gate]
-scan_motion_mode: continuous
 scan_continuous_step_mm: 150.0
 scan_continuous_speed: 200.0
 scan_continuous_accel: 2000.0
@@ -270,7 +265,7 @@ scan_continuous_poll_interval: 0.05
 
 Continuous mode preserves the existing tag-found flow: the read-light effect
 plays for about 0.1 second, then NFC rewinds and dispatches the cached tag/spool
-action just like stopped mode.
+action through the standard scan completion path.
 If a UID is found during motion, continuous mode waits for the current chunk to
 finish and checks Spoolman first. If rich tag parsing is still needed, NFC
 recenters to the observed UID hit-window center before running rich parsing and

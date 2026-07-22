@@ -132,7 +132,7 @@ serve V3, V4, and multi-unit V4 layouts without relying on `laneN` naming.
 ### Scan loop
 
 ```
-_scan_step_event  (stopped mode)
+_scan_step_event
   └─ print started?  →  rewind and exit
   └─ homing move for the remaining scan distance, ENDSTOP=nfc_lane<N>
        (stops early the instant the virtual endstop trips)
@@ -146,21 +146,12 @@ _scan_step_event  (stopped mode)
 
 `_poll()` during a scan step is identical to a normal poll — I2C read, Spoolman lookup, `GateState.process_read`, macro dispatch. The only difference is that `GateState.miss_count` does not increment on a no-read during scan (a blank read while the spool rotates is not an absence event).
 
-`scan_motion_mode: continuous` is the default. It changes only how NFC reacts
-while the homing move is in flight — tag-found actions, the 0.1 second
-read-light hold, rewind, and completion logic are identical in both modes.
-
-`scan_motion_mode: stopped` is the alternative: it waits for the homing move
-to finish (or fail to trigger, at which point NFC rewinds with no tag found),
-then reads once. Use this for marginal reader or tag alignment where the
-in-flight continuous probing below misses the tag.
-
-Continuous mode additionally polls the reader *while* the homing move is
+Scan-jog polls the reader *while* the homing move is
 still moving, building a UID hit-window (the mm range where the UID was
 observed) used later to recenter before rich tag parsing:
 
 ```
-_scan_step_event  (continuous mode)
+_scan_step_event  (continuous scan)
   └─ print started? → rewind and exit
   └─ homing move for the remaining scan distance, ENDSTOP=nfc_lane<N> (in flight)
        └─ UID found while still moving? → keep probing, record hit-window, wait for move to finish

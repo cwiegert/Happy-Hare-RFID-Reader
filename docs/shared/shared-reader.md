@@ -219,7 +219,7 @@ force_spool_id:         true
 | `shared_missed_limit` | `3` | Consecutive unresolvable reads before a console error advises `MMU_PRELOAD`. Minimum 1. |
 | `force_spool_id` | `true` | Show a blocking-style `[ERROR]` advisory when no spool is staged. |
 
-`mmu_gate` and `scan_enabled` are set internally - do not add them. Only one enabled shared reader may be configured. All Spoolman connection settings and logging settings are inherited from the base `[nfc_gate]` section.
+`mmu_gate` is set internally - do not add it. Only one enabled shared reader may be configured. All Spoolman connection settings and logging settings are inherited from the base `[nfc_gate]` section.
 
 `MMU_SET_LED DURATION=` is used carefully. In Happy Hare, passing `DURATION` sets a per-unit pending-update flag; while that flag is active, later LED effect calls for the same unit are ignored until the timer restores the default LEDs. Because of that, normal shared read, staged-ready, and pending-warning feedback do **not** pass `DURATION`; they must remain interruptible by ready, unresolved, warning, preload start, loaded, cancel, replace, and timeout transitions. Duration is kept for standalone effects such as `NFC_SHARED LED_TEST=1`, unresolved feedback, and bypass-ready confirmation.
 

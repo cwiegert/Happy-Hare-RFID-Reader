@@ -168,8 +168,7 @@ class SpoolmanClient:
         Moonraker exposes its config through /server/config.  In current
         Moonraker installs, the [spoolman] section normally appears at:
             result.config.spoolman.server
-        The fallback keys are intentionally conservative to tolerate older or
-        renamed fields without treating arbitrary values as URLs.
+        Only the canonical current Moonraker [spoolman].server field is used.
         """
         url = '{}/server/config'.format(self._moonraker_url)
         if self._debug >= 3:
@@ -182,14 +181,13 @@ class SpoolmanClient:
             return None
 
         config = data.get('result', {}).get('config', {})
-        section = config.get('spoolman') or config.get('spoolman_proxy') or {}
-        for key in ('server', 'url', 'spoolman_url'):
-            value = section.get(key)
-            if value:
-                discovered = self._normalise_url(value)
-                logger.info("spoolman: Moonraker discovery found %s=%s",
-                            key, discovered)
-                return discovered
+        section = config.get('spoolman') or {}
+        value = section.get('server')
+        if value:
+            discovered = self._normalise_url(value)
+            logger.info("spoolman: Moonraker discovery found server=%s",
+                        discovered)
+            return discovered
 
         logger.warning("spoolman: Moonraker config has no [spoolman] server/url")
         return None

@@ -25,6 +25,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - ♻️ **`nfc_macros.cfg` is read-only** — the protected Happy Hare interface is
   linked to the shipped file and existing local copies are backed up once.
 
+### Installer Robustness and Restart Guidance
+
+- 🐛 **Fixed a fresh install aborting mid-write on a missing `moonraker.conf` or
+  `printer.cfg`** — `ensure_printer_includes` and `ensure_moonraker_updater` were
+  called bare under `set -e`, so a missing file aborted the run *after* config
+  was written but *before* the `.install-state` marker, leaving an unrecoverable
+  partial install. Both now degrade to a `WARNING` with a recovery path, and
+  `write_install_state` always runs so the install can be completed later with
+  `install.sh -r`.
+- 🐛 **Fixed `--reconfigure` crashing when `~/printer_data/config/nfc` does not
+  exist** — `backup_nfc_config_for_reconfigure` ran a bare `cp -a` that
+  stat-failed on a missing `nfc/` directory. The backup is now best-effort: it
+  skips cleanly when there is nothing to back up and continues into the wizard.
+- ♻️ **Install and repair now say which services to restart** — because the
+  Moonraker `[update_manager]` block only activates on a Moonraker restart,
+  install now prompts `sudo systemctl restart moonraker`, and `--repair` reports
+  Klipper and/or Moonraker restarts, limited to the services whose files it
+  actually changed (`RESTART_KLIPPER_NEEDED` / `RESTART_MOONRAKER_NEEDED`).
+- 🐛 **Fixed the "(first install only)" next-steps header printing during
+  `--reconfigure`** — the reconfigure path now shows an accurate
+  "Next steps after reconfiguration" heading.
+
 ## [1.3.1] - 07/17/2026 - WoodWorker
 
 ### Scan-Jog Rewind LED Release Cleanup

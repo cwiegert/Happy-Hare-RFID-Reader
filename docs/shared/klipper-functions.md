@@ -348,20 +348,14 @@ exactly at the tag instead of jogging a fixed distance and polling
 afterward. See [`[mmu_nfc_endstop laneN]`](configuration.md#mmu_nfc_endstop-lanen)
 for the config keys.
 
-Scan-jog supports two motion modes. Both home against the virtual endstop for
-the forward search — the difference is whether NFC also polls the reader
-while that homing move is still in flight:
-
-| Mode | Config | Behavior |
-|---|---|---|
-| Continuous | `scan_motion_mode: continuous` | **Default.** Polls NFC every `scan_continuous_poll_interval` while the homing move is still in flight, recording a UID hit-window used to recenter before rich tag parsing. If a tag is found during motion, the homing move is allowed to finish before the existing 0.1 second read-light hold, rewind, and completion logic run. |
-| Stopped | `scan_motion_mode: stopped` | Waits for the homing move to finish (or fail to trigger, meaning no tag was found), then reads once at that position. `scan_reads_per_position` and `scan_poll_interval` control repeat reads at that stopped position. More reliable for marginal reader or tag alignment at the cost of scan speed, since there is no in-flight UID hit-window to recenter from before a rich read. |
+Scan-jog uses one continuous virtual-endstop motion path. It polls NFC every
+`scan_continuous_poll_interval` while the homing move is in flight and records
+a UID hit-window used to recenter before rich tag parsing.
 
 Default continuous scan settings:
 
 ```ini
 [nfc_gate]
-scan_motion_mode: continuous
 scan_continuous_step_mm: 150.0
 scan_continuous_speed: 200.0
 scan_continuous_accel: 2000.0
@@ -414,7 +408,6 @@ Recommended NFC config when using the hook — disables gate-status polling so H
 ```ini
 [nfc_gate]
 startup_polling: 0
-scan_enabled:    False
 ```
 
 **Preconditions** (the command checks all of these and reports a plain-language error if any fail):
@@ -435,7 +428,7 @@ Do not add `SOURCE=AUTO` to a manually typed `JOG_SCAN=1`; it exists only to
 identify the trusted hook call, not to bypass the busy check generally.
 
 **When to use:**
-- Filament was loaded manually and the automatic trigger didn't fire (e.g. `scan_enabled: False`, or the 0→1 edge was missed)
+- Filament was loaded manually and the Happy Hare post-preload hook did not run
 - Retrying a scan after a failed automatic attempt
 - Testing scan-jog behaviour without physically reloading filament
 

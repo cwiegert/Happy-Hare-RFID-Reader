@@ -694,8 +694,6 @@ def capture_mifare_metadata(gate, tag, sector_keys,
 # ── Tag read entry point ──────────────────────────────────────────────────────
 
 def _target_scan_timeout(gate):
-    if getattr(gate, '_scan_motion_mode', 'stopped') != 'continuous':
-        return None
     if (getattr(gate, '_scan_continuous_pending_uid', None) is None
             and getattr(gate, '_scan_decode_retry_uid', None) is None):
         return None

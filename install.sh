@@ -42,7 +42,6 @@ NFC_READER_CFG="${NFC_CONFIG_DIR}/nfc_reader.cfg"
 NFC_MACROS_CFG="${NFC_CONFIG_DIR}/nfc_macros.cfg"
 NFC_READER_HW_CFG="${NFC_CONFIG_DIR}/nfc_reader_hw.cfg"
 NFC_READER_SHARED_CFG="${NFC_CONFIG_DIR}/nfc_reader_shared.cfg"
-NFC_SHARED_READER_CFG="${NFC_CONFIG_DIR}/nfc_shared_reader.cfg"
 INSTALL_STATE_FILE="${NFC_CONFIG_DIR}/.install-state"
 INSTALL_SCHEMA="1"
 MMU_HW_CFG="${PRINTER_CONFIG}/mmu/base/mmu_hardware.cfg"
@@ -196,7 +195,7 @@ install_managed_macros() {
         rm "${target}"
         echo "  [replace] old nfc_macros.cfg link (${current})"
     elif [ -e "${target}" ]; then
-        backup_base="${target}.pre-read-only-$(date +%Y%m%d_%H%M%S)"
+        backup_base="${target}.pre-managed-$(date +%Y%m%d_%H%M%S)"
         backup_path="$(next_available_path "${backup_base}")"
         mv "${target}" "${backup_path}"
         echo "  [backup]  existing nfc_macros.cfg -> ${backup_path}"
@@ -1149,7 +1148,7 @@ printer_cfg = sys.argv[1]
 lane_cfg = sys.argv[2]
 shared_paths = sys.argv[3:]
 include_re = re.compile(
-    r'^\s*\[include\s+nfc/(?:nfc_reader_shared|nfc_shared_reader)\.cfg\]\s*$',
+    r'^\s*\[include\s+nfc/nfc_reader_shared\.cfg\]\s*$',
     re.M)
 section_re = re.compile(r'^\[nfc_gate shared\]\s*$', re.M)
 
@@ -1191,7 +1190,7 @@ installed_layout() {
                     "${PRINTER_CFG}"; then
                     lane_include=yes
                 fi
-                if grep -Eq '^[[:space:]]*\[include[[:space:]]+nfc/(nfc_reader_shared|nfc_shared_reader)\.cfg\][[:space:]]*$' \
+                if grep -Eq '^[[:space:]]*\[include[[:space:]]+nfc/nfc_reader_shared\.cfg\][[:space:]]*$' \
                     "${PRINTER_CFG}"; then
                     shared_include=yes
                 fi
@@ -1201,7 +1200,7 @@ installed_layout() {
                 return 0
             fi
             detect_reader_type "${PRINTER_CFG}" "${NFC_READER_HW_CFG}" \
-                "${NFC_READER_SHARED_CFG}" "${NFC_SHARED_READER_CFG}"
+                "${NFC_READER_SHARED_CFG}"
             ;;
     esac
 }
@@ -1299,7 +1298,6 @@ all_nfc = {
     '[include nfc/nfc_macros.cfg]',
     '[include nfc/nfc_reader_hw.cfg]',
     '[include nfc/nfc_reader_shared.cfg]',
-    '[include nfc/nfc_shared_reader.cfg]',
 }
 with open(path) as f:
     lines = f.readlines()
@@ -1350,12 +1348,7 @@ values = {}
 active = False
 canonical_count = 0
 legacy_found = False
-known_sections = {
-    '[update_manager Happy-Hare-RFID-Reader]',
-    '[update_manager Happy-Hare-rfid-reader]',
-    '[update_manager happy_hare_rfid_reader]',
-    '[update_manager emu_nfc_reader]',
-}
+known_sections = {'[update_manager Happy-Hare-RFID-Reader]'}
 with open(path) as f:
     for line in f:
         stripped = line.strip()
@@ -1394,12 +1387,7 @@ import shutil
 import sys
 
 path, repo, origin = sys.argv[1:]
-sections = {
-    '[update_manager Happy-Hare-RFID-Reader]',
-    '[update_manager Happy-Hare-rfid-reader]',
-    '[update_manager happy_hare_rfid_reader]',
-    '[update_manager emu_nfc_reader]',
-}
+sections = {'[update_manager Happy-Hare-RFID-Reader]'}
 with open(path) as f:
     lines = f.readlines()
 
@@ -1546,60 +1534,6 @@ repair_installation() {
     fi
     echo ""
     echo "Future updates are installed from Moonraker's web interface."
-}
-
-detect_shared_mcu() {
-    local shared_cfg="$1"
-    python3 - "${shared_cfg}" <<'PYEOF'
-import sys
-
-try:
-    text = open(sys.argv[1], 'r').read()
-except FileNotFoundError:
-    print('mmu')
-    raise SystemExit
-
-in_shared = False
-for line in text.splitlines():
-    stripped = line.strip()
-    if stripped == '[nfc_gate shared]':
-        in_shared = True
-        continue
-    if in_shared:
-        if stripped.startswith('['):
-            break
-        if stripped.startswith('i2c_mcu:'):
-            print(stripped.split(':', 1)[1].strip())
-            raise SystemExit
-print('mmu')
-PYEOF
-}
-
-detect_shared_i2c_bus() {
-    local shared_cfg="$1"
-    python3 - "${shared_cfg}" <<'PYEOF'
-import sys
-
-try:
-    text = open(sys.argv[1], 'r').read()
-except FileNotFoundError:
-    print('i2c1')
-    raise SystemExit
-
-in_shared = False
-for line in text.splitlines():
-    stripped = line.strip()
-    if stripped == '[nfc_gate shared]':
-        in_shared = True
-        continue
-    if in_shared:
-        if stripped.startswith('['):
-            break
-        if stripped.startswith('i2c_bus:'):
-            print(stripped.split(':', 1)[1].strip())
-            raise SystemExit
-print('i2c1')
-PYEOF
 }
 
 detect_shared_config_value() {
@@ -1864,94 +1798,6 @@ prompt_i2c_bus_select() {
     fi
 }
 
-
-write_shared_config() {
-    local file_path="$1"
-    local i2c_mcu="$2"
-    local i2c_bus="$3"
-    local startup_polling_val="$4"
-
-    python3 - "${file_path}" "${i2c_mcu}" "${i2c_bus}" "${startup_polling_val}" <<'PYEOF'
-import sys
-
-path, i2c_mcu, i2c_bus, startup_polling = sys.argv[1:5]
-
-with open(path, 'w') as f:
-    f.write("# =============================================================================\n")
-    f.write("# =================== EMU NFC GATE READER - SHARED NFC HARDWARE ================\n")
-    f.write("# =============================================================================\n")
-    f.write("# Single reader mounted inside the MMU body.  Tap a tagged spool before\n")
-    f.write("# loading; NFC stages the spool ID for the next pregate preload automatically.\n")
-    f.write("#\n")
-    f.write("# This file is separate from nfc_reader_hw.cfg so that the shared reader\n")
-    f.write("# can be added to an existing per-lane install without editing any existing\n")
-    f.write("# config file — just add the include below and fill in the hardware values.\n")
-    f.write("#\n")
-    f.write("# Pure shared-reader install — include this instead of nfc_reader_hw.cfg:\n")
-    f.write("#   [include nfc/nfc_reader.cfg]\n")
-    f.write("#   [include nfc/nfc_macros.cfg]\n")
-    f.write("#   [include nfc/nfc_reader_shared.cfg]\n")
-    f.write("#\n")
-    f.write("# Hybrid install (per-lane readers + shared reader) — include both:\n")
-    f.write("#   [include nfc/nfc_reader.cfg]\n")
-    f.write("#   [include nfc/nfc_macros.cfg]\n")
-    f.write("#   [include nfc/nfc_reader_hw.cfg]\n")
-    f.write("#   [include nfc/nfc_reader_shared.cfg]\n")
-    f.write("#\n")
-    f.write("# [WARN] After updating Klipper, rebuild and flash the MCU hosting the NFC reader\n")
-    f.write(f"#    ({i2c_mcu}).  The MCU must be on the same Klipper version as the host.\n")
-    f.write("# =============================================================================\n\n")
-    f.write("[nfc_gate shared]\n")
-    f.write("enabled:                True\n")
-    f.write("# reader_type:            pn532  # PN7160: pn7160; SPI: rc522 or pn5180\n")
-    f.write("# i2c_address:            36     # PN7160 valid addresses are 40-43 (0x28-0x2B)\n")
-    f.write(f"i2c_mcu:                {i2c_mcu}\n")
-    f.write(f"i2c_bus:                {i2c_bus}\n")
-    f.write(f"shared:                 true\n")
-    f.write(f"startup_polling:        {startup_polling}\n")
-    f.write("# LED effect pairs: *_effect is the [mmu_led_effect] name to start;\n")
-    f.write("# *_duration is how many seconds NFC waits before sending STOP=1.\n")
-    f.write("# Example: shared_tag_unresolved_effect + unresolved_effect_duration\n")
-    f.write("# controls which red effect plays and how long NFC lets it run.\n")
-    f.write("# [mmu_led_effect] to flash bright green when a tag is read (defined in nfc_macros.cfg).\n")
-    f.write("shared_tag_read_effect: mmu_RFID_read\n")
-    f.write("read_effect_duration: 4.0\n")
-    f.write("\n")
-    f.write("# [mmu_led_effect] to flash when a tag is read while bypass is selected.\n")
-    f.write("shared_bypass_tag_read_effect: mmu_RFID_bypass_read\n")
-    f.write("bypass_read_effect_duration: 4.0\n")
-    f.write("\n")
-    f.write("# [mmu_led_effect] to flash bright green while a spool is staged and waiting to load.\n")
-    f.write("# Duration is used only when this is the immediate bypass fallback confirmation.\n")
-    f.write("shared_spool_ready_effect: mmu_RFID_ready\n")
-    f.write("ready_effect_duration: 4.0\n")
-    f.write("\n")
-    f.write("# [mmu_led_effect] to flash bright green when a bypass spool resolves.\n")
-    f.write("shared_bypass_spool_ready_effect: mmu_RFID_bypass_ready\n")
-    f.write("bypass_ready_effect_duration: 2.0\n")
-    f.write("\n")
-    f.write("# [mmu_led_effect] to flash bright red 2x when a tag UID does not resolve.\n")
-    f.write("shared_tag_unresolved_effect: mmu_RFID_unresolved\n")
-    f.write("unresolved_effect_duration: 2.0\n")
-    f.write("\n")
-    f.write("# [mmu_led_effect] to run a bright yellow chase while Spoolman creates a missing spool.\n")
-    f.write("shared_auto_create_effect: mmu_RFID_creating\n")
-    f.write("\n")
-    f.write("# NFC uses pending_spool_id_timeout when Happy Hare exposes it in the active\n")
-    f.write("# [mmu] config. Otherwise, the shared-reader pending timeout is 60 s.\n")
-    f.write("\n")
-    f.write("# Seconds polling may run after NFC_SHARED READ=1 without resolving a tag\n")
-    f.write("# before auto-stopping.  No effect for startup_polling or post-PRELOAD_CHECK.\n")
-    f.write("# shared_read_timeout: 120.0\n")
-    f.write("\n")
-    f.write("# Consecutive unresolvable UIDs before the console advises MMU_PRELOAD.\n")
-    f.write("# shared_missed_limit: 3\n")
-    f.write("\n")
-    f.write("# Set to true to block pregate loads entirely when no spool is staged.\n")
-    f.write("force_spool_id: true\n")
-PYEOF
-}
-
 # ── Verify Klipper is present ─────────────────────────────────────────────────
 if [ ! -d "${KLIPPER_EXTRAS}" ]; then
     echo "ERROR: Klipper extras directory not found at ${KLIPPER_EXTRAS}"
@@ -2034,7 +1880,7 @@ prompt_choice HH_VERSION \
 echo ""
 
 # ── Q2: Reader layout ─────────────────────────────────────────────────────────
-DEFAULT_READER_TYPE="$(detect_reader_type "${PRINTER_CFG}" "${NFC_READER_HW_CFG}" "${NFC_READER_SHARED_CFG}" "${NFC_SHARED_READER_CFG}")"
+DEFAULT_READER_TYPE="$(detect_reader_type "${PRINTER_CFG}" "${NFC_READER_HW_CFG}" "${NFC_READER_SHARED_CFG}")"
 echo "2. Reader layout"
 echo "   $(choice_style lane "${DEFAULT_READER_TYPE}")   = per-lane NFC readers, one per EBB42 board"
 echo "   $(choice_style shared "${DEFAULT_READER_TYPE}") = single NFC reader inside the MMU body for staging spools"
@@ -2079,9 +1925,8 @@ if [ "${READER_TYPE}" = "lane" ]; then
     # Keep optional background polling disabled in the generated config.
     STARTUP_POLLING="no"
 
-    prompt_yes_no SCAN_ENABLED \
-        "5. Enable scan-jog when a loaded tag is out of read range?" \
-        "yes"
+    # Automatic scan-jog is driven by the Happy Hare post-preload hook.
+    # The legacy polling edge trigger is reserved for manual debug use.
 
     if [ "${HH_VERSION}" = "v4" ]; then
         LANE_MCU_PREFIX="unit0_gate"
@@ -2144,7 +1989,6 @@ else
     LANE_BUS_LABEL=""
     SCAN_JOG_MAX_MODE="bowden"
     SCAN_JOG_MAX=""
-    SCAN_ENABLED="no"   # always disabled for shared reader
 
     DEFAULT_SHARED_READER_TYPE="$(detect_shared_config_value "${NFC_READER_SHARED_CFG}" "reader_type" "pn532")"
     echo "2. Shared reader hardware"
@@ -2189,11 +2033,13 @@ else
     PN5180_RESET_PIN=""
     PN5180_BUSY_PIN=""
     if [ "${SHARED_READER_TYPE}" = "pn532" ] || [ "${SHARED_READER_TYPE}" = "pn7160" ]; then
-        DEFAULT_I2C_MCU="$(detect_shared_mcu "${NFC_READER_SHARED_CFG}")"
+        DEFAULT_I2C_MCU="$(detect_shared_config_value \
+            "${NFC_READER_SHARED_CFG}" "i2c_mcu" "mmu")"
         prompt_with_default I2C_MCU \
             "5. Klipper MCU the shared NFC reader is wired to (must match a [mcu ...] section)" \
             "${DEFAULT_I2C_MCU}"
-        DEFAULT_I2C_BUS="$(detect_shared_i2c_bus "${NFC_READER_SHARED_CFG}")"
+        DEFAULT_I2C_BUS="$(detect_shared_config_value \
+            "${NFC_READER_SHARED_CFG}" "i2c_bus" "i2c1")"
         prompt_i2c_bus_select I2C_BUS "${I2C_MCU}" "${PRINTER_CONFIG}" "${DEFAULT_I2C_BUS}"
         if [ "${SHARED_READER_TYPE}" = "pn7160" ]; then
             I2C_ADDRESS="$(detect_shared_config_value "${NFC_READER_SHARED_CFG}" "i2c_address" "40")"
@@ -2303,7 +2149,7 @@ else
         echo "  Lane MCU prefix:   ${LANE_MCU_PREFIX}  (${LANE_MCU_PREFIX}0, ${LANE_MCU_PREFIX}1, ...)"
     fi
     echo "  Lane I2C bus:      ${LANE_I2C_BUS} (${LANE_BUS_LABEL})"
-    echo "  Scan-jog:          ${SCAN_ENABLED}"
+    echo "  Scan-jog trigger:  Happy Hare post-preload hook"
     if [ "${SCAN_JOG_MAX_MODE}" = "fixed" ]; then
         echo "  Scan max travel:   ${SCAN_JOG_MAX}mm (scan_jog_max)"
     else
@@ -2409,41 +2255,29 @@ merge_config() {
     python3 - "${src}" "${dst}" <<'PYEOF' \
         || echo "    WARNING: merge script failed — ${name} left unchanged"
 import sys
-import re
 
 src_path, dst_path = sys.argv[1], sys.argv[2]
 
 
 def parse_sections(text):
-    """Return (preamble_str, [(header_str, body_str), ...]).
-
-    preamble_str — all text before the first [section] line.
-    header_str   — the [section name] line, stripped of trailing whitespace.
-    body_str     — all lines after the header up to (not including) the next
-                   header, as a single string with newlines preserved.
-    """
-    preamble = []
+    """Return Klipper section headers and bodies; ignore file preamble."""
     sections = []
     current_header = None
     current_body = []
-    in_preamble = True
 
     for line in text.splitlines(keepends=True):
-        if re.match(r'^\[', line):
-            if in_preamble:
-                in_preamble = False
-                preamble = current_body[:]
-            elif current_header is not None:
+        if line.startswith('['):
+            if current_header is not None:
                 sections.append((current_header, ''.join(current_body)))
             current_header = line.rstrip('\r\n')
             current_body = []
-        else:
+        elif current_header is not None:
             current_body.append(line)
 
     if current_header is not None:
         sections.append((current_header, ''.join(current_body)))
 
-    return ''.join(preamble), sections
+    return sections
 
 
 with open(src_path) as f:
@@ -2451,8 +2285,8 @@ with open(src_path) as f:
 with open(dst_path) as f:
     dst_text = f.read()
 
-_, src_sections = parse_sections(src_text)
-_, dst_sections = parse_sections(dst_text)
+src_sections = parse_sections(src_text)
+dst_sections = parse_sections(dst_text)
 dst_headers = {h for h, _ in dst_sections}
 
 appended = []
@@ -2515,7 +2349,7 @@ set_config_value "${NFC_READER_CFG}" "nfc_gate" "happy_hare_v4" \
     "$( [ "${HH_VERSION}" = "v4" ] && echo "True" || echo "False" )"
 
 if [ "${READER_TYPE}" = "shared" ]; then
-    # startup_polling and scan_enabled live in [nfc_gate shared], not [nfc_gate]
+    # startup_polling lives in [nfc_gate shared], not [nfc_gate]
     set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "reader_type" "${SHARED_READER_TYPE}"
     if [ "${SHARED_READER_TYPE}" = "pn532" ] || [ "${SHARED_READER_TYPE}" = "pn7160" ]; then
         set_config_value "${NFC_READER_SHARED_CFG}" "nfc_gate shared" "i2c_mcu" "${I2C_MCU}"
@@ -2539,8 +2373,6 @@ else
         "${SCAN_JOG_MAX_MODE}" "${SCAN_JOG_MAX:-480.0}"
     set_config_value "${NFC_READER_CFG}" "nfc_gate" "startup_polling" \
         "$( [ "${STARTUP_POLLING}" = "yes" ] && echo "1" || echo "-1" )"
-    set_config_value "${NFC_READER_CFG}" "nfc_gate" "scan_enabled" \
-        "$( [ "${SCAN_ENABLED}" = "yes" ] && echo "True" || echo "False" )"
     write_lane_config "${NFC_READER_HW_CFG}" "${LANE_COUNT}" "${LANE_MCU_PREFIX}"
     echo "  [notice]   Verifying NFC virtual endstop definitions below each per-lane reader."
     ensure_mmu_nfc_endstops "${NFC_READER_HW_CFG}"
@@ -2658,7 +2490,7 @@ else
     echo "    startup_polling:    ${STARTUP_POLLING}"
 fi
 if [ "${READER_TYPE}" = "lane" ]; then
-    echo "    scan_jog:           ${SCAN_ENABLED}"
+    echo "    scan_jog:           Happy Hare post-preload hook"
 fi
 if [ "${TAG_MODE}" = "rich" ]; then
     echo "    tag_resolution:     rich tag metadata"

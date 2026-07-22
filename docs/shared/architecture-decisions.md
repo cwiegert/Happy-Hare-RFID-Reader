@@ -4,6 +4,21 @@
 
 ---
 
+## Compatibility policy
+
+Compatibility shims have a fixed three-release lifetime:
+
+- Release N: the replacement is canonical; the old form warns.
+- Release N+1: the old form remains accepted but is omitted from templates and documentation.
+- Release N+2: the old form is removed and reports an actionable configuration error.
+
+The current cutover removes the retired scan polling option, stopped motion
+mode, alternate shared-reader filename, alternate Moonraker updater section
+names, and legacy Spoolman discovery aliases. Happy Hare v3/v4 support remains
+where both are still supported installation targets; a compatibility branch is
+not retained merely for historical API spelling.
+
+
 This document captures the design decisions made while building the PN532 I2C path, including the reasoning and trade-offs behind each choice. It is meant to explain *why* the system is structured the way it is — so that future changes can be made with the context that drove the original decisions.
 
 ---

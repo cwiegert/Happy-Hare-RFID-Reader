@@ -217,7 +217,7 @@ def is_printing(gate):
 
 
 def get_speed(gate):
-    """Return gear_short_move_speed from Happy Hare, or 80 mm/s as fallback."""
+    """Return the configured Happy Hare gear speed."""
     mmu = gate.printer.lookup_object('mmu', None)
     if mmu is not None:
         speed = getattr(mmu, 'gear_short_move_speed', None)
@@ -228,7 +228,9 @@ def get_speed(gate):
                     return speed
             except (TypeError, ValueError):
                 pass
-    return 80.0
+    raise RuntimeError(
+        "Happy Hare does not expose gear_short_move_speed; "
+        "update Happy Hare before using scan-jog")
 
 
 def chunk_interval(gate, mm):
@@ -1040,17 +1042,14 @@ def resume_poll_after_rewind(gate):
 def _hh_reset_filament_position(mmu):
     """Reset Happy Hare's raw gear position counter.
 
-    HH v3 names this _initialize_filament_position (single-underscore
-    "private" convention used throughout the v3 mmu.py monolith); HH v4's
-    split-module drive() rewrite renamed it to initialize_filament_position.
-    Try both so this keeps working across HH versions.
+    Current Happy Hare exposes initialize_filament_position as a public API.
     """
-    for name in ('_initialize_filament_position', 'initialize_filament_position'):
-        fn = getattr(mmu, name, None)
-        if fn is not None:
-            fn()
-            return True
-    return False
+    fn = getattr(mmu, 'initialize_filament_position', None)
+    if fn is None:
+        raise RuntimeError(
+            "Happy Hare initialize_filament_position API is unavailable")
+    fn()
+    return True
 
 
 def start(gate, max_mm=None, shared_fallback=False):
@@ -2462,8 +2461,6 @@ def run_direct_homing_jog(gate, mm, speed=None, accel=None):
 
 def run_homing_jog(gate, mm, speed=None, accel=None):
     gate._scan_last_jog_actual_mm = mm
-    cmd = homing_jog_command(gate, mm, speed=speed, accel=accel)
-    before = mmu_gear_position(gate)
     if not gate._scan_gate_selected:
         gate._scan_gate_selected = True
         select_gate_quiet(gate, gate._gate)
@@ -2471,16 +2468,10 @@ def run_homing_jog(gate, mm, speed=None, accel=None):
         effect_name = getattr(gate, '_scan_searching_effect', LED_SEARCHING)
         _led_effect(gate, effect_name)
         _schedule_led_reassert(gate, effect_name)
-    if run_direct_homing_jog(gate, mm, speed=speed, accel=accel):
-        return "homing"
-    start_time = gate.reactor.monotonic()
-    run_hh_script(gate, cmd)
-    gate._scan_last_jog_actual_mm = measured_jog_delta(gate, before, mm)
-    elapsed = nfc_homing_elapsed(
-        gate, max(0.0, gate.reactor.monotonic() - start_time))
-    gate._scan_last_jog_actual_mm = corrected_homing_actual(
-        gate, mm, gate._scan_last_jog_actual_mm, elapsed,
-        speed=speed, accel=accel)
+    if not run_direct_homing_jog(gate, mm, speed=speed, accel=accel):
+        raise RuntimeError(
+            "Happy Hare direct homing API is unavailable; "
+            "update Happy Hare before using scan-jog")
     return "homing"
 
 
@@ -2573,13 +2564,13 @@ def run_continuous_jog(gate, mm):
             gate, mm,
             speed=gate._scan_continuous_speed,
             accel=gate._scan_continuous_accel)
-    cmd = ("MMU_TEST_MOVE MOVE=%.2f SPEED=%.1f ACCEL=%.1f WAIT=0 QUIET=1"
-           % (mm, gate._scan_continuous_speed, gate._scan_continuous_accel))
-    if not gate._scan_gate_selected:
-        gate._scan_gate_selected = True
-        select_gate_quiet(gate, gate._gate)
-    run_hh_script(gate, cmd)
-    return "gcode"
+    if not run_direct_mmu_move(
+            gate, mm, gate._scan_continuous_speed,
+            gate._scan_continuous_accel):
+        raise RuntimeError(
+            "Happy Hare direct motion API is unavailable; "
+            "update Happy Hare before using scan-jog")
+    return "direct"
 
 
 def run_direct_mmu_move(gate, mm, speed=None, accel=None):
@@ -2604,8 +2595,7 @@ def run_direct_continuous_jog(gate, mm):
 
     This avoids the public MMU_TEST_MOVE gcode command for the forward search
     path so the scan timer can continue polling NFC while the chunk is moving.
-    If the installed Happy Hare version does not expose the expected internals,
-    callers fall back to MMU_TEST_MOVE WAIT=0.
+    The current Happy Hare MMU toolhead API is required.
     """
     mmu = gate.printer.lookup_object('mmu', None)
     if mmu is None:
@@ -2737,10 +2727,9 @@ def run_rewind(gate):
     try:
         if fast_rewind > 0.0:
             if not run_direct_mmu_move(gate, -fast_rewind):
-                run_hh_script(
-                    gate,
-                    "_MMU_STEP_MOVE MOVE=%.2f MOTOR=gear ALLOW_BYPASS=1"
-                    % (-fast_rewind))
+                raise RuntimeError(
+                    "Happy Hare direct motion API is unavailable; "
+                    "update Happy Hare before using scan-jog rewind")
     finally:
         _led_release(gate)
     run_hh_script(gate, "_MMU_STEP_UNLOAD_GATE")

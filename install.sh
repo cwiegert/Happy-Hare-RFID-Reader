@@ -33,7 +33,6 @@ set -e
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RFID_READER_REPO_URL="${RFID_READER_REPO_URL:-https://github.com/cwiegert/Happy-Hare-RFID-Reader.git}"
 RFID_READER_INSTALL_DIR="${RFID_READER_INSTALL_DIR:-${HOME}/rfid-reader}"
-RFID_READER_LEGACY_DIR="${RFID_READER_LEGACY_DIR:-${HOME}/emu-nfc-reader}"
 KLIPPER_EXTRAS="${RFID_READER_KLIPPER_EXTRAS:-${HOME}/klipper/klippy/extras}"
 PRINTER_CONFIG="${RFID_READER_PRINTER_CONFIG:-${HOME}/printer_data/config}"
 PRINTER_CFG="${PRINTER_CONFIG}/printer.cfg"
@@ -224,98 +223,6 @@ backup_nfc_config_for_reconfigure() {
     else
         echo "  [warn]    could not back up ${NFC_CONFIG_DIR}; continuing without a backup"
     fi
-}
-
-backup_nfc_config_for_cutover() {
-    LEGACY_NFC_BACKUP=""
-    if [ ! -e "${NFC_CONFIG_DIR}" ]; then
-        echo "  [skip]   no NFC config directory found at ${NFC_CONFIG_DIR}"
-        return 0
-    fi
-    if [ ! -d "${NFC_CONFIG_DIR}" ]; then
-        echo "  [skip]   ${NFC_CONFIG_DIR} exists but is not a directory; leaving it untouched"
-        return 0
-    fi
-    local backup_base backup_dir
-    backup_base="${PRINTER_CONFIG}/nfc_beta_cutover_$(date +%Y%m%d_%H%M%S)"
-    backup_dir="$(next_available_path "${backup_base}")"
-    mv "${NFC_CONFIG_DIR}" "${backup_dir}"
-    LEGACY_NFC_BACKUP="${backup_dir}"
-    echo "  [backup] NFC config saved to ${LEGACY_NFC_BACKUP}"
-}
-
-remove_moonraker_section() {
-    local conf_path="$1"
-    local section="$2"
-    [ -f "${conf_path}" ] || return 1
-    python3 - "${conf_path}" "${section}" <<'PYEOF'
-import sys
-
-path, section = sys.argv[1:3]
-with open(path) as f:
-    lines = f.readlines()
-
-out = []
-skip = False
-changed = False
-for line in lines:
-    stripped = line.strip()
-    if stripped == section:
-        skip = True
-        changed = True
-        continue
-    if skip and stripped.startswith('[') and stripped.endswith(']'):
-        skip = False
-    if not skip:
-        out.append(line)
-
-if changed:
-    while out and out[-1].strip() == '':
-        out.pop()
-    out.append('\n')
-    with open(path, 'w') as f:
-        f.writelines(out)
-
-sys.exit(0 if changed else 1)
-PYEOF
-}
-
-backup_and_remove_legacy_moonraker_section() {
-    local section="${1:-[update_manager emu_nfc_reader]}"
-    LEGACY_MOONRAKER_BACKUP=""
-    if [ ! -f "${MOONRAKER_CONF}" ]; then
-        echo "  [skip]   moonraker.conf not found at ${MOONRAKER_CONF}"
-        return 0
-    fi
-    if ! grep -qF "${section}" "${MOONRAKER_CONF}"; then
-        return 0
-    fi
-    local backup_base backup_file
-    backup_base="${MOONRAKER_CONF}.nfc_beta_cutover_$(date +%Y%m%d_%H%M%S)"
-    backup_file="$(next_available_path "${backup_base}")"
-    cp "${MOONRAKER_CONF}" "${backup_file}"
-    LEGACY_MOONRAKER_BACKUP="${backup_file}"
-    if remove_moonraker_section "${MOONRAKER_CONF}" "${section}"; then
-        echo "  [removed] legacy ${section} from ${MOONRAKER_CONF}"
-        echo "  [backup]  moonraker.conf saved to ${LEGACY_MOONRAKER_BACKUP}"
-    else
-        echo "  WARNING: failed to remove legacy ${section}; backup saved to ${LEGACY_MOONRAKER_BACKUP}"
-    fi
-}
-
-remove_legacy_klipper_symlinks() {
-    local target
-    for target in \
-        "${KLIPPER_EXTRAS}/nfc_gate.py" \
-        "${KLIPPER_EXTRAS}/mmu_nfc_endstop.py" \
-        "${KLIPPER_EXTRAS}/nfc_gates" \
-        "${KLIPPER_EXTRAS}/nfc_gates.py"
-    do
-        if [ -L "${target}" ]; then
-            rm "${target}"
-            echo "  [removed] legacy symlink ${target}"
-        fi
-    done
 }
 
 ensure_rfid_reader_repo() {
@@ -732,7 +639,6 @@ import sys
 
 path, mode, distance = sys.argv[1:4]
 key = 'scan_jog_max'
-old_key = 'jog_scan_distance'
 
 try:
     lines = open(path, 'r').read().splitlines(True)
@@ -766,19 +672,6 @@ for idx in range(section_start + 1, section_end):
     stripped = lines[idx].strip()
     active = stripped.startswith(key + ':')
     commented = stripped.startswith('#' + key + ':')
-    old_active = stripped.startswith(old_key + ':')
-    old_commented = stripped.startswith('#' + old_key + ':')
-    if old_active or old_commented:
-        current = stripped.split(':', 1)[1].strip() if ':' in stripped else distance
-        if not found:
-            found = True
-            if mode == 'fixed':
-                lines[idx] = f'{key}:      {distance}\n'
-            else:
-                lines[idx] = f'#{key}:     {current}\n'
-        else:
-            lines[idx] = ''
-        continue
     if not active and not commented:
         continue
     found = True
@@ -789,10 +682,6 @@ for idx in range(section_start + 1, section_end):
         lines[idx] = f'#{key}:     {current}\n'
 
 if not found and mode == 'fixed':
-    for idx in range(section_start + 1, section_end):
-        if lines[idx].strip().startswith('scan_jog_mm:'):
-            insert_at = idx + 1
-            break
     if insert_at > 0 and lines[insert_at - 1].strip():
         lines.insert(insert_at, '\n')
         insert_at += 1
@@ -1842,7 +1731,6 @@ if [ "${INSTALL_MODE}" = "reconfigure" ]; then
     backup_nfc_config_for_reconfigure
     echo ""
 else
-    handle_legacy_beta_cutover
 
     if installation_present; then
         EXISTING_LAYOUT="$(installed_layout)"
@@ -2440,22 +2328,6 @@ if [ "${MOONRAKER_UNAVAILABLE:-no}" = "yes" ]; then
     echo "  setting up Moonraker, run 'bash install.sh -r' to enable web updates."
 fi
 echo ""
-if [ "${LEGACY_CUTOVER_PERFORMED:-no}" = "yes" ]; then
-    echo "  Legacy beta cutover:"
-    echo "    old repo removed:   ${RFID_READER_LEGACY_DIR}"
-    echo "    fresh repo:         ${RFID_READER_INSTALL_DIR}"
-    if [ -n "${LEGACY_NFC_BACKUP:-}" ]; then
-        echo "    config backup:      ${LEGACY_NFC_BACKUP}"
-    else
-        echo "    config backup:      no previous NFC config directory found"
-    fi
-    if [ -n "${LEGACY_MOONRAKER_BACKUP:-}" ]; then
-        echo "    moonraker backup:   ${LEGACY_MOONRAKER_BACKUP}"
-    else
-        echo "    moonraker backup:   no legacy Moonraker block found"
-    fi
-    echo ""
-fi
 echo "  Selected options:"
     echo "    reader layout:      ${READER_TYPE}"
 if [ "${READER_TYPE}" = "lane" ]; then

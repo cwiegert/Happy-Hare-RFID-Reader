@@ -812,8 +812,6 @@ class NFCGateDefaults:
         self.i2c_address        = config.getint('i2c_address', 0x24,
                                                  minval=0, maxval=127)
         self.i2c_bus            = config.get('i2c_bus', None)
-        # Consume retired stopped-scan settings for config compatibility.
-        config.getfloat('scan_jog_mm', 50.0, minval=1.0, maxval=500.0)
         self.scan_jog_max       = _optional_float_config(
             config, 'scan_jog_max', None, minval=1.0, maxval=5000.0)
         self.scan_rewind_buffer_mm = config.getfloat(
@@ -825,7 +823,6 @@ class NFCGateDefaults:
         self.scan_decode_retry_rounds = config.getint(
             'scan_decode_retry_rounds', 5,
             minval=0, maxval=10)
-        config.getint('scan_reads_per_position', 3, minval=1, maxval=20)
         self.scan_poll_interval = config.getfloat('scan_poll_interval', 0.1,
                                                    minval=0.1, maxval=5.0)
         self.scan_continuous_step_mm = config.getfloat(
@@ -1053,34 +1050,9 @@ class NFCGate:
             # Share the single SpoolmanClient created by NFCGateDefaults.
             self._spoolman = d._spoolman
         else:
-            # No base [nfc_gate] section — create a per-lane client as fallback.
-            spoolman_url      = config.get('spoolman_url', '')
-            moonraker_url     = config.get('moonraker_url', 'http://127.0.0.1:7125')
-            spoolman_rfid_key = config.get('spoolman_rfid_key', 'rfid_tag')
-            spoolman_timeout  = config.getfloat('spoolman_timeout', 5.0,
-                                                 minval=0.5, maxval=30.0)
-            spoolman_cache_ttl = config.getfloat('spoolman_cache_ttl', 300.0,
-                                                  minval=0., maxval=3600.)
-            if _spoolman_url_enabled(spoolman_url):
-                self._spoolman = SpoolmanClient(
-                    spoolman_url,
-                    rfid_key=spoolman_rfid_key,
-                    timeout=spoolman_timeout,
-                    cache_ttl=spoolman_cache_ttl,
-                    debug=self._debug,
-                    moonraker_url=moonraker_url)
-                logger.info("[%s]: Spoolman enabled — url=%s rfid_key=%s",
-                            self._name, spoolman_url, spoolman_rfid_key)
-            else:
-                self._spoolman = None
-                if spoolman_url:
-                    logger.info("[%s]: Spoolman disabled by config",
-                                self._name)
-                else:
-                    logger.warning(
-                        "[%s]: spoolman_url not set — set spoolman_url in "
-                        "[nfc_gate] or [nfc_gate %s]. Use 'auto' to read Moonraker.",
-                        self._name, self._name)
+            # Every reader must inherit the canonical base [nfc_gate] section.
+            raise config.error(
+                "[%s] requires a base [nfc_gate] section" % self._name)
 
         self._reader     = reader_factory.create_reader(
             config, d, self._reader_type, self._gate, self._debug,
@@ -1108,7 +1080,6 @@ class NFCGate:
         self._shared_led_failsafe_timer = self.reactor.register_timer(
             self._shared_led_failsafe_event)
 
-        config.getfloat('scan_jog_mm', 50.0, minval=1.0, maxval=500.0)
         self._scan_jog_max = _optional_float_config(
             config, 'scan_jog_max',
             d.scan_jog_max if d else None,
@@ -1125,7 +1096,6 @@ class NFCGate:
             'scan_decode_retry_rounds',
             d.scan_decode_retry_rounds if d else 5,
             minval=0, maxval=10)
-        config.getint('scan_reads_per_position', 3, minval=1, maxval=20)
         self._scan_max_mm   = None
         self._mmu_vars_path = None
         self._bowden_lengths = None
@@ -1151,7 +1121,6 @@ class NFCGate:
         # Automatic scan-jog is exclusively initiated by Happy Hare's
         # post-preload hook. The former scan_enabled polling trigger was
         # removed after its deprecation window.
-        self._debug_poll_trigger = False
         self._tag_parsing          = config.getboolean('tag_parsing',
                                                         d.tag_parsing if d else False)
         self._tag_max_pages        = config.getint('tag_max_pages',
@@ -1212,11 +1181,7 @@ class NFCGate:
         self._scan_left_neighbor_shifted = False
         self._scan_left_neighbor_identity = None
         self._scan_left_neighbor_attempts = 0
-        self._scan_idle_ready_time = 0.0
         self._scan_found_event     = None  # cached event suppressed during jog; dispatched after rewind
-        self._prev_gate_status     = -1   # -1 = unknown; prevents false trigger on cold start
-        self._scan_pending           = False  # armed on 0→1 edge; fires when Happy Hare confirms idle
-        self._scan_deferred_notified = False  # True after first console msg for this deferral
 
         # ── Shared reader config and state ───────────────────────────────────
         # (_shared and _gate already set above)
@@ -2157,9 +2122,6 @@ class NFCGate:
             self._startup_check_unknown_gate(eventtime)
             seed_time = self.reactor.monotonic()
             self._seed_cache_from_hh(seed_time)
-            hh = self._read_hh_status(seed_time)
-            if hh.present and self._gate < hh.gate_count:
-                self._prev_gate_status = hh.status
         finally:
             if was_polling and not self._failed:
                 self.reactor.update_timer(
@@ -2200,11 +2162,6 @@ class NFCGate:
         if not self._failed and not self._shared:
             seed_time = self.reactor.monotonic()
             self._seed_cache_from_hh(seed_time)
-            # Bootstrap the scan-jog edge detector with the current gate status
-            # so a pre-loaded gate never triggers a scan on the first poll.
-            hh = self._read_hh_status(seed_time)
-            if hh.present and self._gate < hh.gate_count:
-                self._prev_gate_status = hh.status
             if self._spoolman is None:
                 delay = (STARTUP_UNKNOWN_GATE_CHECK_DELAY
                          + (self._gate
@@ -2395,122 +2352,6 @@ class NFCGate:
                 if not self._shared_has_pending():
                     self._shared_restore_hh_leds()
                 return self.reactor.NEVER
-
-        # Scan-jog gate-status edge detection.
-        # Reads Happy Hare gate_status on every tick — Python dict only, no I2C.
-        # When gate is empty (curr==0) skip the I2C read entirely.
-        # On 0 -> >=1 transition with Happy Hare idle and not printing, enter scan mode.
-        # A -1 -> >=1 transition is Happy Hare resolving an unknown state, not a new load.
-        if self._debug_poll_trigger:
-            hh = self._read_hh_status(eventtime)
-            if hh.present and self._gate < hh.gate_count:
-                curr = hh.status
-                prev = self._prev_gate_status
-                self._prev_gate_status = curr
-                if self._debug >= 4:
-                    logger.debug(
-                        "[%s]: gate %d — Happy Hare poll: "
-                        "prev=%s curr=%s action=%s pending=%s printing=%s "
-                        "active_scan=%s load_paused=%s",
-                        self._name, self._gate,
-                        prev, curr, hh.action,
-                        getattr(self, '_scan_pending', False),
-                        self._is_printing(),
-                        NFCGate._active_scan_gate if NFCGate._active_scan_gate is not None else 'none',
-                        self._hh_load_paused)
-                if (curr >= 1 and self._state.current_spool is not None
-                        and self._state.current_spool is not DIRECT_METADATA_SPOOL):
-                    self._scan_pending = False
-                    if not self._hh_load_paused:
-                        self._hh_load_paused = True
-                        logger.info(
-                            "[%s]: gate %d — Happy Hare reports filament "
-                            "present; NFC already has spool=%s — "
-                            "suspending scan-jog",
-                            self._name, self._gate,
-                            self._state.current_spool)
-                    self._state.miss_count = 0
-                    return self.reactor.monotonic() + self._poll_interval
-                if curr <= 0:
-                    self._scan_pending = False
-                    nfc_spool = self._state.current_spool
-                    if hh.assigned and nfc_spool == hh.spool:
-                        if not self._hh_load_paused:
-                            self._hh_load_paused = True
-                            logger.info(
-                                "[%s]: gate %d — Happy Hare has assigned "
-                                "spool=%d; suspending NFC poll",
-                                self._name, self._gate, hh.spool)
-                        self._state.miss_count = 0
-                        return self.reactor.monotonic() + self._poll_interval
-                    if self._hh_load_paused:
-                        self._hh_load_paused      = False
-                        self._state.current_uid   = None
-                        self._state.current_spool = None
-                        self._state.miss_count    = 0
-                        self._hh_confirmed_spool  = None
-                        logger.info(
-                            "[%s]: gate %d — gate ejected; "
-                            "resuming poll and clearing NFC cache",
-                            self._name, self._gate)
-                        return self.reactor.monotonic() + 1.0
-                    return self.reactor.monotonic() + self._poll_interval
-                # 0→1 edge: arm pending flag and let Happy Hare fully settle.
-                # Do not treat -1→1 as a preload; that is unknown-state recovery.
-                if prev == hh_status.GATE_EMPTY and curr >= 1:
-                    self._scan_pending = True
-                    self._scan_deferred_notified = False
-                    self._scan_idle_ready_time = 0.0
-                    if self._debug >= 3:
-                        logger.info(
-                            "[%s]: gate %d — gate loaded; "
-                            "waiting for Happy Hare scan-safe state before scan",
-                            self._name, self._gate)
-                # Fire scan once Happy Hare is scan-safe and gate is confirmed
-                # loaded. Happy Hare v4 wraps post-preload hooks in action=checking.
-                if (getattr(self, '_scan_pending', False) and curr >= 1
-                        and self._happy_hare_allows_scan_action(hh.action)
-                        and not self._is_printing()):
-                    now = self.reactor.monotonic()
-                    if self._scan_idle_ready_time <= 0.0:
-                        self._scan_idle_ready_time = now + 0.1
-                        if self._debug >= 3:
-                            logger.info(
-                                "[%s]: gate %d — Happy Hare scan-safe; "
-                                "waiting 0.1s before scan-jog",
-                                self._name, self._gate)
-                        return self._scan_idle_ready_time
-                    if now < self._scan_idle_ready_time:
-                        return self._scan_idle_ready_time
-                    self._scan_pending = False
-                    self._scan_idle_ready_time = 0.0
-                    if NFCGate._active_scan_gate is not None:
-                        if not self._scan_deferred_notified:
-                            msg = ("[SCAN] NFC[%d]: scan-jog waiting — "
-                                   "gate %d is already scanning"
-                                   % (self._gate, NFCGate._active_scan_gate))
-                            logger.info("[%s]: %s", self._name, msg)
-                            self._console(msg)
-                            self._scan_deferred_notified = True
-                        self._scan_pending = True  # re-arm; retry after active scan has time to progress
-                        self._scan_idle_ready_time = now + 3.0
-                        return self._scan_idle_ready_time
-                    ok, reason, max_mm = self._prepare_scan_jog(eventtime)
-                    if not ok:
-                        msg = "NFC[%d]: scan-jog not available while %s" % (
-                            self._gate, reason)
-                        logger.warning("[%s]: %s", self._name, msg)
-                        self._console("[WARN] " + msg)
-                        return self.reactor.monotonic() + self._poll_interval
-                    msg = ("[SCAN] NFC[%d]: starting scan-jog "
-                           "(max=%.0fmm  poll=%.2fs)"
-                           % (self._gate, max_mm, self._scan_poll_interval))
-                    logger.warning("[%s]: %s", self._name, msg)
-                    self._console(msg)
-                    self._start_scan_mode(max_mm=max_mm)
-                    return self.reactor.NEVER
-                if getattr(self, '_scan_pending', False):
-                    return self.reactor.monotonic() + .25
 
         if self._debug >= 4:
             logger.debug("[%s]: poll cycle start — "
@@ -2930,9 +2771,7 @@ class NFCGate:
                     "[%s]: could not read [save_variables] filename",
                     self._name)
 
-        fallback = '~/printer_data/config/mmu/mmu_vars.cfg'
-        self._mmu_vars_path = self._expand_mmu_vars_path(fallback)
-        return self._mmu_vars_path
+        return None
 
     def _load_bowden_lengths(self):
         path = self._resolve_mmu_vars_path()
@@ -2990,12 +2829,6 @@ class NFCGate:
 
     def _is_printing(self):
         return scan_jog.is_printing(self)
-
-    def _get_scan_speed(self):
-        return scan_jog.get_speed(self)
-
-    def _scan_chunk_interval(self, mm):
-        return scan_jog.chunk_interval(self, mm)
 
     def _resume_poll_after_rewind(self):
         return scan_jog.resume_poll_after_rewind(self)
@@ -3316,16 +3149,6 @@ class NFCGate:
         self._shared_preload_metadata     = None
         self._shared_preload_uid          = None
         self._shared_preload_auto_created = False
-
-    def _shared_resume_startup_polling(self):
-        if (self._startup_polling == 1 and not self._failed
-                and not self._is_printing()
-                and not self._shared_has_pending()):
-            self._shared_read_deadline = 0.0
-            self._polling = True
-            self.reactor.update_timer(self._poll_timer, self.reactor.NOW)
-            return True
-        return False
 
     def _shared_expire_pending_and_maybe_resume(self):
         if self._shared_expire_pending_if_needed():

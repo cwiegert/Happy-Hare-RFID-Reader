@@ -1030,17 +1030,12 @@ def resolve_spool(gate, uid_hex):
             try:
                 from .vendor.lameandboard_spoolman import (
                     SpoolmanClient as LBSpoolmanClient)
-                if _accepts_kwarg(LBSpoolmanClient, 'trace'):
-                    lb = LBSpoolmanClient(
-                        base_url=base_url,
-                        timeout=gate._spoolman._timeout,
-                        trace=_trace_for_gate(
-                            gate,
-                            "[%s]: gate %d — uid=%s  " %
-                            (gate._name, gate._gate, uid_hex)))
-                else:
-                    lb = LBSpoolmanClient(base_url=base_url,
-                                          timeout=gate._spoolman._timeout)
+                lb = LBSpoolmanClient(
+                    transport=gate._spoolman,
+                    trace=_trace_for_gate(
+                        gate,
+                        "[%s]: gate %d — uid=%s  " %
+                        (gate._name, gate._gate, uid_hex)))
                 if gate._debug >= 3:
                     logger.info(
                         "[%s]: gate %d — uid=%s  "

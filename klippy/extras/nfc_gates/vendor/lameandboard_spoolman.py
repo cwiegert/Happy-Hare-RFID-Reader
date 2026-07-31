@@ -198,9 +198,11 @@ def _fetch_spoolmandb_bambu() -> list:
 
 
 class SpoolmanClient:
-    def __init__(self, base_url, api_key=None, timeout=5.0, trace=None):
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
+    def __init__(self, base_url=None, api_key=None, timeout=5.0, trace=None,
+                 transport=None):
+        self._transport = transport
+        self.base_url = (base_url or '').rstrip("/")
+        self.timeout = timeout if transport is None else transport._timeout
         self.trace = trace
         self.headers = {
             "Content-Type": "application/json",
@@ -224,6 +226,8 @@ class SpoolmanClient:
         self._trace("debug", msg, *args)
 
     def _req(self, method, path, body=None):
+        if self._transport is not None:
+            return self._transport.request_json(method, path, body)
         url = f"{self.base_url}{path}"
         body_str = json.dumps(body) if body is not None else ""
         data = body_str.encode("utf-8") if body_str else None

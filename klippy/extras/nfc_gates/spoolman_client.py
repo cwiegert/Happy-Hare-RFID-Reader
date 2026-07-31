@@ -274,6 +274,22 @@ class SpoolmanClient:
     def lookup_spool_by_id(self, spool_id):
         return self._fetch_spool_detail(spool_id)
 
+    def request_json(self, method, path, body=None):
+        """Execute a JSON request using this client's resolved connection."""
+        base_url = self._resolve_base_url()
+        if not base_url:
+            raise RuntimeError("Spoolman URL is not configured or discoverable")
+        data = json.dumps(body).encode('utf-8') if body is not None else None
+        req = Request(
+            base_url + path,
+            data=data,
+            headers={'Content-Type': 'application/json',
+                     'Accept': 'application/json'},
+            method=method)
+        with urlopen(req, timeout=self._timeout) as resp:
+            raw = resp.read()
+        return json.loads(raw.decode('utf-8')) if raw else None
+
     def _fetch_spool_detail(self, spool_id):
         """Return the full single-spool record, or None on request failure."""
         base_url = self._resolve_base_url()

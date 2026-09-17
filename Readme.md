@@ -1,4 +1,79 @@
-# Happy Hare RFID/NFC Reader
+$$\Huge{\color{red}\textsf{Thanks for landing here!}}$$
+
+$$\LARGE{\color{red}\textsf{The Happy Hare add-on is now base functionality in Happy Hare v4.}}$$
+
+$$\LARGE{\color{red}\textsf{Please go to https://github.com/moggieuk/Happy-Hare for the new install.}}$$
+
+<h3 align="center"><a href="https://github.com/moggieuk/Happy-Hare">➡️ Go to Happy Hare v4 &mdash; github.com/moggieuk/Happy-Hare</a></h3>
+
+> [!CAUTION]
+> **This repository is no longer maintained.**
+>
+> Every capability this add-on provided has been migrated into **Happy Hare v4** as
+> a base option. There is nothing here you need any more — install Happy Hare v4
+> instead: 
+>
+> No further fixes, features, or compatibility updates will be published here.
+> The content below is kept only as a historical reference for existing installs.
+Edit the readme to state this is repo is no longer maintained, and the recommended approach for deploymnet is Happy Hare v4 .   document the capabilitiees have all been migrated to base options in Happy Hare v4.   
+
+
+_____________________________________________________________________
+_____________________________________________________________________
+_____________________________________________________________________
+> [HISTORICAL NOTES and INSTRUCTIONS]
+$$\LARGE{\color{red}\textsf{This repository is not actively maintained}}$$
+
+## Recommended Deployment: Happy Hare v4
+
+**Install [Happy Hare v4](https://github.com/moggieuk/Happy-Hare) and enable NFC/RFID
+there.** Do not start a new install from this repository.
+
+NFC spool identification is no longer an add-on that has to be layered on top of
+Happy Hare. It ships as part of Happy Hare v4 and is configured through Happy Hare's
+own options, so a new install needs one project, one config, and one updater instead
+of a plugin tracking a moving host.
+
+### Capabilities Migrated to Happy Hare v4 Base Options
+
+Everything in the table below is now native Happy Hare v4 functionality. Consult the
+[Happy Hare v4 documentation](https://github.com/moggieuk/Happy-Hare) for the current
+option names and setup steps — the configuration keys documented further down this
+page belong to this retired add-on and do not apply to v4.
+
+| Capability this add-on provided | Status in Happy Hare v4 |
+|---|---|
+| Per-lane NFC readers on lane/EMU MCUs | Base option |
+| Single shared reader inside the MMU body (tap before loading) | Base option |
+| Hybrid per-lane plus shared reader operation | Base option |
+| NFC reader as a virtual homing endstop for scan-jog | Base option |
+| Scan-jog spool rotation to find the tag during preload | Base option |
+| PN532, PN7160, RC522, and PN5180 reader support | Base option |
+| Spoolman UID lookup and gate-map assignment | Base option |
+| Rich tag parsing (NTAG/Type-2, MIFARE Classic, SLIX2/ISO15693) | Base option |
+| Vendor tag formats (Bambu, Creality, ELEGOO, Anycubic, QIDI, TigerTag, OpenSpool, OpenTag3D, OpenPrintTag) | Base option |
+| Spoolman auto-create from tag metadata | Base option |
+| Per-gate NFC LED effects | Base option |
+
+### Migrating an Existing Install
+
+1. Read the [Happy Hare v4](https://github.com/moggieuk/Happy-Hare) install and NFC
+   documentation first — v4 owns this functionality now, and its options differ from
+   the ones described below.
+2. Run this repository's `uninstall.sh` to remove the add-on's Klipper extras,
+   generated config, and macro includes.
+3. Install or update Happy Hare v4 and enable its NFC/RFID options.
+4. Re-flash any MCU hosting an NFC reader from the same Klipper checkout, then
+   restart Klipper and confirm every MCU reconnects.
+
+---
+
+## Archived Reference
+
+Everything from here down documents the retired add-on. It is preserved for anyone
+maintaining an existing installation and is **not** a guide for new deployments.
+
+## Happy Hare RFID/NFC Reader (retired add-on)
 
 NFC spool identification for Happy Hare. Use one NFC reader on each EMU lane, one shared reader inside the MMU body, or both. PN532 remains the default reader; PN7160, RC522, and PN5180 are available with `reader_type: pn7160`, `rc522`, and `pn5180`.
 
@@ -81,7 +156,7 @@ The shared reader can stage only a real Spoolman spool ID. UID lookup, embedded 
 - NFC tags on spools: NTAG213/215/216, MIFARE Classic, or supported rich-tag formats
 - Lane MCU firmware rebuilt from the same Klipper checkout as the host
 
-## Happy Hare V4 Compatibility
+## Happy Hare V4 Compatibility Notes (retired add-on)
 
 Happy Hare v4 can run the post-preload hook while the MMU reports
 `action=checking`. For automatic gate-status polling, NFC treats `checking` as

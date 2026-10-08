@@ -1,8 +1,6 @@
-$$\Huge{\color{red}\textsf{Thanks for landing here!}}$$
-
-$$\LARGE{\color{red}\textsf{The Happy Hare add-on is now base functionality in Happy Hare v4.}}$$
-
-$$\LARGE{\color{red}\textsf{Please go to https://github.com/moggieuk/Happy-Hare for the new install.}}$$
+> [!CAUTION]
+> # 🚨 Thanks for landing here! 🚨
+> ## The Happy Hare add-on is now base functionality in Happy Hare v4.
 
 <h3 align="center"><a href="https://github.com/moggieuk/Happy-Hare">➡️ Go to Happy Hare v4 &mdash; github.com/moggieuk/Happy-Hare</a></h3>
 

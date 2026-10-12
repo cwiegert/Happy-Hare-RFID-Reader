@@ -268,9 +268,13 @@ spoolman_rfid_key: rfid_tag
 Choose the Happy Hare post-preload hook that matches the reader layout:
 
 ```ini
+
 [gcode_macro _MMU_SEQUENCE_VARS]
+# Per Lane Reader only:
+variable_user_post_preload_extension: 'NFC JOG_SCAN=1'
+
 # Shared reader only:
-variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'
+# variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'
 
 # Per-lane and shared readers together:
 # variable_user_post_preload_extension: '_NFC_HYBRID_PRELOAD'

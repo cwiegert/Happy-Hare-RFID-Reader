@@ -271,7 +271,7 @@ Choose the Happy Hare post-preload hook that matches the reader layout:
 
 [gcode_macro _MMU_SEQUENCE_VARS]
 # Per Lane Reader only:
-variable_user_post_preload_extension: 'NFC JOG_SCAN=1'
+variable_user_post_preload_extension: '_NFC_SCAN_JOG_PRELOAD'
 
 # Shared reader only:
 # variable_user_post_preload_extension: '_NFC_SHARED_PRELOAD'
